@@ -45,7 +45,7 @@ def test_read_file_with_line_numbers(tmp_path):
     assert not isinstance(fc, ToolError)
     assert fc.lines == ["x=1", "y=2"]
     assert "1 | x=1" in fc.content and "2 | y=2" in fc.content
-    assert fc.size == (ws / "a.py").stat().st_size
+    assert fc.size == len((ws / "a.py").read_bytes())
 
 
 def test_read_file_missing(tmp_path):
