@@ -1,6 +1,13 @@
 # tests/test_file_tools.py
-"""list_files 与路径安全测试"""
-from tools.file_tools import FileEntry, ToolError, list_files, resolve_workspace_path
+"""文件工具测试：list_files / read_file 与路径安全"""
+from tools.file_tools import (
+    FileContent,
+    FileEntry,
+    ToolError,
+    list_files,
+    read_file,
+    resolve_workspace_path,
+)
 
 
 def test_list_files_ignores_special_dirs(tmp_path):
@@ -28,3 +35,42 @@ def test_resolve_rejects_escape(tmp_path):
     result = resolve_workspace_path("../outside.py", str(ws))
     assert isinstance(result, ToolError)
     assert "越界" in result.message
+
+
+def test_read_file_with_line_numbers(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x=1\ny=2\n", encoding="utf-8")
+    fc = read_file("a.py", workspace_root=str(ws))
+    assert not isinstance(fc, ToolError)
+    assert fc.lines == ["x=1", "y=2"]
+    assert "1 | x=1" in fc.content and "2 | y=2" in fc.content
+    assert fc.size == (ws / "a.py").stat().st_size
+
+
+def test_read_file_missing(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    r = read_file("nope.py", workspace_root=str(ws))
+    assert isinstance(r, ToolError)
+    assert "不存在" in r.message
+
+
+def test_read_file_directory(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    r = read_file("sub", workspace_root=str(ws))
+    assert isinstance(r, ToolError)
+    assert "目录" in r.message
+
+
+def test_read_file_too_large(tmp_path, monkeypatch):
+    import tools.file_tools as ft
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "big.py").write_text("a" * 600, encoding="utf-8")
+    monkeypatch.setattr(ft, "MAX_READ_SIZE", 500)
+    r = read_file("big.py", workspace_root=str(ws))
+    assert isinstance(r, ToolError)
+    assert "过大" in r.message
