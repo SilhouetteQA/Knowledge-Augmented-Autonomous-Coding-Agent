@@ -1,14 +1,16 @@
 # tests/test_file_tools.py
-"""文件工具测试：list_files / read_file / search_code 与路径安全"""
+"""文件工具测试：list_files / read_file / search_code / write_file 与路径安全"""
 from tools.file_tools import (
     FileContent,
     FileEntry,
     SearchResult,
     ToolError,
+    WriteResult,
     list_files,
     read_file,
     resolve_workspace_path,
     search_code,
+    write_file,
 )
 
 
@@ -118,3 +120,32 @@ def test_search_code_rg_missing(monkeypatch, tmp_path):
     r = search_code("x", workspace_root=str(ws))
     assert isinstance(r, ToolError)
     assert "ripgrep 不可用" in r.message
+
+
+def test_write_file_creates_dirs(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    r = write_file("sub/dir/new.py", "code", workspace_root=str(ws))
+    assert not isinstance(r, ToolError)
+    assert r.path == "sub/dir/new.py"
+    assert r.bytes_written == 4
+    assert r.overwritten is False
+    assert (ws / "sub" / "dir" / "new.py").read_text(encoding="utf-8") == "code"
+
+
+def test_write_file_overwrites(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("old", encoding="utf-8")
+    r = write_file("a.py", "new", workspace_root=str(ws))
+    assert not isinstance(r, ToolError)
+    assert r.overwritten is True
+    assert (ws / "a.py").read_text(encoding="utf-8") == "new"
+
+
+def test_write_file_escape_rejected(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    r = write_file("../evil.py", "x", workspace_root=str(ws))
+    assert isinstance(r, ToolError)
+    assert "越界" in r.message

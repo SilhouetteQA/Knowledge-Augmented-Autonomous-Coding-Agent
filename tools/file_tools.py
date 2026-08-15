@@ -153,3 +153,27 @@ def search_code(
         ))
     results.sort(key=lambda r: (r.path, r.line))
     return results
+
+
+@dataclass
+class WriteResult:
+    """写入结果：path 相对 workspace 根，overwritten 标记是否覆盖已有文件。"""
+    path: str
+    bytes_written: int
+    overwritten: bool
+
+
+def write_file(path: str, content: str, workspace_root: str | None = None) -> WriteResult | ToolError:
+    """写入工作区内文件（自动创建父目录，覆盖已有内容）；越界/写入失败返回 ToolError。"""
+    target = resolve_workspace_path(path, workspace_root)
+    if isinstance(target, ToolError):
+        return target
+    p = Path(target)
+    overwritten = p.exists()
+    data = content.encode("utf-8")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    except OSError as e:
+        return ToolError(f"写入失败: {path}（{e}）")
+    return WriteResult(path=path, bytes_written=len(data), overwritten=overwritten)
