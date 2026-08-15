@@ -1,12 +1,14 @@
 # tests/test_file_tools.py
-"""文件工具测试：list_files / read_file 与路径安全"""
+"""文件工具测试：list_files / read_file / search_code 与路径安全"""
 from tools.file_tools import (
     FileContent,
     FileEntry,
+    SearchResult,
     ToolError,
     list_files,
     read_file,
     resolve_workspace_path,
+    search_code,
 )
 
 
@@ -74,3 +76,45 @@ def test_read_file_too_large(tmp_path, monkeypatch):
     r = read_file("big.py", workspace_root=str(ws))
     assert isinstance(r, ToolError)
     assert "过大" in r.message
+
+
+def test_search_code_finds_match(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("def hello():\n    return 1\n", encoding="utf-8")
+    (ws / "b.py").write_text("x = hello()\n", encoding="utf-8")
+    results = search_code("hello", workspace_root=str(ws))
+    assert not isinstance(results, ToolError)
+    assert len(results) == 2
+    first = results[0]
+    assert first.path == "a.py"
+    assert first.line == 1
+    assert first.column == 5
+    assert "def hello" in first.text
+
+
+def test_search_code_no_match(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x=1\n", encoding="utf-8")
+    results = search_code("zzz_nope", workspace_root=str(ws))
+    assert results == []
+
+
+def test_search_code_ignore_case(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("Hello\n", encoding="utf-8")
+    assert search_code("hello", workspace_root=str(ws)) == []
+    hits = search_code("hello", ignore_case=True, workspace_root=str(ws))
+    assert len(hits) == 1
+
+
+def test_search_code_rg_missing(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x\n", encoding="utf-8")
+    monkeypatch.setenv("RIPGREP_BIN", str(tmp_path / "no-rg.exe"))
+    r = search_code("x", workspace_root=str(ws))
+    assert isinstance(r, ToolError)
+    assert "ripgrep 不可用" in r.message

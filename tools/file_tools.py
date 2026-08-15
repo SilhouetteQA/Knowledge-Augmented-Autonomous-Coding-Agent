@@ -3,7 +3,9 @@
 
 所有工具以 workspace 根为安全边界；错误返回 ToolError（结构化、面向 LLM），不抛异常。
 """
+import json
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -89,3 +91,65 @@ def read_file(path: str, workspace_root: str | None = None) -> FileContent | Too
     lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
     return FileContent(path=path, content=content, lines=lines, size=size)
+
+
+@dataclass
+class SearchResult:
+    """搜索结果：path 相对 workspace 根，line/column 为 1-based。"""
+    path: str
+    line: int
+    column: int
+    text: str
+
+
+def _rg_path() -> str:
+    """ripgrep 可执行文件路径：默认 rg，可用 RIPGREP_BIN 覆盖（沙箱场景）。"""
+    return os.environ.get("RIPGREP_BIN", "rg")
+
+
+def search_code(
+    query: str,
+    root: str | None = None,
+    ignore_case: bool = False,
+    workspace_root: str | None = None,
+) -> list[SearchResult] | ToolError:
+    """调用 ripgrep 搜索工作区代码，返回命中列表；rg 缺失/超时/失败返回 ToolError。"""
+    base = resolve_workspace_path(root or "", workspace_root)
+    if isinstance(base, ToolError):
+        return base
+    cmd = [_rg_path(), "--json", "--column"]
+    if ignore_case:
+        cmd.append("-i")
+    cmd += ["--", query, base]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
+        )
+    except FileNotFoundError:
+        return ToolError(f"ripgrep 不可用: 未找到 {_rg_path()}（请安装或设置 RIPGREP_BIN）")
+    except subprocess.TimeoutExpired:
+        return ToolError("搜索超时（30 秒）")
+    if proc.returncode not in (0, 1):
+        return ToolError(f"ripgrep 执行失败: {proc.stderr.strip()}")
+    results: list[SearchResult] = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "match":
+            continue
+        data = obj["data"]
+        rel = os.path.relpath(data["path"]["text"], base).replace("\\", "/")
+        submatch = data["submatches"][0]
+        results.append(SearchResult(
+            path=rel,
+            line=data["line_number"],
+            column=submatch["start"] + 1,
+            text=data["lines"]["text"].rstrip("\n"),
+        ))
+    results.sort(key=lambda r: (r.path, r.line))
+    return results
