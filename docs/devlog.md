@@ -91,3 +91,9 @@
 - 修复方案 conftest.py 仅在 defect-repo 副本，原仓库 `D:\AI project\bilibili` 未动（待用户决定是否应用）。
 - defect-repo 演示副本不入库（同 W1 决策），收尾时清理。
 - `.venv_tmp/`、`demo-w2-*.txt` 等演示残留待清理。
+
+### 会话归档与新会话指引
+
+- 完整会话归档：`docs/sessions/2026-08-15-w1w2-session.md`（时间线、决策、指标、环境备忘、W3 入口指引——新会话先读它）。
+- **LLM 配置**（.env 重建）：`opencode_go_api`（User 环境变量）+ `OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1` + `OPENCODE_GO_MODEL=deepseek-v4-flash`。
+- **W3 前置**：Docker 未安装（2026-08-15 检查），需先装 Docker Desktop。
