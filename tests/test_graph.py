@@ -107,3 +107,40 @@ def test_graph_iteration_limit(tmp_path):
                              max_iterations=20, workspace_root=str(ws))
     assert result.stopped_by_limit is True
     assert result.iteration_count == 21
+
+
+def test_graph_decide_can_call_run_tests(tmp_path):
+    """decide 可调用 run_tests 工具（回归 spec 工具集缺口）。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "test_ok.py").write_text("def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    script = [
+        _plan_msg(["运行测试"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="t1", name="run_tests", arguments={})]),
+        LLMMessage(role="assistant", content="测试通过"),
+    ]
+    result = run_agent_graph("运行测试", MockLLMClient(script), workspace_root=str(ws))
+    assert result.stopped_by_limit is False
+    assert len(result.steps) == 1
+    assert result.steps[0].tool_name == "run_tests"
+    tr = result.steps[0].result
+    assert tr.passed == 1
+
+
+def test_graph_decide_can_call_run_command(tmp_path):
+    """decide 可调用 run_command 工具。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    script = [
+        _plan_msg(["执行命令"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="c1", name="run_command",
+                     arguments={"command": "python -c \"print('hi')\""})]),
+        LLMMessage(role="assistant", content="完成"),
+    ]
+    result = run_agent_graph("执行命令", MockLLMClient(script), workspace_root=str(ws))
+    assert len(result.steps) == 1
+    cr = result.steps[0].result
+    assert cr.exit_code == 0
+    assert "hi" in cr.stdout

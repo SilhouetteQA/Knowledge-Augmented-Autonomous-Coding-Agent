@@ -11,9 +11,16 @@ from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from agent.llm import LLMClient, LLMMessage, ToolCall
+from agent.llm import LLMClient, LLMMessage, ToolCall, ToolSpec
 from agent.loop import AgentStep, _build_tools, _dispatch, _result_to_text
-from tools.shell_tools import TestResult, run_tests
+from tools.shell_tools import (
+    TestResult,
+    git_diff,
+    git_log,
+    git_status,
+    run_command,
+    run_tests,
+)
 
 # 计划节点提示词：只输出 JSON 数组
 PLAN_PROMPT = (
@@ -40,6 +47,75 @@ def _decide_system(plan: list[str], verify_rounds: int, max_verify_rounds: int) 
         "声称完成后系统会自动运行测试验证。\n"
         "规则：只操作工作区内文件；每次工具调用后先观察结果再行动；完成后用中文总结。"
     )
+
+
+def _graph_tools() -> list[ToolSpec]:
+    """图内工具集：W1 四文件工具 + W2 shell/git 五工具，共 8 个暴露给 LLM。
+
+    覆盖 W2 spec §3 要求的完整工具集，解决 decide 阶段仅暴露 4 个文件工具、
+    无法主动运行测试/命令/git 的缺口。
+    """
+    return list(_build_tools()) + [
+        ToolSpec(
+            name="run_command",
+            description="在 workspace 内执行 shell 命令（60 秒超时，输出截断）",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "要执行的 shell 命令"},
+                    "cwd": {"type": "string", "description": "工作目录（相对 workspace 根）"},
+                    "timeout": {"type": "integer", "description": "超时秒数，缺省 60"},
+                },
+                "required": ["command"],
+            },
+        ),
+        ToolSpec(
+            name="run_tests",
+            description="运行 pytest（可选 path 限定子路径），返回结构化测试结果",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "测试子路径（相对 workspace 根）"},
+                },
+            },
+        ),
+        ToolSpec(
+            name="git_status",
+            description="查看工作区 git 状态（只读）",
+            parameters={"type": "object", "properties": {}},
+        ),
+        ToolSpec(
+            name="git_diff",
+            description="查看未提交变更（只读）",
+            parameters={"type": "object", "properties": {}},
+        ),
+        ToolSpec(
+            name="git_log",
+            description="查看最近提交（只读）",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "count": {"type": "integer", "description": "返回提交条数，缺省 10"},
+                },
+            },
+        ),
+    ]
+
+
+def _graph_dispatch(name: str, args: dict, workspace_root: str | None) -> object:
+    """图内工具分发：W2 shell/git 工具 + 回退 W1 四文件工具。"""
+    if name == "run_command":
+        return run_command(args["command"], cwd=args.get("cwd"),
+                           timeout=args.get("timeout", 60), workspace_root=workspace_root)
+    if name == "run_tests":
+        return run_tests(path=args.get("path"), workspace_root=workspace_root)
+    if name == "git_status":
+        return git_status(workspace_root=workspace_root)
+    if name == "git_diff":
+        return git_diff(workspace_root=workspace_root)
+    if name == "git_log":
+        return git_log(count=args.get("count", 10), workspace_root=workspace_root)
+    return _dispatch(name, args, workspace_root)
 
 
 class AgentState(TypedDict):
@@ -96,7 +172,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     def decide_node(state: AgentState) -> dict:
         system = _decide_system(state["plan"], state["verify_rounds"], max_verify_rounds)
         messages = [{"role": "system", "content": system}] + state["messages"]
-        msg = llm.chat(messages, _build_tools())
+        msg = llm.chat(messages, _graph_tools())
         tool_calls = None
         if msg.tool_calls:
             tool_calls = [
@@ -116,7 +192,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
         steps = list(state["steps"])
         messages = list(state["messages"])
         for tc in state["pending_tool_calls"] or []:
-            result = _dispatch(tc.name, tc.arguments, workspace_root)
+            result = _graph_dispatch(tc.name, tc.arguments, workspace_root)
             steps.append(AgentStep(tool_name=tc.name, arguments=tc.arguments, result=result))
             messages.append({
                 "role": "tool",
