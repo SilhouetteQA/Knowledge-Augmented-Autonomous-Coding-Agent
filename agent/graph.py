@@ -13,6 +13,7 @@ from langgraph.graph import END, StateGraph
 
 from agent.llm import LLMClient, LLMMessage, ToolCall, ToolSpec
 from agent.loop import AgentStep, _build_tools, _dispatch, _result_to_text
+from tools.file_tools import ToolError
 from tools.shell_tools import (
     TestResult,
     git_diff,
@@ -105,7 +106,10 @@ def _graph_tools() -> list[ToolSpec]:
 def _graph_dispatch(name: str, args: dict, workspace_root: str | None) -> object:
     """图内工具分发：W2 shell/git 工具 + 回退 W1 四文件工具。"""
     if name == "run_command":
-        return run_command(args["command"], cwd=args.get("cwd"),
+        cmd = args.get("command")
+        if not cmd:
+            return ToolError("缺少参数: command")
+        return run_command(cmd, cwd=args.get("cwd"),
                            timeout=args.get("timeout", 60), workspace_root=workspace_root)
     if name == "run_tests":
         return run_tests(path=args.get("path"), workspace_root=workspace_root)

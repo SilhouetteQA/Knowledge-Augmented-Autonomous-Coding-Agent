@@ -144,3 +144,19 @@ def test_graph_decide_can_call_run_command(tmp_path):
     cr = result.steps[0].result
     assert cr.exit_code == 0
     assert "hi" in cr.stdout
+
+
+def test_graph_run_command_missing_arg_returns_toolerror(tmp_path):
+    """畸形 run_command 调用（缺 command）返回 ToolError，不中止图。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    script = [
+        _plan_msg(["执行"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="c1", name="run_command", arguments={})]),
+        LLMMessage(role="assistant", content="完成"),
+    ]
+    result = run_agent_graph("执行", MockLLMClient(script), workspace_root=str(ws))
+    from tools.file_tools import ToolError
+    assert isinstance(result.steps[0].result, ToolError)
+    assert result.final_answer == "完成"

@@ -32,6 +32,7 @@ def test_run_command_timeout(tmp_path):
                     workspace_root=str(ws))
     assert not isinstance(r, ToolError)
     assert r.timeout is True
+    assert r.exit_code == -1
     assert r.duration < 5
 
 

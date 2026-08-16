@@ -131,7 +131,11 @@ def run_command(
         except Exception:
             # 树杀除异常不崩溃：退化为超时终止，仍尝试排空输出。
             pass
-        out, err = proc.communicate()
+        try:
+            out, err = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            # 杀除失败时兜底 5 秒，超时则返回已捕获输出（防止孤儿进程永久阻塞）。
+            out, err = (proc.stdout or ""), (proc.stderr or "")
     except OSError as e:
         # 覆盖 Popen 启动失败（如 %COMSPEC% 损坏导致 OSError）与 communicate 的 OSError。
         return ToolError(f"命令执行失败: {e}")
