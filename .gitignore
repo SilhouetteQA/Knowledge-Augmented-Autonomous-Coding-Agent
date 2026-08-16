@@ -27,6 +27,7 @@ __MACOSX/
 Thumbs.db
 
 # 临时输出
+.venv_tmp/
 *.tmp
 *.log
 
