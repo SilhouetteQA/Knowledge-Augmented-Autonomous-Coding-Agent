@@ -28,13 +28,18 @@ W3 目标：**用 Docker 容器替换 subprocess 执行**，一个 Task 一个�
 ## 4. 架构与组件
 
 ```
-tools/docker_sandbox.py        # 新增：SandboxManager（容器生命周期）+ DockerExecutor
+tools/docker_sandbox.py        # 新增：SandboxConfig / SandboxManager（生命周期）/ DockerExecutor / sandbox_executor 上下文
 tools/shell_tools.py           # 修改：抽出 Executor 接口，run_command/run_tests/git 经执行器分发
 tools/file_tools.py            # 不变：文件工具仍在宿主机操作 workspace（bind mount 实时同步）
-agent/graph.py                 # 微调：_graph_dispatch 透传执行器（run_command 已有分发点）
-Dockerfile                     # 新增：沙箱基础镜像
+agent/loop.py                  # 微调：run_agent 以 sandbox_executor 上下文包裹循环
+agent/graph.py                 # 微调：run_agent_graph 以 sandbox_executor 上下文包裹 invoke
 main.py                        # 新增：--executor 参数（透传 KA_EXECUTOR）
+Dockerfile                     # 新增：沙箱基础镜像
 ```
+
+执行器在任务内由 `sandbox_executor(workspace_root)` 上下文提供（docker 时创建/销毁沙箱，
+local 时直接返回 LocalExecutor），`shell_tools` 内部经 ContextVar 获取当前执行器——
+`_dispatch` / `_graph_dispatch` 无需改动。
 
 ### 4.1 Executor 接口（seam）
 
@@ -43,11 +48,13 @@ class Executor(Protocol):
     def run_command(command: str, cwd: str | None, timeout: int,
                     workspace_root: str | None) -> CommandResult | ToolError: ...
     def run_tests(path: str | None, workspace_root: str | None) -> TestResult | ToolError: ...
+    def run_git(args: list[str], workspace_root: str | None) -> str | ToolError: ...
 ```
 
 - `LocalExecutor`：现有 subprocess 实现原样迁移，行为不变
 - `DockerExecutor`：容器 exec 实现
-- git 三件套统一经执行器的 `run_command` 实现（容器内 git），不再单独走 subprocess
+- git 三件套经执行器的 `run_git` 实现（容器内 git），LocalExecutor 复用现有 `_run_git`（list 参数、无 shell，避免引号问题），DockerExecutor 以 shlex 拼接后容器内执行
+- `CommandResult` 新增 `oom: bool = False` 字段（OOM 语义标记，默认值保持向后兼容）
 
 ### 4.2 执行器选择
 
@@ -68,7 +75,7 @@ class Executor(Protocol):
    - 创建阶段网络开
 3. 依赖安装（存在 `requirements.txt` 时）：容器内 `pip install -r /workspace/requirements.txt`
 4. 可选克隆：workspace 为空且配置了 repo_url 时，容器内 `git clone <repo_url> /workspace`
-5. 容器内 `git config --global core.filemode false`
+5. 容器内 git 配置：镜像构建时已注入 `git config --system core.filemode false`（Dockerfile RUN）
 
 ### 5.2 Execute
 
@@ -93,7 +100,7 @@ class Executor(Protocol):
 | 文件系统 | 仅挂载 workspace（rw）+ tmpfs /tmp；容器内其他写盘随销毁清除 | — |
 | 秘密 | 不继承宿主环境变量、不挂载 .env、容器内无宿主凭据 | — |
 
-配置项（env）：`KA_SANDBOX_CPUS`（默认 2）、`KA_SANDBOX_MEMORY`（默认 1g）、`KA_SANDBOX_NETWORK`（默认 0；1 = 创建时容器带网络，任务级 opt-in）、`KA_SANDBOX_REPO_URL`（可选；workspace 为空时创建阶段克隆该仓库到 /workspace）。
+配置项（env）：`KA_SANDBOX_CPUS`（默认 2）、`KA_SANDBOX_MEMORY`（默认 1g）、`KA_SANDBOX_PIDS`（默认 512）、`KA_SANDBOX_NETWORK`（默认 0；1 = 创建时容器带网络，任务级 opt-in）、`KA_SANDBOX_REPO_URL`（可选；workspace 为空时创建阶段克隆该仓库到 /workspace）、`KA_SANDBOX_IMAGE`（默认 ka-sandbox:py312-v1，镜像缺失时自动 docker build）。
 
 ## 7. 错误处理与返回语义
 
