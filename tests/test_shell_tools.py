@@ -174,3 +174,37 @@ def test_git_tools_not_a_repo(tmp_path):
         else:
             os.environ["GIT_CEILING_DIRECTORIES"] = old
     assert isinstance(s, ToolError)
+
+
+from tools.shell_tools import (
+    LocalExecutor, get_executor,
+)
+
+
+def test_get_executor_default_local(monkeypatch):
+    monkeypatch.delenv("KA_EXECUTOR", raising=False)
+    ex = get_executor()
+    assert not isinstance(ex, ToolError)
+    assert isinstance(ex, LocalExecutor)
+
+
+def test_get_executor_env_docker_without_context(monkeypatch):
+    monkeypatch.setenv("KA_EXECUTOR", "docker")
+    ex = get_executor()
+    assert isinstance(ex, ToolError)
+    assert "sandbox_executor" in ex.message
+
+
+def test_get_executor_unknown(monkeypatch):
+    monkeypatch.setenv("KA_EXECUTOR", "xxx")
+    ex = get_executor()
+    assert isinstance(ex, ToolError)
+    assert "未知执行器" in ex.message
+
+
+def test_run_command_oom_field_default(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    r = run_command("python -c \"print('hi')\"", workspace_root=str(ws))
+    assert not isinstance(r, ToolError)
+    assert r.oom is False

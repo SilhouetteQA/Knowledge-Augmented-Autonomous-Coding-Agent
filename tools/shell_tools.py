@@ -3,12 +3,16 @@
 
 所有命令以 workspace 根为安全边界（cwd 必须位于工作区内）；错误返回 ToolError。
 """
+from __future__ import annotations
+
 import os
 import re
 import subprocess
 import sys
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import Protocol
 
 from tools.file_tools import ToolError, resolve_workspace_path
 
@@ -25,12 +29,13 @@ def _truncate(text: str) -> str:
 
 @dataclass
 class CommandResult:
-    """命令执行结果：timeout 标记超时终止，duration 为耗时（秒）。"""
+    """命令执行结果：timeout 标记超时终止，oom 标记内存超限被杀，duration 为耗时（秒）。"""
     timeout: bool
     stdout: str
     stderr: str
     exit_code: int
     duration: float
+    oom: bool = False
 
 
 def _kill_process_tree(proc: subprocess.Popen) -> None:
@@ -106,6 +111,111 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
     proc.kill()
 
 
+class Executor(Protocol):
+    """命令执行器接口：宿主机（LocalExecutor）或容器（DockerExecutor）。"""
+
+    def run_command(self, command: str, cwd: str | None = None, timeout: int = 60,
+                    workspace_root: str | None = None) -> CommandResult | ToolError: ...
+    def run_tests(self, path: str | None = None,
+                  workspace_root: str | None = None) -> TestResult | ToolError: ...
+    def run_git(self, args: list[str], workspace_root: str | None = None) -> str | ToolError: ...
+
+
+class LocalExecutor:
+    """宿主机执行器：subprocess 直接执行（W1/W2 行为不变）。"""
+
+    def run_command(self, command: str, cwd: str | None = None, timeout: int = 60,
+                    workspace_root: str | None = None) -> CommandResult | ToolError:
+        """在 cwd（已解析的绝对路径）执行 shell 命令；超时终止进程树置 timeout=True。"""
+        start = time.monotonic()
+        timeout_hit = False
+        try:
+            proc = subprocess.Popen(
+                command, shell=True, cwd=cwd, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+            )
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timeout_hit = True
+            try:
+                _kill_process_tree(proc)
+            except Exception:
+                pass
+            try:
+                out, err = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                out, err = (proc.stdout or ""), (proc.stderr or "")
+        except OSError as e:
+            return ToolError(f"命令执行失败: {e}")
+        return CommandResult(
+            timeout=timeout_hit,
+            stdout=_truncate(out or ""),
+            stderr=_truncate(err or ""),
+            exit_code=-1 if timeout_hit else proc.returncode,
+            duration=round(time.monotonic() - start, 3),
+        )
+
+    def run_tests(self, path: str | None = None,
+                  workspace_root: str | None = None) -> TestResult | ToolError:
+        """在 workspace 根运行 pytest；path 可指定子路径（相对 workspace 根）。"""
+        base = resolve_workspace_path("", workspace_root)
+        if isinstance(base, ToolError):
+            return base
+        cmd = [sys.executable, "-m", "pytest", "-q", "--tb=no"]
+        if path:
+            target = resolve_workspace_path(path, workspace_root)
+            if isinstance(target, ToolError):
+                return target
+            cmd.append(target)
+        try:
+            proc = subprocess.run(
+                cmd, cwd=base, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            return ToolError("测试超时（120 秒）")
+        except OSError as e:
+            return ToolError(f"pytest 执行失败: {e}")
+        return _parse_pytest_output(proc.stdout)
+
+    def run_git(self, args: list[str], workspace_root: str | None = None) -> str | ToolError:
+        """在 workspace 根执行只读 git 命令，返回 stdout；失败返回 ToolError。"""
+        base = resolve_workspace_path("", workspace_root)
+        if isinstance(base, ToolError):
+            return base
+        try:
+            proc = subprocess.run(
+                ["git", *args], cwd=base, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=30,
+            )
+        except FileNotFoundError:
+            return ToolError("git 不可用: 未找到 git（请安装 Git）")
+        except subprocess.TimeoutExpired:
+            return ToolError("git 命令超时（30 秒）")
+        if proc.returncode != 0:
+            return ToolError(f"git {args[0]} 失败: {proc.stderr.strip()}")
+        return proc.stdout
+
+
+# 当前任务执行器（sandbox_executor 上下文设置；未设置时回退 KA_EXECUTOR env）
+_CURRENT_EXECUTOR: ContextVar[Executor | None] = ContextVar("ka_current_executor", default=None)
+
+
+def get_executor() -> Executor | ToolError:
+    """当前执行器：优先任务上下文（sandbox_executor），否则按 KA_EXECUTOR 环境变量。"""
+    current = _CURRENT_EXECUTOR.get()
+    if current is not None:
+        return current
+    name = os.environ.get("KA_EXECUTOR", "local")
+    if name == "local":
+        return LocalExecutor()
+    if name == "docker":
+        return ToolError(
+            "KA_EXECUTOR=docker 时命令必须在 sandbox_executor 上下文中执行"
+            "（一个任务一个沙箱，见 agent/loop.py 与 agent/graph.py）")
+    return ToolError(f"未知执行器: {name}（可选 local|docker）")
+
+
 def run_command(
     command: str,
     cwd: str | None = None,
@@ -116,36 +226,11 @@ def run_command(
     base = resolve_workspace_path(cwd or "", workspace_root)
     if isinstance(base, ToolError):
         return base
-    start = time.monotonic()
-    timeout_hit = False
-    try:
-        proc = subprocess.Popen(
-            command, shell=True, cwd=base, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-        )
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timeout_hit = True
-        try:
-            _kill_process_tree(proc)
-        except Exception:
-            # 树杀除异常不崩溃：退化为超时终止，仍尝试排空输出。
-            pass
-        try:
-            out, err = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            # 杀除失败时兜底 5 秒，超时则返回已捕获输出（防止孤儿进程永久阻塞）。
-            out, err = (proc.stdout or ""), (proc.stderr or "")
-    except OSError as e:
-        # 覆盖 Popen 启动失败（如 %COMSPEC% 损坏导致 OSError）与 communicate 的 OSError。
-        return ToolError(f"命令执行失败: {e}")
-    return CommandResult(
-        timeout=timeout_hit,
-        stdout=_truncate(out or ""),
-        stderr=_truncate(err or ""),
-        exit_code=-1 if timeout_hit else proc.returncode,
-        duration=round(time.monotonic() - start, 3),
-    )
+    executor = get_executor()
+    if isinstance(executor, ToolError):
+        return executor
+    return executor.run_command(command, cwd=base, timeout=timeout,
+                                workspace_root=workspace_root)
 
 
 @dataclass
@@ -195,25 +280,10 @@ def _parse_pytest_output(out: str) -> TestResult:
 
 def run_tests(path: str | None = None, workspace_root: str | None = None) -> TestResult | ToolError:
     """在 workspace 根运行 pytest；path 可指定子路径（相对 workspace 根）。"""
-    base = resolve_workspace_path("", workspace_root)
-    if isinstance(base, ToolError):
-        return base
-    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=no"]
-    if path:
-        target = resolve_workspace_path(path, workspace_root)
-        if isinstance(target, ToolError):
-            return target
-        cmd.append(target)
-    try:
-        proc = subprocess.run(
-            cmd, cwd=base, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=120,
-        )
-    except subprocess.TimeoutExpired:
-        return ToolError("测试超时（120 秒）")
-    except OSError as e:
-        return ToolError(f"pytest 执行失败: {e}")
-    return _parse_pytest_output(proc.stdout)
+    executor = get_executor()
+    if isinstance(executor, ToolError):
+        return executor
+    return executor.run_tests(path=path, workspace_root=workspace_root)
 
 
 @dataclass
@@ -236,28 +306,12 @@ class GitLog:
     entries: list[str]
 
 
-def _run_git(args: list[str], workspace_root: str | None) -> str | ToolError:
-    """在 workspace 根执行只读 git 命令，返回 stdout；失败返回 ToolError。"""
-    base = resolve_workspace_path("", workspace_root)
-    if isinstance(base, ToolError):
-        return base
-    try:
-        proc = subprocess.run(
-            ["git", *args], cwd=base, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=30,
-        )
-    except FileNotFoundError:
-        return ToolError("git 不可用: 未找到 git（请安装 Git）")
-    except subprocess.TimeoutExpired:
-        return ToolError("git 命令超时（30 秒）")
-    if proc.returncode != 0:
-        return ToolError(f"git {args[0]} 失败: {proc.stderr.strip()}")
-    return proc.stdout
-
-
 def git_status(workspace_root: str | None = None) -> GitStatus | ToolError:
     """查看工作区 git 状态（--short）。"""
-    out = _run_git(["status", "--short"], workspace_root)
+    executor = get_executor()
+    if isinstance(executor, ToolError):
+        return executor
+    out = executor.run_git(["status", "--short"], workspace_root)
     if isinstance(out, ToolError):
         return out
     lines = [l for l in out.splitlines() if l.strip()]
@@ -266,10 +320,13 @@ def git_status(workspace_root: str | None = None) -> GitStatus | ToolError:
 
 def git_diff(workspace_root: str | None = None) -> GitDiff | ToolError:
     """查看未提交变更（--stat + 完整 diff，截断）。"""
-    stat = _run_git(["diff", "--stat"], workspace_root)
+    executor = get_executor()
+    if isinstance(executor, ToolError):
+        return executor
+    stat = executor.run_git(["diff", "--stat"], workspace_root)
     if isinstance(stat, ToolError):
         return stat
-    diff = _run_git(["diff"], workspace_root)
+    diff = executor.run_git(["diff"], workspace_root)
     if isinstance(diff, ToolError):
         return diff
     return GitDiff(stat=stat.strip(), diff=_truncate(diff))
@@ -277,7 +334,10 @@ def git_diff(workspace_root: str | None = None) -> GitDiff | ToolError:
 
 def git_log(count: int = 10, workspace_root: str | None = None) -> GitLog | ToolError:
     """查看最近提交（--oneline）。"""
-    out = _run_git(["log", "--oneline", f"-n{count}"], workspace_root)
+    executor = get_executor()
+    if isinstance(executor, ToolError):
+        return executor
+    out = executor.run_git(["log", "--oneline", f"-n{count}"], workspace_root)
     if isinstance(out, ToolError):
         return out
     return GitLog(entries=[l for l in out.splitlines() if l.strip()])
