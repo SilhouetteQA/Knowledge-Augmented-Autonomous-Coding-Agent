@@ -1095,3 +1095,16 @@ Expected: main 全绿；worktree 已解除登记；W2 窗口关闭。
 - review package 生成用 UTF-8（`Out-File -Encoding utf8`），避免 UTF-16 问题。
 - 测试中 `subprocess` 启动 git 需要 `git config user.name/email`（测试设施内配置）。
 - `main.py` 仍调用 W1 `run_agent`；W2 图入口 `run_agent_graph` 的 CLI 接线在 Task 6 与用户确认后以最小方式处理（默认一行 Python 调用，不动 main.py）。
+
+---
+
+## 附录：实施修正记录（2026-08-15，实现与本文档字面量的偏差）
+
+| # | 位置 | 偏差 | 原因与修复 |
+|---|------|------|-----------|
+| 1 | Task 1 实现 `run_command` | `subprocess.run(shell=True, timeout)` → `Popen + communicate(timeout)` + Win32 进程树终止 | Windows 下 shell=True 超时只杀顶层 cmd，孤儿 python 持有管道致 communicate 阻塞（brief 自身测试 duration<5 无法满足）；Win32 CreateToolhelp32Snapshot 枚举终止后代进程；后经 review 修复异常安全与快照时序（commit a6f1140） |
+| 2 | Task 1 测试 | brief 测试字面量在环境内不可行处的最小修复 | 沿用 W1 模式（ws.mkdir() 等）；Task 3 的 `test_git_tools_not_a_repo` 用 GIT_CEILING_DIRECTORIES 锚定（pytest tmp 目录位于本仓库内） |
+| 3 | Task 4/5 测试 | 多处补 `ws.mkdir()` | `Path.write_text` 不创建父目录（同 W1 记录模式） |
+| 4 | Task 5 测试 `test_graph_iteration_limit` | 断言 `iteration_count == 21`（brief 写 20） | brief 实现 verbatim：decide_node 先 +1 再路由（`iteration <= max_iterations`），20 次执行 + 第 21 次 guard decide = 21；功能上执行轮数上限 20 保持，仅计数器含 guard（review 确认语义正确） |
+| 5 | Task 6.5（新增） | 图工具集注册补齐 | 真实演示发现 decide 仅暴露 W1 四工具（spec 要求 8 个）；新增 `_graph_tools` / `_graph_dispatch`（run_command/run_tests/git 三件套），commit 7c5bf7b |
+| 6 | 环境备忘修正 | rg 在本会话 PATH 可用（W1 需 RIPGREP_BIN）；venv 复制自 W1 残留 | 与 W1 环境差异，实测记录 |

@@ -59,3 +59,35 @@
 - demo-project（camera man 副本）含 `.gitignore`，但 Agent 演示未涉及 git 操作（W2 引入）。
 - 联网环境建议执行 `pip install -e ".[dev]"` 使依赖规范可复现。
 - W2 起 LangGraph 引入时机待 W2 spec 阶段决策。
+
+## W2 Shell + Test（2026-08-15）
+
+### 完成内容
+
+- **窗口**：worktree `.worktrees/w2-shell-test`，分支 `feature/w2-shell-test`（6 任务 + 1 补缺，全部 TDD + 双审查）。
+- **新工具**（`tools/shell_tools.py`）：
+  - `run_command`：任意命令 + workspace cwd 约束 + 60s 超时（Win32 进程树终止，Windows 下 shell=True 孤儿进程问题的必要偏离）+ 100KB 截断。
+  - `run_tests`：pytest 封装 → 结构化 TestResult（passed/failed/error/total/duration/failures）。
+  - git 只读三件套：`git_status` / `git_diff` / `git_log`。
+- **LangGraph 编排**（`agent/graph.py`）：显式阶段图 plan → decide ⇄ execute → **verify（强制测试）** → reflect（失败分析）→ finalize；迭代上限 20、验证轮上限 3；`run_agent_graph` 入口。
+- **工具注册补齐**（Task 6.5）：演示发现 decide 只暴露 W1 四工具，补齐 8 工具（run_command/run_tests/git 三件套入 schema 与 dispatch）。
+- **测试**：47 项全绿（W1 27 + W2 20）。
+- **真实演示**（bilibili defect-repo）：三轮运行后完整闭环——Agent 定位根因（conftest.py 缺失 → pytest sys.path 不含项目根 → 79 测试全挂）→ 最小修复 → verify 79 passed；最终运行中 Agent 主动做因果实验（.bak 复现 8 failed → 恢复 → 8 passed）。
+
+### 关键决策与经验
+
+- **LangGraph 引入**（用户拍板）：W2 用 StateGraph 显式编排，plan/verify/reflect 节点化，满足需求 U-06 显式规划；W1 的 run_agent 保留回归。
+- **verify 强制闭环**：Agent 声称完成后图自动跑测试，失败进 reflect 重试——测试不是可选项。
+- **迭代上限语义**：brief 实现 verbatim 下 `iteration_count` 计 decide 决策次数（20 次执行 + 1 次 guard = 21）；功能上执行轮数上限 20 保持。
+- **真实发现（W2 限制，W4 方向）**：
+  1. 迭代上限 20 对复杂真实任务偏紧（Agent 探索阶段消耗大）。
+  2. Agent 探索策略低效（第一轮读 77 个文件，大量无关）——W4 Repository Intelligence 代码索引可改善。
+  3. plan 节点只做流程拆解不做根因识别；根因分析依赖 decide 循环 LLM 自由探索（效率与稳定性受模型影响）。
+- **环境**：venv 复制重建 + langgraph 1.2.6/fastapi 等 vendoring（断网）；rg 在本会话 PATH 可用；`GIT_CEILING_DIRECTORIES` 用于非仓库测试场景。
+
+### 遗留问题
+
+- **bilibili 业务缺陷未深入**（用户反馈"AI 日报生成问题很大"）：项目会话记录显示真实失败历史（图片 JSON 50% / 网络超时 30% / 重启 / HTTP 500；A/B/C 三个已知未修根因：lifespan 内存不重置、轮询不处理部分完成、图片 JSON 容错）。测试全绿不覆盖真实链路（LLM/公众号 API/cron/网络）。待用户确认是否需要继续排查。
+- 修复方案 conftest.py 仅在 defect-repo 副本，原仓库 `D:\AI project\bilibili` 未动（待用户决定是否应用）。
+- defect-repo 演示副本不入库（同 W1 决策），收尾时清理。
+- `.venv_tmp/`、`demo-w2-*.txt` 等演示残留待清理。

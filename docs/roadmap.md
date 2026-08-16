@@ -9,7 +9,7 @@
 |------|------|------|------|------|
 | W0 | 项目初始化 | main | - | [x] 已完成 |
 | W1 | 本地 Workspace | feature/w1-local-workspace | W0 | [x] 已完成 |
-| W2 | Shell + Test | feature/w2-shell-test | W1 | [ ] 待开始 |
+| W2 | Shell + Test | feature/w2-shell-test | W1 | [x] 已完成 |
 | W3 | Docker Sandbox | feature/w3-docker-sandbox | W2 | [ ] 待开始 |
 | W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [ ] 待开始 |
 | W5 | GitHub Issue Agent | feature/w5-github-issue | W3 | [ ] 待开始 |
@@ -71,15 +71,15 @@ coding-agent/
 
 **任务清单**：
 
-- [ ] `run_command(command)`：返回 timeout / stdout / stderr / exit_code / duration
-- [ ] `run_tests()` / `run_test(test_path)`：pytest 封装，输出结构化结果
-- [ ] Planner：任务拆解为步骤
-- [ ] Agent Loop：LangGraph 循环（ReAct 模式），Observation 注入下一轮
-- [ ] Retry / Reflection：测试失败 → 分析失败原因 → 重新规划
-- [ ] Git Diff：记录与展示代码变更
-- [ ] TDD + Review + 合并回 main
+- [x] `run_command(command)`：返回 timeout / stdout / stderr / exit_code / duration
+- [x] `run_tests()` / `run_test(test_path)`：pytest 封装，输出结构化结果
+- [x] Planner：任务拆解为步骤（LangGraph plan 节点）
+- [x] Agent Loop：LangGraph 循环（plan → decide ⇄ execute → verify → reflect → finalize）
+- [x] Retry / Reflection：测试失败 → 分析失败原因 → 重新规划（verify 失败 → reflect → decide，上限 3 轮）
+- [x] Git Diff：记录与展示代码变更（git_status / git_diff / git_log 只读三件套）
+- [x] TDD + Review + 合并回 main（47 项测试全绿；真实演示：bilibili defect-repo 79 passed 闭环）
 
-**验收标准**：给 Agent 一个含缺陷的 demo 任务，Agent 能自主完成"定位 → 修复 → 测试通过"；失败时可重试并最终成功。
+**验收标准达成**：真实缺陷任务（bilibili AI 日报测试全挂）→ Agent 自主"定位（conftest 缺失）→ 修复 → 测试通过（79 passed）"，含失败重试与因果验证。
 
 ---
 
