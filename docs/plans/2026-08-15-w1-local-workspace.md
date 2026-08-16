@@ -1299,3 +1299,18 @@ git branch -d feature/w1-local-workspace
 ```
 
 Expected: main 上 `23 passed`；worktree 已删除；W1 窗口关闭。
+
+---
+
+## 附录：实施修正记录（2026-08-15，实现与本文档字面量的偏差）
+
+以下偏差均为实施中发现并已在代码中修复的必要修正，正文保持原样以便对照：
+
+| # | 位置 | 偏差 | 原因与修复 |
+|---|------|------|-----------|
+| 1 | Task 2 测试 `test_read_file_with_line_numbers` | 补 `ws.mkdir()` | `Path.write_text` 不创建父目录，原字面量必现 FileNotFoundError |
+| 2 | Task 2 测试 size 断言 | `fc.size == 8` → `fc.size == len((ws/"a.py").read_bytes())` | Windows 下 write_text 将 LF 转 CRLF，磁盘 size 为 10 而非 8；且经 review 指出原改为 `stat().st_size` 属同义断言（AGENTS.md 禁止），最终以 read_bytes 独立计算 |
+| 3 | Task 3 四个 search_code 测试 | 各补 `ws.mkdir()` | 同 #1 |
+| 4 | Task 4 测试 `test_write_file_overwrites` | 补 `ws.mkdir()` | 同 #1 |
+| 5 | Task 6 测试 `test_agent_multiple_tool_calls_in_one_turn` | 补 `ws.mkdir()` | 同 #1 |
+| 6 | Task 6 实现 `_result_to_text` | 新增 list 分支 | `dataclasses.asdict()` 对 list 抛 TypeError；list_files/search_code 返回 list，原字面量必现崩溃（brief 自身测试 3/4 依赖此修复） |

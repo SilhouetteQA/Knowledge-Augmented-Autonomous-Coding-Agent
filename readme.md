@@ -6,7 +6,7 @@
 
 基于现有的《明日方舟》全量剧情结构化知识库、Knowledge Graph 与 LangGraph ReAct Agent，进一步构建能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，最终产出 GitHub Pull Request。
 
-> 项目状态：W0 项目初始化已完成，等待进入 W1（本地 Workspace）。
+> 项目状态：W0 项目初始化、W1 本地 Workspace 均已完成（23 项测试通过，真实项目演示闭环成功）。等待进入 W2（Shell + Test）。
 > 开发规范见 [agents.md](agents.md)，窗口路线图见 [docs/roadmap.md](docs/roadmap.md)。
 
 ---
@@ -152,14 +152,21 @@ Knowledge-Augmented Autonomous Coding Agent/
 
 ## 快速开始
 
-> 当前处于 W0 初始化阶段，运行入口将在 W1/W2 完成后补充。
+> 已实现 Level 1 前半部分：四个文件工具（list_files / read_file / search_code / write_file）+ 最小 ReAct 循环（CLI）。
 
 ```bash
-# 环境要求：Python 3.12+
-pip install -e ".[dev]"
+# 环境要求：Python 3.12+、ripgrep（PATH 或 RIPGREP_BIN 指定）
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
+
+# 配置 LLM（复制 .env.example 为 .env 并填写）
+# opencode_go_api / OPENCODE_GO_BASE_URL / OPENCODE_GO_MODEL
 
 # 运行测试
-pytest tests/
+.venv\Scripts\python.exe -m pytest tests/
+
+# 运行 Agent（工作区默认 workspace/，可放入任意真实项目）
+.venv\Scripts\python.exe main.py "在 demo-project 中定位某函数并添加注释" --workspace workspace
 ```
 
 ## 常用命令

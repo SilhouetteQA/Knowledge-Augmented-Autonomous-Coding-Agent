@@ -8,7 +8,7 @@
 | 窗口 | 名称 | 分支 | 依赖 | 状态 |
 |------|------|------|------|------|
 | W0 | 项目初始化 | main | - | [x] 已完成 |
-| W1 | 本地 Workspace | feature/w1-local-workspace | W0 | [ ] 待开始 |
+| W1 | 本地 Workspace | feature/w1-local-workspace | W0 | [x] 已完成 |
 | W2 | Shell + Test | feature/w2-shell-test | W1 | [ ] 待开始 |
 | W3 | Docker Sandbox | feature/w3-docker-sandbox | W2 | [ ] 待开始 |
 | W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [ ] 待开始 |
@@ -49,17 +49,17 @@ coding-agent/
 
 **任务清单**：
 
-- [ ] 进入窗口：创建 worktree `feature/w1-local-workspace`，读 readme + devlog + 本路线图
-- [ ] Brainstorming：澄清 W1 设计（工具接口、Agent 循环形态、demo-project 选择）→ `docs/specs/YYYY-MM-DD-w1-local-workspace.md`，用户批准
-- [ ] Writing-plans：产出实施计划 → `docs/plans/YYYY-MM-DD-w1-local-workspace.md`
-- [ ] 实现 `list_files()`（目录遍历，排除忽略项）
-- [ ] 实现 `read_file(path)`（带行号读取，限制大小）
-- [ ] 实现 `search_code(query)`（ripgrep 语义搜索，返回文件/行号/摘要）
-- [ ] 实现 `write_file(path, content)`（写入 + 安全校验：路径在 workspace 内）
-- [ ] 搭建 demo-project（小型真实 Python 项目，含测试）
-- [ ] TDD：每个工具先写失败测试 → 最小实现 → 通过
-- [ ] 验证：Agent 能读 demo-project 代码、定位函数、修改、再读取确认
-- [ ] Review（requesting-code-review）→ 修复 → 合并回 main → 更新路线图状态
+- [x] 进入窗口：创建 worktree `feature/w1-local-workspace`，读 readme + devlog + 本路线图
+- [x] Brainstorming：澄清 W1 设计（工具接口、Agent 循环形态、demo-project 选择）→ `docs/specs/2026-08-15-w1-local-workspace.md`，用户批准
+- [x] Writing-plans：产出实施计划 → `docs/plans/2026-08-15-w1-local-workspace.md`
+- [x] 实现 `list_files()`（目录遍历，排除忽略项）
+- [x] 实现 `read_file(path)`（带行号读取，限制大小）
+- [x] 实现 `search_code(query)`（ripgrep 语义搜索，返回文件/行号/摘要）
+- [x] 实现 `write_file(path, content)`（写入 + 安全校验：路径在 workspace 内）
+- [x] 搭建 demo-project（真实项目：`D:\AI project\camera man` 复制至 workspace/demo-project，7 模块 + 6 测试）
+- [x] TDD：每个工具先写失败测试 → 最小实现 → 通过（23 项测试）
+- [x] 验证：Agent 能读 demo-project 代码、定位函数、修改、再读取确认（真实 LLM 演示：定位 storage.py 的 EventStore.record() 并添加中文注释，闭环成功）
+- [x] Review（requesting-code-review）→ 修复 → 合并回 main → 更新路线图状态
 
 **验收标准**：四个文件工具全部有测试覆盖；CLI 能对 demo-project 完成"读取-理解-修改-确认"闭环。
 
