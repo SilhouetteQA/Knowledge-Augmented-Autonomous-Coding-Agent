@@ -6,7 +6,7 @@
 
 基于现有的《明日方舟》全量剧情结构化知识库、Knowledge Graph 与 LangGraph ReAct Agent，进一步构建能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，最终产出 GitHub Pull Request。
 
-> 项目状态：W0 项目初始化、W1 本地 Workspace 均已完成（23 项测试通过，真实项目演示闭环成功）。等待进入 W2（Shell + Test）。
+> 项目状态：W0 初始化、W1 本地 Workspace、W2 Shell + Test 均已完成（47 项测试通过；LangGraph 强制验证闭环 + 真实缺陷仓库演示 79 passed）。等待进入 W3（Docker Sandbox）。
 > 开发规范见 [agents.md](agents.md)，窗口路线图见 [docs/roadmap.md](docs/roadmap.md)。
 
 ---
@@ -134,7 +134,7 @@ Knowledge-Augmented Autonomous Coding Agent/
 |------|------|----------|
 | W0 | 项目初始化 | git 初始化、AGENTS/README/路线图、脚手架（已完成） |
 | W1 | 本地 Workspace | 文件工具四件套：list_files / read_file / search_code / write_file |
-| W2 | Shell + Test | run_command / run_tests + Planner / Agent Loop / Retry / Reflection |
+| W2 | Shell + Test | run_command / run_tests / git 只读 + LangGraph 编排（plan → decide ⇄ execute → verify → reflect）（已完成） |
 | W3 | Docker Sandbox | 容器化执行 + timeout / CPU / 内存 / 网络 / 文件系统限制 |
 | W4 | Repository Intelligence | Code Parser → Code Knowledge Graph + 接入 Arknights KG |
 | W5 | GitHub Issue Agent | Issue → Clone → Branch → Work → Test → Review → Commit → Push → PR（MVP） |
@@ -152,7 +152,7 @@ Knowledge-Augmented Autonomous Coding Agent/
 
 ## 快速开始
 
-> 已实现 Level 1 前半部分：四个文件工具（list_files / read_file / search_code / write_file）+ 最小 ReAct 循环（CLI）。
+> 已实现 Level 1 + Level 2 起步：八个工具（四文件 + run_command / run_tests + git 只读三件套）+ LangGraph 显式编排（强制测试验证闭环）。
 
 ```bash
 # 环境要求：Python 3.12+、ripgrep（PATH 或 RIPGREP_BIN 指定）
