@@ -210,3 +210,70 @@ def run_tests(path: str | None = None, workspace_root: str | None = None) -> Tes
     except OSError as e:
         return ToolError(f"pytest 执行失败: {e}")
     return _parse_pytest_output(proc.stdout)
+
+
+@dataclass
+class GitStatus:
+    """git status --short 解析结果。"""
+    clean: bool
+    changes: list[str]
+
+
+@dataclass
+class GitDiff:
+    """git diff 结果：stat 为变更统计，diff 为完整差异（截断）。"""
+    stat: str
+    diff: str
+
+
+@dataclass
+class GitLog:
+    """git log --oneline 结果。"""
+    entries: list[str]
+
+
+def _run_git(args: list[str], workspace_root: str | None) -> str | ToolError:
+    """在 workspace 根执行只读 git 命令，返回 stdout；失败返回 ToolError。"""
+    base = resolve_workspace_path("", workspace_root)
+    if isinstance(base, ToolError):
+        return base
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=base, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except FileNotFoundError:
+        return ToolError("git 不可用: 未找到 git（请安装 Git）")
+    except subprocess.TimeoutExpired:
+        return ToolError("git 命令超时（30 秒）")
+    if proc.returncode != 0:
+        return ToolError(f"git {args[0]} 失败: {proc.stderr.strip()}")
+    return proc.stdout
+
+
+def git_status(workspace_root: str | None = None) -> GitStatus | ToolError:
+    """查看工作区 git 状态（--short）。"""
+    out = _run_git(["status", "--short"], workspace_root)
+    if isinstance(out, ToolError):
+        return out
+    lines = [l for l in out.splitlines() if l.strip()]
+    return GitStatus(clean=len(lines) == 0, changes=lines)
+
+
+def git_diff(workspace_root: str | None = None) -> GitDiff | ToolError:
+    """查看未提交变更（--stat + 完整 diff，截断）。"""
+    stat = _run_git(["diff", "--stat"], workspace_root)
+    if isinstance(stat, ToolError):
+        return stat
+    diff = _run_git(["diff"], workspace_root)
+    if isinstance(diff, ToolError):
+        return diff
+    return GitDiff(stat=stat.strip(), diff=_truncate(diff))
+
+
+def git_log(count: int = 10, workspace_root: str | None = None) -> GitLog | ToolError:
+    """查看最近提交（--oneline）。"""
+    out = _run_git(["log", "--oneline", f"-n{count}"], workspace_root)
+    if isinstance(out, ToolError):
+        return out
+    return GitLog(entries=[l for l in out.splitlines() if l.strip()])
