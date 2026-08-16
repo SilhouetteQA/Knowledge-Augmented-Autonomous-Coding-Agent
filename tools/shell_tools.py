@@ -38,8 +38,8 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
     仅 kill 顶层 cmd 会留下孤儿子进程继续占住 stdout/stderr 管道，导致后续 communicate
     阻塞至其自然结束（超时命令拖着不返回）。故需递归枚举并终止全部后代。
     """
-    proc.kill()
     if os.name != "nt":
+        proc.kill()
         return
     import ctypes
     from ctypes import wintypes
@@ -83,16 +83,25 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
             kernel32.TerminateProcess(handle, 1)
             kernel32.CloseHandle(handle)
 
+    # 先取快照并算出全部后代，再终止进程。若先 kill 顶层 cmd，Windows 会把
+    # 孤儿进程重新挂到 PID 4，按 ppid 追溯时后代集合为空而漏杀，故必须在
+    # proc.kill() 之前完成快照与后代枚举。
     children_by_parent: dict[int, list[int]] = {}
     for pid, ppid in _snapshot():
         children_by_parent.setdefault(ppid, []).append(pid)
 
+    descendants: list[int] = []
     stack = [proc.pid]
     while stack:
         current = stack.pop()
         for child in children_by_parent.get(current, []):
-            _terminate(child)
+            descendants.append(child)
             stack.append(child)
+
+    # 先终止后代，再终止顶层进程本身（含 proc.pid）。
+    for child in descendants:
+        _terminate(child)
+    proc.kill()
 
 
 def run_command(
@@ -106,18 +115,23 @@ def run_command(
     if isinstance(base, ToolError):
         return base
     start = time.monotonic()
-    proc = subprocess.Popen(
-        command, shell=True, cwd=base, stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
-    )
     timeout_hit = False
     try:
+        proc = subprocess.Popen(
+            command, shell=True, cwd=base, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+        )
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         timeout_hit = True
-        _kill_process_tree(proc)
+        try:
+            _kill_process_tree(proc)
+        except Exception:
+            # 树杀除异常不崩溃：退化为超时终止，仍尝试排空输出。
+            pass
         out, err = proc.communicate()
     except OSError as e:
+        # 覆盖 Popen 启动失败（如 %COMSPEC% 损坏导致 OSError）与 communicate 的 OSError。
         return ToolError(f"命令执行失败: {e}")
     return CommandResult(
         timeout=timeout_hit,
