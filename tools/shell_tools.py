@@ -4,7 +4,9 @@
 所有命令以 workspace 根为安全边界（cwd 必须位于工作区内）；错误返回 ToolError。
 """
 import os
+import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 
@@ -140,3 +142,71 @@ def run_command(
         exit_code=-1 if timeout_hit else proc.returncode,
         duration=round(time.monotonic() - start, 3),
     )
+
+
+@dataclass
+class TestFailure:
+    """单个测试失败：test 为 路径::用例，message 为失败原因摘要。"""
+    test: str
+    message: str
+
+
+@dataclass
+class TestResult:
+    """pytest 运行结果：failures 为 FAILED 行解析出的失败列表。"""
+    passed: int
+    failed: int
+    error: int
+    total: int
+    duration: float
+    failures: list[TestFailure]
+
+
+def _parse_pytest_output(out: str) -> TestResult:
+    """解析 `pytest -q --tb=no` 输出：计数行 + FAILED 摘要行。"""
+    passed = failed = error = 0
+    duration = 0.0
+    failures: list[TestFailure] = []
+    for line in out.splitlines():
+        m = re.search(r"(\d+) passed", line)
+        if m:
+            passed = int(m.group(1))
+        m = re.search(r"(\d+) failed", line)
+        if m:
+            failed = int(m.group(1))
+        m = re.search(r"(\d+) error", line)
+        if m:
+            error = int(m.group(1))
+        m = re.search(r"in (\d+\.?\d*)s", line)
+        if m:
+            duration = float(m.group(1))
+        fm = re.match(r"FAILED (.+) - (.+)$", line)
+        if fm:
+            failures.append(TestFailure(test=fm.group(1), message=fm.group(2)))
+    return TestResult(
+        passed=passed, failed=failed, error=error,
+        total=passed + failed + error, duration=duration, failures=failures,
+    )
+
+
+def run_tests(path: str | None = None, workspace_root: str | None = None) -> TestResult | ToolError:
+    """在 workspace 根运行 pytest；path 可指定子路径（相对 workspace 根）。"""
+    base = resolve_workspace_path("", workspace_root)
+    if isinstance(base, ToolError):
+        return base
+    cmd = [sys.executable, "-m", "pytest", "-q", "--tb=no"]
+    if path:
+        target = resolve_workspace_path(path, workspace_root)
+        if isinstance(target, ToolError):
+            return target
+        cmd.append(target)
+    try:
+        proc = subprocess.run(
+            cmd, cwd=base, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return ToolError("测试超时（120 秒）")
+    except OSError as e:
+        return ToolError(f"pytest 执行失败: {e}")
+    return _parse_pytest_output(proc.stdout)
