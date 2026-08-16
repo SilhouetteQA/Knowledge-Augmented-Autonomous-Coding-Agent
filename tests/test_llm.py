@@ -63,7 +63,7 @@ def test_openai_client_chat_converts_response(monkeypatch):
                       parameters={"type": "object", "properties": {}})]
     msg = client.chat([{"role": "user", "content": "hi"}], tools)
     assert msg.content == "回答"
-    assert fake.kwargs["model"] == "deepseek-4-flash"
+    assert fake.kwargs["model"] == "deepseek-v4-flash"
     assert fake.kwargs["tools"][0]["function"]["name"] == "read_file"
     assert msg.tool_calls[0].name == "read_file"
     assert msg.tool_calls[0].arguments == {"path": "a.py"}

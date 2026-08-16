@@ -41,6 +41,36 @@ def test_resolve_rejects_escape(tmp_path):
     assert "越界" in result.message
 
 
+def test_resolve_rejects_absolute_outside(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    result = resolve_workspace_path("C:/Windows", str(ws))
+    assert isinstance(result, ToolError)
+    assert "越界" in result.message
+
+
+def test_list_files_subdir_workspace_relative(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    (ws / "sub" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (ws / "top.py").write_text("y = 2\n", encoding="utf-8")
+    result = list_files(root="sub", workspace_root=str(ws))
+    assert not isinstance(result, ToolError)
+    # path 相对 workspace 根，不是相对搜索子目录
+    assert [e.path for e in result] == ["sub/a.py"]
+
+
+def test_search_code_subdir_workspace_relative(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / "sub").mkdir(parents=True)
+    (ws / "sub" / "a.py").write_text("def hello():\n    return 1\n", encoding="utf-8")
+    (ws / "top.py").write_text("def hello():\n    return 1\n", encoding="utf-8")
+    results = search_code("hello", root="sub", workspace_root=str(ws))
+    assert not isinstance(results, ToolError)
+    assert len(results) == 1
+    assert results[0].path == "sub/a.py"
+
+
 def test_read_file_with_line_numbers(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -149,3 +179,14 @@ def test_write_file_escape_rejected(tmp_path):
     r = write_file("../evil.py", "x", workspace_root=str(ws))
     assert isinstance(r, ToolError)
     assert "越界" in r.message
+
+
+def test_list_files_uses_workspace_root_env(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir(parents=True)
+    (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
+    monkeypatch.setenv("WORKSPACE_ROOT", str(ws))
+    # 不显式传 workspace_root，读取环境变量 WORKSPACE_ROOT
+    result = list_files(workspace_root=None)
+    assert not isinstance(result, ToolError)
+    assert [e.path for e in result] == ["a.py"]

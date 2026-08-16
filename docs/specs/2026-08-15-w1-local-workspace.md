@@ -18,7 +18,7 @@
 ### 2.1 做
 
 - `tools/file_tools.py`：四个文件工具，全部带路径安全校验（限制在 workspace 根内）。
-- `agent/llm.py`：LLMClient 协议 + OpenAI 兼容实现（opencode go 订阅的 deepseek-4-flash）+ MockLLMClient（测试用）。
+- `agent/llm.py`：LLMClient 协议 + OpenAI 兼容实现（opencode go 订阅的 deepseek-v4-flash）+ MockLLMClient（测试用）。
 - `agent/loop.py`：最小 ReAct 循环 `run_agent(task)`，工具调用上限 10 轮。
 - `main.py`：CLI 入口 `python main.py "<任务描述>"`。
 - `.env.example`：LLM 配置模板（不含真实密钥）。
@@ -92,7 +92,7 @@ class LLMClient(Protocol):
 - `OpenAICompatClient`：OpenAI SDK 兼容协议（`base_url` / `api_key` / `model` 可配置），配置来自环境变量：
   - `opencode_go_api` — API Key（用户指定）
   - `OPENCODE_GO_BASE_URL` — 端点地址（实施时用户填入 .env）
-  - `OPENCODE_GO_MODEL` — 默认 `deepseek-4-flash`
+  - `OPENCODE_GO_MODEL` — 默认 `deepseek-v4-flash`
 - `MockLLMClient`：脚本驱动（按调用序列返回预设响应），TDD 全程使用，不消耗真实 API。
 
 ### 4.3 ReAct 循环 `agent/loop.py`

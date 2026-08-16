@@ -2,7 +2,7 @@
 """LLM 客户端：可插拔协议 + OpenAI 兼容实现 + Mock 实现。
 
 真实配置从环境变量读取：opencode_go_api（Key）、OPENCODE_GO_BASE_URL（端点）、
-OPENCODE_GO_MODEL（模型，默认 deepseek-4-flash）。
+OPENCODE_GO_MODEL（模型，默认 deepseek-v4-flash）。
 """
 import json
 import os
@@ -44,13 +44,13 @@ class LLMClient(Protocol):
 
 
 class OpenAICompatClient:
-    """OpenAI 兼容实现（opencode go 订阅的 deepseek-4-flash）。"""
+    """OpenAI 兼容实现（opencode go 订阅的 deepseek-v4-flash）。"""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None,
                  model: str | None = None):
         self.api_key = api_key or os.environ.get("opencode_go_api", "")
         self.base_url = base_url or os.environ.get("OPENCODE_GO_BASE_URL", "")
-        self.model = model or os.environ.get("OPENCODE_GO_MODEL", "deepseek-4-flash")
+        self.model = model or os.environ.get("OPENCODE_GO_MODEL", "deepseek-v4-flash")
         if not self.api_key:
             raise ValueError("缺少 API Key：请设置环境变量 opencode_go_api")
         if not self.base_url:

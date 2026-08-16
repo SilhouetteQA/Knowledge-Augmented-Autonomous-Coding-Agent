@@ -31,8 +31,16 @@ class FileEntry:
 
 
 def resolve_workspace_path(path: str, workspace_root: str | None = None) -> str | ToolError:
-    """将相对/绝对路径解析为 workspace 内的绝对路径；越界或工作区缺失返回 ToolError。"""
-    root = Path(workspace_root) if workspace_root else (Path.cwd() / "workspace")
+    """将相对/绝对路径解析为 workspace 内的绝对路径；越界或工作区缺失返回 ToolError。
+
+    工作区根解析顺序：调用方显式传入 > 环境变量 WORKSPACE_ROOT > 当前目录下 workspace。
+    注意：缺省依赖 Path.cwd()，调用方应显式传入 workspace_root 以避免歧义（review 发现）。
+    """
+    if workspace_root:
+        root = Path(workspace_root)
+    else:
+        env_root = os.environ.get("WORKSPACE_ROOT")
+        root = Path(env_root) if env_root else (Path.cwd() / "workspace")
     root = root.resolve()
     if not root.exists():
         return ToolError(f"工作区不存在: {root}")
@@ -43,21 +51,28 @@ def resolve_workspace_path(path: str, workspace_root: str | None = None) -> str 
 
 
 def list_files(root: str | None = None, workspace_root: str | None = None) -> list[FileEntry] | ToolError:
-    """递归列出工作区（或其中子目录）的文件与目录，跳过 IGNORED_DIRS。"""
+    """递归列出工作区（或其中子目录）的文件与目录，跳过 IGNORED_DIRS。
+
+    FileEntry.path 相对 workspace 根（与 read_file/write_file 一致）。
+    """
+    root_path = resolve_workspace_path("", workspace_root)
+    if isinstance(root_path, ToolError):
+        return root_path
     base = resolve_workspace_path(root or "", workspace_root)
     if isinstance(base, ToolError):
         return base
+    root_path = Path(root_path)
     base_path = Path(base)
     entries: list[FileEntry] = []
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
         for name in dirnames:
             p = Path(dirpath) / name
-            entries.append(FileEntry(path=p.relative_to(base_path).as_posix(), is_dir=True, size=0))
+            entries.append(FileEntry(path=p.relative_to(root_path).as_posix(), is_dir=True, size=0))
         for name in filenames:
             p = Path(dirpath) / name
             size = p.stat().st_size
-            entries.append(FileEntry(path=p.relative_to(base_path).as_posix(), is_dir=False, size=size))
+            entries.append(FileEntry(path=p.relative_to(root_path).as_posix(), is_dir=False, size=size))
     entries.sort(key=lambda e: e.path)
     return entries
 
@@ -114,6 +129,9 @@ def search_code(
     workspace_root: str | None = None,
 ) -> list[SearchResult] | ToolError:
     """调用 ripgrep 搜索工作区代码，返回命中列表；rg 缺失/超时/失败返回 ToolError。"""
+    root_path = resolve_workspace_path("", workspace_root)
+    if isinstance(root_path, ToolError):
+        return root_path
     base = resolve_workspace_path(root or "", workspace_root)
     if isinstance(base, ToolError):
         return base
@@ -143,7 +161,7 @@ def search_code(
         if obj.get("type") != "match":
             continue
         data = obj["data"]
-        rel = os.path.relpath(data["path"]["text"], base).replace("\\", "/")
+        rel = os.path.relpath(data["path"]["text"], root_path).replace("\\", "/")
         submatch = data["submatches"][0]
         results.append(SearchResult(
             path=rel,

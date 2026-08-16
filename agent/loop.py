@@ -114,16 +114,28 @@ def _dispatch(name: str, args: dict, workspace_root: str | None) -> object:
     if name == "list_files":
         return list_files(root=args.get("root"), workspace_root=workspace_root)
     if name == "read_file":
-        return read_file(args["path"], workspace_root=workspace_root)
+        path = args.get("path")
+        if path is None:
+            return ToolError("缺少参数: path")
+        return read_file(path, workspace_root=workspace_root)
     if name == "search_code":
+        query = args.get("query")
+        if query is None:
+            return ToolError("缺少参数: query")
         return search_code(
-            args["query"],
+            query,
             root=args.get("root"),
             ignore_case=args.get("ignore_case", False),
             workspace_root=workspace_root,
         )
     if name == "write_file":
-        return write_file(args["path"], args["content"], workspace_root=workspace_root)
+        path = args.get("path")
+        content = args.get("content")
+        if path is None:
+            return ToolError("缺少参数: path")
+        if content is None:
+            return ToolError("缺少参数: content")
+        return write_file(path, content, workspace_root=workspace_root)
     return ToolError(f"未知工具: {name}")
 
 

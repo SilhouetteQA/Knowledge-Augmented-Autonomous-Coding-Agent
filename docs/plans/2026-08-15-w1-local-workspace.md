@@ -597,7 +597,7 @@ git commit -m "feat(tools): 新增 write_file 工具"
 
 **Interfaces:**
 - Consumes: 无（独立于 Task 1-4）
-- Produces: `ToolSpec(name, description, parameters)`；`ToolCall(id, name, arguments)`；`LLMMessage(role, content, tool_calls, tool_call_id)`；`LLMClient` Protocol（`chat(messages: list[dict], tools: list[ToolSpec]) -> LLMMessage`）；`OpenAICompatClient(api_key=None, base_url=None, model=None)`（env: `opencode_go_api` / `OPENCODE_GO_BASE_URL` / `OPENCODE_GO_MODEL` 默认 `deepseek-4-flash`）；`MockLLMClient(script: list[LLMMessage])`（按顺序弹出，记录 calls）
+- Produces: `ToolSpec(name, description, parameters)`；`ToolCall(id, name, arguments)`；`LLMMessage(role, content, tool_calls, tool_call_id)`；`LLMClient` Protocol（`chat(messages: list[dict], tools: list[ToolSpec]) -> LLMMessage`）；`OpenAICompatClient(api_key=None, base_url=None, model=None)`（env: `opencode_go_api` / `OPENCODE_GO_BASE_URL` / `OPENCODE_GO_MODEL` 默认 `deepseek-v4-flash`）；`MockLLMClient(script: list[LLMMessage])`（按顺序弹出，记录 calls）
 
 - [ ] **Step 1: 添加依赖并安装**
 
@@ -1314,3 +1314,4 @@ Expected: main 上 `23 passed`；worktree 已删除；W1 窗口关闭。
 | 4 | Task 4 测试 `test_write_file_overwrites` | 补 `ws.mkdir()` | 同 #1 |
 | 5 | Task 6 测试 `test_agent_multiple_tool_calls_in_one_turn` | 补 `ws.mkdir()` | 同 #1 |
 | 6 | Task 6 实现 `_result_to_text` | 新增 list 分支 | `dataclasses.asdict()` 对 list 抛 TypeError；list_files/search_code 返回 list，原字面量必现崩溃（brief 自身测试 3/4 依赖此修复） |
+| 7 | Task 5 Interfaces 与代码/文档中的模型默认值 | 模型 ID 修正（deepseek-4-flash → deepseek-v4-flash） | opencode go 实际模型 ID 为 `deepseek-v4-flash`，演示验证；同步修正 `agent/llm.py` 默认值、`.env.example`、`tests/test_llm.py` 断言与 spec §2.1/§4.2 |
