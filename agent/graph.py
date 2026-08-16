@@ -1,18 +1,19 @@
 # agent/graph.py
 """LangGraph 显式阶段编排：plan → decide ⇄ execute → (verify) → reflect → finalize。
 
-Task 4 版本：核心循环（plan/decide/execute/finalize），decide 无工具调用即完成；
-verify/reflect 节点由 Task 5 加入，届时 decide 无工具调用改为进入强制验证。
+Task 5 版本：plan → decide ⇄ execute → verify → reflect ⇄ decide → finalize；
+decide 无工具调用进入强制验证（verify/reflect 闭环），verify_rounds 上限 3、迭代上限 20。
 """
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
 from agent.llm import LLMClient, LLMMessage, ToolCall
 from agent.loop import AgentStep, _build_tools, _dispatch, _result_to_text
+from tools.shell_tools import TestResult, run_tests
 
 # 计划节点提示词：只输出 JSON 数组
 PLAN_PROMPT = (
@@ -21,12 +22,22 @@ PLAN_PROMPT = (
 )
 
 
-def _decide_system(plan: list[str]) -> str:
-    """decide 节点系统提示词（引用计划）。"""
+def _reflect_system(details: str) -> str:
+    """reflect 节点提示词：携带测试失败详情。"""
+    return (
+        "测试失败。请分析失败原因，给出下一步修复方向。\n"
+        f"失败详情：\n{details}"
+    )
+
+
+def _decide_system(plan: list[str], verify_rounds: int, max_verify_rounds: int) -> str:
+    """decide 节点系统提示词（引用计划与验证轮次）。"""
     plan_text = "\n".join(f"- {p}" for p in plan) or "- （无计划）"
     return (
         "你是编码助手。你可以调用工具查看、修改和执行工作区内的代码。\n"
         f"你的计划：\n{plan_text}\n"
+        f"验证轮次：已进行 {verify_rounds}/{max_verify_rounds} 次。测试全部通过前不要声称完成；"
+        "声称完成后系统会自动运行测试验证。\n"
         "规则：只操作工作区内文件；每次工具调用后先观察结果再行动；完成后用中文总结。"
     )
 
@@ -70,6 +81,7 @@ def _parse_plan(content: str) -> list[str]:
 
 
 def build_graph(llm: LLMClient, max_iterations: int = 20,
+                max_verify_rounds: int = 3,
                 workspace_root: str | None = None) -> object:
     """构建 LangGraph 图（闭包捕获 llm 与上限参数）。"""
 
@@ -82,7 +94,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
         return {"plan": _parse_plan(msg.content or "")}
 
     def decide_node(state: AgentState) -> dict:
-        system = _decide_system(state["plan"])
+        system = _decide_system(state["plan"], state["verify_rounds"], max_verify_rounds)
         messages = [{"role": "system", "content": system}] + state["messages"]
         msg = llm.chat(messages, _build_tools())
         tool_calls = None
@@ -113,6 +125,29 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
             })
         return {"steps": steps, "messages": messages, "pending_tool_calls": None}
 
+    def verify_node(state: AgentState) -> dict:
+        tr = run_tests(workspace_root=workspace_root)
+        return {
+            "test_result": tr,
+            "verify_rounds": state["verify_rounds"] + 1,
+            "test_results": state["test_results"] + [tr],
+        }
+
+    def reflect_node(state: AgentState) -> dict:
+        tr = state["test_result"]
+        if isinstance(tr, TestResult):
+            details = asdict(tr)
+        else:
+            details = {"error": getattr(tr, "message", str(tr))}
+        msg = llm.chat(
+            [{"role": "system",
+              "content": _reflect_system(json.dumps(details, ensure_ascii=False))},
+             {"role": "user", "content": state["task"]}],
+            [],
+        )
+        return {"messages": state["messages"] + [
+            {"role": "assistant", "content": f"[失败分析] {msg.content}"}]}
+
     def finalize_node(state: AgentState) -> dict:
         content = state["messages"][-1].get("content") if state["messages"] else ""
         return {"final_answer": content or "任务完成", "status": "done"}
@@ -123,20 +158,35 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     def route_after_decide(state: AgentState) -> str:
         if state["pending_tool_calls"]:
             return "execute" if state["iteration"] <= max_iterations else "finalize_limited"
-        return "finalize"
+        return "verify"
+
+    def route_after_verify(state: AgentState) -> str:
+        tr = state["test_result"]
+        passed = isinstance(tr, TestResult) and tr.failed == 0 and tr.error == 0
+        if passed:
+            return "finalize"
+        if state["verify_rounds"] >= max_verify_rounds:
+            return "finalize_limited"
+        return "reflect"
 
     g = StateGraph(AgentState)
     g.add_node("plan", plan_node)
     g.add_node("decide", decide_node)
     g.add_node("execute", execute_node)
+    g.add_node("verify", verify_node)
+    g.add_node("reflect", reflect_node)
     g.add_node("finalize", finalize_node)
     g.add_node("finalize_limited", finalize_limited_node)
     g.set_entry_point("plan")
     g.add_edge("plan", "decide")
     g.add_conditional_edges("decide", route_after_decide,
-                            {"execute": "execute", "finalize": "finalize",
+                            {"execute": "execute", "verify": "verify",
                              "finalize_limited": "finalize_limited"})
     g.add_edge("execute", "decide")
+    g.add_conditional_edges("verify", route_after_verify,
+                            {"finalize": "finalize", "finalize_limited": "finalize_limited",
+                             "reflect": "reflect"})
+    g.add_edge("reflect", "decide")
     g.add_edge("finalize", END)
     g.add_edge("finalize_limited", END)
     return g.compile()
@@ -146,7 +196,7 @@ def run_agent_graph(task: str, llm: LLMClient, max_iterations: int = 20,
                     max_verify_rounds: int = 3,
                     workspace_root: str | None = None) -> AgentGraphResult:
     """执行任务：LangGraph 图驱动，返回结构化结果。"""
-    graph = build_graph(llm, max_iterations, workspace_root)
+    graph = build_graph(llm, max_iterations, max_verify_rounds, workspace_root)
     result = graph.invoke({
         "task": task,
         "plan": [],
