@@ -87,7 +87,7 @@ def test_network_isolated(tmp_path):
         r = mgr.exec("python -c \"import urllib.request; "
                      "urllib.request.urlopen('https://example.com', timeout=5)\"")
         assert not isinstance(r, ToolError)
-        assert r.exit_code != 0  # --network none 下连接失败
+        assert r.exit_code != 0  # 运行期容器已断桥接网络，外网连接失败
 
 
 def test_workspace_mount_sync(tmp_path):

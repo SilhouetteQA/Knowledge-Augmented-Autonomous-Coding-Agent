@@ -80,11 +80,13 @@ def test_create_passes_resource_limits(tmp_path):
     assert "--memory" in run and "1g" in run
     assert "--memory-swap" in run and "1g" in run
     assert "--pids-limit" in run and "512" in run
-    assert "--network" in run and "none" in run
+    assert "--network" not in run
     assert "--tmpfs" in run and "/tmp" in run
     assert "-v" in run and f"{ws}:/workspace" in run
     assert "--name" in run and mgr.name in run
     assert run[-2:] == ["sleep", "infinity"]
+    # 创建期网络完成依赖安装/克隆后，network=False（默认）时断开 bridge 以隔离运行期
+    assert fake.called("docker", "network", "disconnect", "bridge", mgr.name)
 
 
 def test_create_network_optin(tmp_path):
@@ -95,6 +97,8 @@ def test_create_network_optin(tmp_path):
     mgr.create()
     run = [c for c in fake.calls if c[:2] == ["docker", "run"]][0]
     assert "--network" not in run
+    # 网络 opt-in 时不做创建后断网
+    assert not fake.called("docker", "network", "disconnect", "bridge", mgr.name)
 
 
 def test_create_installs_requirements(tmp_path):
@@ -160,7 +164,7 @@ def test_exec_wraps_timeout_and_cwd(tmp_path):
     assert r.exit_code == 0
     exec_call = [c for c in fake.calls if c[:2] == ["docker", "exec"]][-1]
     wrapped = exec_call[-1]
-    assert "timeout -s KILL -k 5s 7 bash -lc" in wrapped
+    assert "timeout -k 5s 7 bash -lc" in wrapped
     assert "cd '/workspace/sub' &&" in wrapped
 
 

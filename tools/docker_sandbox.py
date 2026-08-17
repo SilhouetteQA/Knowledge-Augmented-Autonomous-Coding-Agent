@@ -139,8 +139,7 @@ class SandboxManager:
             "-v", f"{self.workspace_root}:/workspace",
             "-w", "/workspace",
         ]
-        if not self.config.network:
-            cmd += ["--network", "none"]
+        # 容器默认桥接网络创建：创建期网络可用（装依赖/克隆需要 DNS 解析）。
         cmd += [self.config.image, "sleep", "infinity"]
         self._run(*cmd)
         self._created = True
@@ -152,10 +151,19 @@ class SandboxManager:
         if self.config.repo_url and not os.listdir(self.workspace_root):
             self._run("docker", "exec", self.name, "git", "clone",
                       self.config.repo_url, "/workspace")
+        # 创建期依赖/克隆完成后再断网：运行期默认隔离（网络 opt-in）。
+        # 容器仍在运行 sleep infinity，disconnect 后 exec 阶段无网络。
+        if not self.config.network:
+            self._run("docker", "network", "disconnect", "bridge", self.name)
 
     def exec(self, command: str, cwd: str | None = None,
              timeout: int = 60) -> CommandResult | ToolError:
-        """在容器内执行命令；超时（GNU timeout 124）与 OOM（137）结构化返回。"""
+        """在容器内执行命令；超时（GNU timeout 124）与 OOM（137）结构化返回。
+
+        超时用 `timeout -k 5s {t}`（无 `-s KILL`）：先发 SIGTERM，进程不退出则
+        5 秒后 SIGKILL；GNU timeout 文档约定超时返回 124，正常结束透传子进程退出码。
+        极端情况：TERM 免疫进程被宽限 KILL 也返 137，与 OOM 同码（罕见可接受）。
+        """
         if not self._created:
             return ToolError(f"沙箱容器未创建: {self.name}")
         container_cwd = "/workspace"
@@ -165,7 +173,7 @@ class SandboxManager:
                 return ToolError(f"路径越界: {cwd}")
             if rel != ".":
                 container_cwd = "/workspace/" + rel
-        wrapped = f"timeout -s KILL -k 5s {int(timeout)} bash -lc {_sh_quote(command)}"
+        wrapped = f"timeout -k 5s {int(timeout)} bash -lc {_sh_quote(command)}"
         if container_cwd != "/workspace":
             wrapped = f"cd {_sh_quote(container_cwd)} && {wrapped}"
         start = time.monotonic()
