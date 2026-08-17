@@ -97,3 +97,57 @@
 - 完整会话归档：`docs/sessions/2026-08-15-w1w2-session.md`（时间线、决策、指标、环境备忘、W3 入口指引——新会话先读它）。
 - **LLM 配置**（.env 重建）：`opencode_go_api`（User 环境变量）+ `OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1` + `OPENCODE_GO_MODEL=deepseek-v4-flash`。
 - **W3 前置**：Docker 未安装（2026-08-15 检查），需先装 Docker Desktop。
+
+## W3 前置：Docker 安装完成（2026-08-16）
+
+### 完成内容
+
+- **Docker Desktop 4.86.0 安装到 `D:\Docker`**（`--installation-dir=D:\Docker --backend=wsl-2 --quiet --accept-license`），验证通过：`docker --version`（Client/Server 29.7.2）、`docker info`（12 CPU / 8GB 内存 / Linux/WSL2 引擎）、`docker run hello-world` 成功。
+- **WSL2 环境修复**：本机原本缺 WSL2 内核且 VirtualMachinePlatform 未启用；已启用 `Microsoft-Windows-Subsystem-Linux` + `VirtualMachinePlatform`（dism，无重启需求），安装 WSL2 内核（wsl_update_x64.msi，内核 6.6.87.2-1），WSL 2.6.3.0。Ubuntu（WSL2）发行版实测可用。
+- **坑 1（孤儿注册表项）**：4 月曾安装过 Docker Desktop 4.68.0 但目录已删除（当时无 WSL2 内核，从未正常运行），残留 `HKLM\...\Uninstall\Docker Desktop` 注册项导致新安装器 4.86 直接退出 -5（0xFFFFFFFB，检测到已安装）。删除残留项后安装成功。
+- **坑 2（沙箱网络限制）**：DSH 沙箱阻断出站网络，且 Docker CDN 单连接仅 ~250KB/s。解法：提权（danger-full-access）后 curl 6 连接分块并行下载（`-r` Range 分段，~5MB/s），个别分块 SSL 中断用 `--retry-all-errors` 重试后合并（SHA256 校验一致）。
+- **坑 3（WSL 数据迁移，重要）**：Docker Desktop 4.86 的 WSL 数据目录设置键为 **`CustomWslDistroDir`**（settings-store.json）。直接改配置文件写 `vm.resources.wslDataFolder` / `dataFolder` / `DataFolder` 均无效（后端日志标记 unknown 或被默认值覆盖）；**唯一可靠方式是通过 GUI**：Settings → Resources → Advanced → Disk image location → 选目标目录 → Apply & Restart（确认 Move disk image?）。迁移后：程序在 `D:\Docker`，数据在 `D:\Docker\data\DockerDesktopWSL`（WSL 注册 BasePath 指向 D 盘，hello-world 镜像完整保留）。
+- **W3 窗口已就绪**：worktree `.worktrees/w3-docker-sandbox`（分支 `feature/w3-docker-sandbox`）已创建；`.env` 已重建；venv 从 W1 残留 worktree 复制 + 从 `D:\CodexPython312` vendoring langgraph 1.2.6 家族（含 langsmith/requests 等传递依赖，jsonpatch 为单文件模块需单独复制）；**48 项测试全绿**。
+- 安装脚本与日志留存在 `D:\DockerInstall\`（prepare-wsl.ps1 / install-docker3.ps1 / 各 .log）。
+
+### 下一步
+
+- 进入 W3 窗口流程：brainstorming 澄清 Sandbox 生命周期与资源限制设计 → spec → 用户批准 → plan → TDD 实施。
+
+## W3 Docker Sandbox 完成（2026-08-17）
+
+### 完成内容
+
+- **窗口**：worktree `.worktrees/w3-docker-sandbox`，分支 `feature/w3-docker-sandbox`（13 commits），合并回 main（b8fae3c，88 测试全绿）。
+- **设计**：brainstorming 澄清 4 项决策（执行器抽象+配置切换 / 自建镜像 / 创建期开网运行时禁网 / git 进容器）→ spec → plan（7 任务，全代码 TDD）→ subagent-driven 实施（每任务独立实现+双轴审查，共 14 个子代理轮次）。
+- **实现**：
+  - `tools/shell_tools.py`：Executor 协议 + LocalExecutor（原 subprocess 行为不变）+ get_executor（ContextVar + KA_EXECUTOR）+ CommandResult.oom
+  - `tools/docker_sandbox.py`：SandboxConfig/get_sandbox_config、SandboxManager（create→exec→destroy，资源限制全参数）、DockerExecutor、sandbox_executor 上下文（一个任务一个沙箱，创建失败亦销毁）
+  - `agent/loop.py`/`agent/graph.py`：任务包进沙箱上下文；`main.py` 新增 `--executor` 与 `--graph` 开关（--graph 接入 9 工具编排，W3 验收缺口修复）
+  - `Dockerfile` + `scripts/fetch_node.py` + `.dockerignore`；`tools/file_tools.py` ToolError 改 Exception 子类（用户裁决）
+- **测试**：88 项（单元 64 + 集成 10 + 回归）；集成测试 @pytest.mark.docker 真实容器 10/10（生命周期/超时 124/OOM 137/网络隔离/挂载同步/git 一致/双执行器一致/创建期 pip+clone/无残留）。
+- **真实演示**（camera man，容器化闭环）：Agent 全部命令在容器内执行；缺 numpy/cv2/mediapipe 依赖时自主编写纯 Python 降级模块 + conftest 修复 → 容器内 51 测试全绿 → verify 门禁通过 → 中文总结闭环；无残留。
+
+### 关键决策与经验
+
+- **执行器抽象**：LocalExecutor/DockerExecutor 双轨，KA_EXECUTOR 切换；docker 模式无 fallback（不可用即 ToolError）。
+- **网络策略实现**：`--network none` 在创建期即生效会断掉 pip/clone → 改为「默认桥接创建 → setup 完成后 `docker network disconnect bridge`」，network=True 时不切断（opt-in）。
+- **超时判定**：GNU `timeout -s KILL` 恒返 137（与 OOM 同码且永不判中）→ 改用 `timeout -k 5s`（TERM→5s 宽限 KILL），超时返 124、OOM 返 137；TERM 免疫进程被宽限 KILL 仍 137 为已知边角（spec §7 已注，W5 可用 docker inspect OOMKilled 判别）。
+- **本网络单连接限速 ~250KB/s**（apt/pip 单连接下载 150MB 需 30-40 分钟且停滞）→ 镜像构建全面并行化：apt 只装小包 + node 官方 tar 用 `scripts/fetch_node.py` 8 连接 Range 分块下载 + 清华 pip 源；全镜像构建 3.9 分钟。
+- **沙箱环境限制复盘**：DSH 沙箱阻断出站网络/命名管道；venv 复制重建（mypyc 编译包需连 .pyd 一起复制）；docker CLI 不在默认 PATH（需刷新 Machine PATH）；集成测试在 danger-full-access 下可正常跑。
+- **main.py 历史缺口**：W1 起连 loop（4 文件工具），graph（9 工具）从未接 CLI——W3 演示暴露后加 `--graph` 开关（用户批准）。
+- **最终审查发现并修复**：sandbox_executor 的 create() 原在 try/finally 外，创建期失败会泄漏容器且确定性容器名导致下个任务 --name 冲突（已修复 + 回归测试）。
+- 子代理执行要点：实施/审查/修复均子代理化（简报文件传递、审查包 diff 文件、账本 .superpowers/sdd/progress.md 跟踪）；简报缺陷（ToolError 非异常、timeout -s KILL、--network none、测试 env 泄漏等）由实施者发现 → 控制器裁决 → 用户批准。
+
+### 遗留问题
+
+- 沙箱镜像未锁定版本（python:3.12-slim 浮动 tag + apt/pip 未固定）——重建镜像可能漂移；W5 前建议锁定。
+- `fetch_node.py` 无 sha256 校验（tar 解压兜底）；失败时 part 文件未清理（容器内瞬态）。
+- 集成测试 2 项依赖公网（pip six / GitHub Hello-World 克隆）——易碎外部依赖。
+- git filemode 一致性测试未真正加压（建议 chmod +x 变体）。
+- demo 副本与日志（workspace/demo-project、graph-demo-*.log）未入库、未清理残留于主仓库 workspace 之外——已随 worktree 删除；主仓库 workspace 仅 .gitkeep。
+- 主仓库 `.venv` 已从 W3 worktree 复制完整版（原残缺），后续窗口沿用。
+
+### 下一步
+
+- W4（Repository Intelligence，可与 W5 并行）或 W5（GitHub Issue Agent，依赖 W3 已满足）。

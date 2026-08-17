@@ -10,7 +10,7 @@
 | W0 | 项目初始化 | main | - | [x] 已完成 |
 | W1 | 本地 Workspace | feature/w1-local-workspace | W0 | [x] 已完成 |
 | W2 | Shell + Test | feature/w2-shell-test | W1 | [x] 已完成 |
-| W3 | Docker Sandbox | feature/w3-docker-sandbox | W2 | [ ] 待开始 |
+| W3 | Docker Sandbox | feature/w3-docker-sandbox | W2 | [x] 已完成 |
 | W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [ ] 待开始 |
 | W5 | GitHub Issue Agent | feature/w5-github-issue | W3 | [ ] 待开始 |
 | W6 | Evaluation | feature/w6-evaluation | W5 | [ ] 待开始 |
@@ -89,13 +89,22 @@ coding-agent/
 
 **任务清单**：
 
-- [ ] Sandbox 生命周期：Create → Mount/Clone Repository → Execute Command → Return Result → Destroy
-- [ ] 资源限制：timeout / CPU limit / memory limit / network policy / filesystem restriction / secrets 隔离
-- [ ] 沙箱内环境：Python / Node.js / Git / pytest / npm / 项目依赖安装
-- [ ] Git Clone 与独立 Workspace 管理
-- [ ] TDD + Review + 合并回 main
+- [x] Sandbox 生命周期：Create → Mount/Clone Repository → Execute Command → Return Result → Destroy
+- [x] 资源限制：timeout / CPU limit / memory limit / network policy / filesystem restriction / secrets 隔离
+- [x] 沙箱内环境：Python / Node.js / Git / pytest / npm / 项目依赖安装
+- [x] Git Clone 与独立 Workspace 管理
+- [x] TDD + Review + 合并回 main
 
-**验收标准**：同一任务的全部命令在容器内执行；超时/超内存被正确终止并返回结构化错误；容器销毁后无残留。
+**完成记录（2026-08-17）**：
+
+- 架构：`tools/docker_sandbox.py`（SandboxConfig / SandboxManager / DockerExecutor / sandbox_executor 上下文）+ `tools/shell_tools.py` Executor 协议（LocalExecutor 保留 subprocess 行为）；`KA_EXECUTOR` 切换；Agent 入口（loop/graph）包进沙箱上下文，一个任务一个沙箱
+- 镜像 `ka-sandbox:py312-v1`：python:3.12-slim + git/curl + node 22（官方 tar 并行分块下载，网络限速 workaround）+ pytest；`core.filemode=false` 内置；.dockerignore 瘦身构建上下文（600MB→139B）
+- 资源限制：timeout（容器内 GNU timeout -k 5s，124 判定）/ --cpus / --memory 禁 swap / --pids-limit / 创建期有网 + 运行期 `docker network disconnect bridge` / 仅挂载 workspace / 秘密隔离
+- 测试：88 项全绿（单元 FakeDocker seam + 集成 10 项 @pytest.mark.docker：生命周期/超时/OOM/网络隔离/挂载同步/git 一致/双执行器一致/创建期 pip+clone/无残留）
+- 验收达成：真实演示（camera man）——Agent 全部命令在容器内执行，容器内 51 测试全绿（Agent 自主降级依赖修复 + verify 门禁通过），中文总结闭环，无残留
+- 用户批准偏离：国内镜像源（apt/pip）、node 官方 tar 并行下载、ToolError 改 Exception 子类、timeout 124 判定、disconnect 断网方案、main.py 加 --graph 开关（W3 验收缺口）
+
+**验收标准**：同一任务的全部命令在容器内执行；超时/超内存被正确终止并返回结构化错误；容器销毁后无残留。—— 全部达成
 
 ---
 

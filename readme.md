@@ -6,7 +6,7 @@
 
 基于现有的《明日方舟》全量剧情结构化知识库、Knowledge Graph 与 LangGraph ReAct Agent，进一步构建能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，最终产出 GitHub Pull Request。
 
-> 项目状态：W0 初始化、W1 本地 Workspace、W2 Shell + Test 均已完成（47 项测试通过；LangGraph 强制验证闭环 + 真实缺陷仓库演示 79 passed）。等待进入 W3（Docker Sandbox）。
+> 项目状态：W0-W3 已完成（W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox：容器化执行 + 六维资源限制 + 一个任务一个沙箱；88 项测试全绿，含 10 项真实容器集成测试；容器化演示闭环 51 测试全绿）。Docker Desktop 4.86.0 已安装至 D:\Docker（程序与数据均在 D 盘，WSL2 就绪）。下一步：W4 Repository Intelligence（可与 W5 并行）或 W5 GitHub Issue Agent。
 > 开发规范见 [agents.md](agents.md)，窗口路线图见 [docs/roadmap.md](docs/roadmap.md)。
 
 ---
