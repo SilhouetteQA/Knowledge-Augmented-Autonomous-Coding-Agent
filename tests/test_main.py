@@ -51,3 +51,19 @@ def test_main_graph_flag_uses_graph(monkeypatch, capsys):
     assert rc == 0
     assert "搞定" in out
     assert "计划" in out
+
+
+def test_main_prints_emoji_in_arguments_without_crash(monkeypatch, capsys):
+    """字符健壮性回归：工具参数含 GBK 无法表示的字符（emoji）时打印不得崩溃。"""
+    from agent.loop import AgentStep
+    fake_result = AgentResult(
+        steps=[AgentStep(tool_name="write_file",
+                         arguments={"path": "a.txt", "content": "emoji \U0001f600 test"},
+                         result=None)],
+        final_answer="搞定", iteration_count=1, stopped_by_limit=False)
+    monkeypatch.setattr("main.run_agent", lambda *a, **k: fake_result)
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    rc = main.main(["测试任务"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "write_file" in out
