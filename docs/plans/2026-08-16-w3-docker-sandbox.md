@@ -374,23 +374,35 @@ markers = [
 ]
 ```
 
-新建 `Dockerfile`（仓库根）：
+新建 `Dockerfile`（仓库根）与 `scripts/fetch_node.py`（并行下载器，见文末附注）：
 
 ```dockerfile
 # Dockerfile — W3 沙箱基础镜像
 # 构建：docker build -t ka-sandbox:py312-v1 .
 FROM python:3.12-slim
 ENV DEBIAN_FRONTEND=noninteractive
-# 沙箱内环境：Git / Node.js / npm / curl（网络连通性测试用）
+# 国内镜像源（构建加速；用户批准偏离计划默认官方源）
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' \
+        /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+    || sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' \
+        /etc/apt/sources.list
+# 沙箱内环境：Git / curl / xz-utils（小包走 apt；node/npm 见下）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git nodejs npm curl \
+        git curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
-# Python 测试框架
-RUN pip install --no-cache-dir pytest
+# Node.js + npm：8 连接并行分块下载官方 tar（本网络单连接限速 ~250KB/s 的 workaround，用户批准偏离）
+COPY scripts/fetch_node.py /usr/local/bin/fetch_node.py
+RUN python /usr/local/bin/fetch_node.py && \
+    tar -xJf /node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /node.tar.xz && node --version && npm --version
+# Python 测试框架（清华 PyPI 镜像加速）
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple pytest
 # 消除 Windows/Linux 文件权限位差异（W3 spec §5.1，容器内 git 行为与宿主一致）
 RUN git config --system core.filemode false
 WORKDIR /workspace
 ```
+
+> **Task 2 偏离记录（2026-08-17，用户批准）**：① apt/pip 换国内镜像源；② node/npm 由 apt 安装改为官方 tar 并行分块下载（实测本网络单连接限速 ~250KB/s，apt 安装 150MB 需 30-40 分钟且反复停滞；改用 `scripts/fetch_node.py`——Range 分段 8 连接并发、合并校验——全镜像构建 3.9 分钟完成，工具集不变：python3.12 + git 2.47 + node v22.17.1 + npm 10.9 + pytest 9.1 + curl）。`scripts/fetch_node.py` 内容见 `docs/plans` 附注或仓库文件本体。
 
 `tools/docker_sandbox.py` 仅先建一行（Task 3 补全，满足 import）：
 

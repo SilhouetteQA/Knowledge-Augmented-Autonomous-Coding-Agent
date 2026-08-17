@@ -22,3 +22,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "docker: 需要 Docker 守护进程的集成测试（无 Docker 时跳过）",
+]
