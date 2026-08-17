@@ -1,5 +1,7 @@
 # tests/test_main.py
 """CLI 测试：参数解析与 main 输出（注入 fake，不触发真实 LLM）"""
+import os
+
 import main
 from agent.loop import AgentResult
 
@@ -20,3 +22,32 @@ def test_main_prints_result(monkeypatch, capsys):
     assert rc == 0
     assert "测试任务" in out
     assert "搞定" in out
+
+
+def test_main_executor_docker_sets_env(monkeypatch, capsys):
+    fake_result = AgentResult(steps=[], final_answer="搞定", iteration_count=1,
+                              stopped_by_limit=False)
+    monkeypatch.setattr("main.run_agent", lambda *a, **k: fake_result)
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    monkeypatch.delenv("KA_EXECUTOR", raising=False)
+    try:
+        rc = main.main(["测试任务", "--executor", "docker"])
+        assert rc == 0
+        assert os.environ["KA_EXECUTOR"] == "docker"
+    finally:
+        # 恢复环境，避免 KA_EXECUTOR=docker 泄漏影响同进程内其他测试
+        os.environ.pop("KA_EXECUTOR", None)
+
+
+def test_main_graph_flag_uses_graph(monkeypatch, capsys):
+    from agent.graph import AgentGraphResult
+    fake = AgentGraphResult(plan=["步骤1"], steps=[], final_answer="搞定", iteration_count=1,
+                            verify_rounds=0, stopped_by_limit=False, test_results=[])
+    monkeypatch.setattr("main.run_agent_graph", lambda *a, **k: fake)
+    monkeypatch.setattr("main.run_agent", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应走 loop")))
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    rc = main.main(["测试任务", "--graph"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "搞定" in out
+    assert "计划" in out
