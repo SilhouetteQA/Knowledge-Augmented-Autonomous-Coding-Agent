@@ -36,3 +36,18 @@ def test_main_executor_docker_sets_env(monkeypatch, capsys):
     finally:
         # 恢复环境，避免 KA_EXECUTOR=docker 泄漏影响同进程内其他测试
         os.environ.pop("KA_EXECUTOR", None)
+
+
+def test_main_graph_flag_uses_graph(monkeypatch, capsys):
+    import os
+    from agent.graph import AgentGraphResult
+    fake = AgentGraphResult(plan=["步骤1"], steps=[], final_answer="搞定", iteration_count=1,
+                            verify_rounds=0, stopped_by_limit=False, test_results=[])
+    monkeypatch.setattr("main.run_agent_graph", lambda *a, **k: fake)
+    monkeypatch.setattr("main.run_agent", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应走 loop")))
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    rc = main.main(["测试任务", "--graph"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "搞定" in out
+    assert "计划" in out

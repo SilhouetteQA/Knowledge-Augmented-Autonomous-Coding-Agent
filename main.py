@@ -6,6 +6,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from agent.graph import run_agent_graph
 from agent.llm import OpenAICompatClient
 from agent.loop import run_agent
 
@@ -22,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="最大迭代轮数（默认 10）")
     parser.add_argument("--executor", choices=["local", "docker"], default=None,
                         help="命令执行器：local（宿主机）或 docker（容器沙箱）；缺省读 KA_EXECUTOR（默认 local）")
+    parser.add_argument("--graph", action="store_true",
+                        help="使用 LangGraph 编排（8 工具，含 run_command/run_tests/git；默认使用 W1 最小循环）")
     return parser
 
 
@@ -32,6 +35,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.executor:
         os.environ["KA_EXECUTOR"] = args.executor
     llm = OpenAICompatClient()
+    if args.graph:
+        result = run_agent_graph(args.task, llm, max_iterations=args.max_iterations,
+                                 workspace_root=args.workspace)
+        print(f"任务: {args.task}")
+        print(f"工作区: {args.workspace}")
+        print(f"计划: {result.plan}")
+        for i, step in enumerate(result.steps, 1):
+            print(f"[步骤 {i}] {step.tool_name}({step.arguments})")
+        print(f"迭代轮数: {result.iteration_count}")
+        if result.stopped_by_limit:
+            print("提示: 已达到迭代上限")
+        print(f"最终回答: {result.final_answer}")
+        return 0
     result = run_agent(args.task, llm, max_iterations=args.max_iterations,
                        workspace_root=args.workspace)
     print(f"任务: {args.task}")
