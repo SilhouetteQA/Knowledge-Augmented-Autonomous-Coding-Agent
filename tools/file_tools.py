@@ -17,8 +17,12 @@ IGNORED_DIRS = {
 
 
 @dataclass
-class ToolError:
-    """工具错误：message 面向 LLM，Agent 可观察并自我纠正。"""
+class ToolError(Exception):
+    """工具错误：message 面向 LLM，Agent 可观察并自我纠正。
+
+    继承 Exception 以便在生命周期类方法（如沙箱 create）中可 raise；
+    既有 "return ToolError(...)" 与 isinstance 用法向后兼容。
+    """
     message: str
 
 
