@@ -5,6 +5,7 @@ Task 5 版本：plan → decide ⇄ execute → verify → reflect ⇄ decide �
 decide 无工具调用进入强制验证（verify/reflect 闭环），verify_rounds 上限 3、迭代上限 20。
 """
 import json
+import os
 import re
 from dataclasses import asdict, dataclass
 from typing import TypedDict
@@ -13,6 +14,7 @@ from langgraph.graph import END, StateGraph
 
 from agent.llm import LLMClient, LLMMessage, ToolCall, ToolSpec
 from agent.loop import AgentStep, _build_tools, _dispatch, _result_to_text
+from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import ToolError
 from tools.shell_tools import (
     TestResult,
@@ -275,21 +277,22 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
 def run_agent_graph(task: str, llm: LLMClient, max_iterations: int = 20,
                     max_verify_rounds: int = 3,
                     workspace_root: str | None = None) -> AgentGraphResult:
-    """执行任务：LangGraph 图驱动，返回结构化结果。"""
+    """执行任务：LangGraph 图驱动（命令执行在沙箱上下文内，一个任务一个沙箱）。"""
     graph = build_graph(llm, max_iterations, max_verify_rounds, workspace_root)
-    result = graph.invoke({
-        "task": task,
-        "plan": [],
-        "messages": [{"role": "user", "content": task}],
-        "steps": [],
-        "iteration": 0,
-        "verify_rounds": 0,
-        "test_result": None,
-        "test_results": [],
-        "pending_tool_calls": None,
-        "final_answer": "",
-        "status": "running",
-    })
+    with sandbox_executor(workspace_root or os.getcwd()):
+        result = graph.invoke({
+            "task": task,
+            "plan": [],
+            "messages": [{"role": "user", "content": task}],
+            "steps": [],
+            "iteration": 0,
+            "verify_rounds": 0,
+            "test_result": None,
+            "test_results": [],
+            "pending_tool_calls": None,
+            "final_answer": "",
+            "status": "running",
+        })
     return AgentGraphResult(
         plan=result["plan"],
         steps=result["steps"],

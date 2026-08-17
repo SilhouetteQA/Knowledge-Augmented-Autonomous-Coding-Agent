@@ -1,9 +1,11 @@
 # agent/loop.py
 """最小 ReAct 循环：LLM 决策 → 工具调用 → 观察结果 → 循环，上限 max_iterations 轮。"""
 import json
+import os
 from dataclasses import asdict, dataclass
 
 from agent.llm import LLMClient, ToolSpec
+from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import (
     ToolError,
     list_files,
@@ -150,52 +152,56 @@ def _result_to_text(result: object) -> str:
 
 def run_agent(task: str, llm: LLMClient, max_iterations: int = DEFAULT_MAX_ITERATIONS,
               workspace_root: str | None = None) -> AgentResult:
-    """执行任务：循环调用 LLM，执行其工具调用并回注结果，直至无工具调用或达上限。"""
-    messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": task},
-    ]
-    tools = _build_tools()
-    steps: list[AgentStep] = []
-    for i in range(max_iterations):
-        msg = llm.chat(messages, tools)
-        if not msg.tool_calls:
-            return AgentResult(
-                steps=steps,
-                final_answer=msg.content or "",
-                iteration_count=i + 1,
-                stopped_by_limit=False,
-            )
-        results = []
-        for tc in msg.tool_calls:
-            result = _dispatch(tc.name, tc.arguments, workspace_root)
-            steps.append(AgentStep(tool_name=tc.name, arguments=tc.arguments, result=result))
-            results.append(result)
-        # OpenAI 格式：先回注 assistant 的 tool_calls 消息，再逐条回注 tool 结果
-        messages.append({
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": json.dumps(tc.arguments, ensure_ascii=False),
-                    },
-                }
-                for tc in msg.tool_calls
-            ],
-        })
-        for tc, result in zip(msg.tool_calls, results):
+    """执行任务：循环调用 LLM，执行其工具调用并回注结果，直至无工具调用或达上限。
+
+    命令执行位于沙箱上下文内（一个任务一个沙箱，KA_EXECUTOR=docker 时全部命令进容器）。
+    """
+    with sandbox_executor(workspace_root or os.getcwd()):
+        messages: list[dict] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": task},
+        ]
+        tools = _build_tools()
+        steps: list[AgentStep] = []
+        for i in range(max_iterations):
+            msg = llm.chat(messages, tools)
+            if not msg.tool_calls:
+                return AgentResult(
+                    steps=steps,
+                    final_answer=msg.content or "",
+                    iteration_count=i + 1,
+                    stopped_by_limit=False,
+                )
+            results = []
+            for tc in msg.tool_calls:
+                result = _dispatch(tc.name, tc.arguments, workspace_root)
+                steps.append(AgentStep(tool_name=tc.name, arguments=tc.arguments, result=result))
+                results.append(result)
+            # OpenAI 格式：先回注 assistant 的 tool_calls 消息，再逐条回注 tool 结果
             messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": _result_to_text(result),
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
             })
-    return AgentResult(
-        steps=steps,
-        final_answer="已达到迭代上限，任务未完成",
-        iteration_count=max_iterations,
-        stopped_by_limit=True,
-    )
+            for tc, result in zip(msg.tool_calls, results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": _result_to_text(result),
+                })
+        return AgentResult(
+            steps=steps,
+            final_answer="已达到迭代上限，任务未完成",
+            iteration_count=max_iterations,
+            stopped_by_limit=True,
+        )
