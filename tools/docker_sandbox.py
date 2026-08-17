@@ -6,15 +6,21 @@
 """
 import hashlib
 import os
+import shlex
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Iterator
 
-from tools.file_tools import ToolError
+from tools.file_tools import ToolError, resolve_workspace_path
 from tools.shell_tools import (
     CommandResult,
+    Executor,
+    LocalExecutor,
     TestResult,
+    _CURRENT_EXECUTOR,
     _parse_pytest_output,
     _truncate,
 )
@@ -188,3 +194,64 @@ class SandboxManager:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.destroy()
+
+
+class DockerExecutor:
+    """容器内执行器：run_command / run_tests / run_git 全部在沙箱容器内运行（W3 spec §4.1）。"""
+
+    def __init__(self, manager: SandboxManager):
+        self._manager = manager
+
+    def run_command(self, command: str, cwd: str | None = None, timeout: int = 60,
+                    workspace_root: str | None = None) -> CommandResult | ToolError:
+        """在容器内执行 shell 命令（cwd 为宿主绝对路径，自动换算容器路径）。"""
+        return self._manager.exec(command, cwd=cwd, timeout=timeout)
+
+    def run_tests(self, path: str | None = None,
+                  workspace_root: str | None = None) -> TestResult | ToolError:
+        """在容器内 /workspace 运行 pytest，解析结果（与 LocalExecutor 同格式）。"""
+        cmd = "python -m pytest -q --tb=no"
+        if path:
+            base = resolve_workspace_path("", workspace_root)
+            if isinstance(base, ToolError):
+                return base
+            rel = os.path.relpath(os.path.abspath(path), base)
+            if rel.startswith(".."):
+                return ToolError(f"路径越界: {path}")
+            cmd += f" {_sh_quote('/workspace/' + rel)}"
+        r = self._manager.exec(cmd, timeout=120)
+        if isinstance(r, ToolError):
+            return r
+        return _parse_pytest_output(r.stdout)
+
+    def run_git(self, args: list[str], workspace_root: str | None = None) -> str | ToolError:
+        """在容器内 /workspace 执行只读 git 命令。"""
+        r = self._manager.exec("git " + " ".join(shlex.quote(a) for a in args), timeout=30)
+        if isinstance(r, ToolError):
+            return r
+        if r.exit_code != 0:
+            return ToolError(f"git {args[0]} 失败: {r.stderr.strip()}")
+        return r.stdout
+
+
+@contextmanager
+def sandbox_executor(workspace_root: str, config: SandboxConfig | None = None,
+                     docker_runner: Callable[[list[str]], subprocess.CompletedProcess] | None = None
+                     ) -> Iterator[Executor]:
+    """任务级执行器上下文：KA_EXECUTOR=docker 时创建沙箱容器并在结束时销毁（一个任务一个沙箱）。
+
+    local 时直接返回 LocalExecutor，不创建容器。docker_runner 仅供测试注入。
+    """
+    if os.environ.get("KA_EXECUTOR", "local") != "docker":
+        yield LocalExecutor()
+        return
+    manager = SandboxManager(config or get_sandbox_config(), workspace_root,
+                             docker_runner=docker_runner)
+    manager.create()
+    executor = DockerExecutor(manager)
+    token = _CURRENT_EXECUTOR.set(executor)
+    try:
+        yield executor
+    finally:
+        _CURRENT_EXECUTOR.reset(token)
+        manager.destroy()

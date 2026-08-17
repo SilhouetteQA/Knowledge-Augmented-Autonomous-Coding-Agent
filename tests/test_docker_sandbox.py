@@ -5,9 +5,11 @@ import subprocess
 import pytest
 
 from tools.docker_sandbox import (
-    SandboxConfig, SandboxManager, _container_name, _sh_quote, get_sandbox_config,
+    DockerExecutor, SandboxConfig, SandboxManager, sandbox_executor,
+    _container_name, _sh_quote, get_sandbox_config,
 )
 from tools.file_tools import ToolError
+from tools.shell_tools import LocalExecutor, get_executor, run_command
 
 
 class FakeDocker:
@@ -209,3 +211,89 @@ def test_context_manager_destroys(tmp_path):
         assert mgr._created
     assert not mgr._created
     assert fake.called("docker", "rm", "-f", mgr.name)
+
+
+def test_docker_executor_run_command_via_manager(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    fake = FakeDocker()
+    mgr = SandboxManager(SandboxConfig(), str(ws), docker_runner=fake.runner)
+    mgr.create()
+    ex = DockerExecutor(mgr)
+    r = ex.run_command("echo hi", workspace_root=str(ws))
+    assert not isinstance(r, ToolError)
+    assert r.exit_code == 0
+
+
+def test_docker_executor_run_tests_parses(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "test_ok.py").write_text("def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    fake = FakeDocker()
+    fake.plan["pytest"] = subprocess.CompletedProcess([], 0, "1 passed in 0.1s", "")
+    mgr = SandboxManager(SandboxConfig(), str(ws), docker_runner=fake.runner)
+    mgr.create()
+    ex = DockerExecutor(mgr)
+    tr = ex.run_tests(workspace_root=str(ws))
+    assert not isinstance(tr, ToolError)
+    assert tr.passed == 1
+    assert tr.total == 1
+
+
+def test_docker_executor_run_git(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    fake = FakeDocker()
+    fake.plan["git status"] = subprocess.CompletedProcess([], 0, " M a.txt\n", "")
+    mgr = SandboxManager(SandboxConfig(), str(ws), docker_runner=fake.runner)
+    mgr.create()
+    ex = DockerExecutor(mgr)
+    out = ex.run_git(["status", "--short"], workspace_root=str(ws))
+    assert out == " M a.txt\n"
+
+
+def test_docker_executor_run_git_error(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    fake = FakeDocker()
+    # "git status" 而非 "git"：避免 tmp 目录名含 "git"（test_..._run_git_error）与 docker run 的 -v 路径子串误配
+    fake.plan["git status"] = subprocess.CompletedProcess([], 128, "", "fatal: not a git repository")
+    mgr = SandboxManager(SandboxConfig(), str(ws), docker_runner=fake.runner)
+    mgr.create()
+    ex = DockerExecutor(mgr)
+    out = ex.run_git(["status"], workspace_root=str(ws))
+    assert isinstance(out, ToolError)
+    assert "not a git repository" in out.message
+
+
+def test_sandbox_executor_local_no_container(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.delenv("KA_EXECUTOR", raising=False)
+    with sandbox_executor(str(ws)) as ex:
+        assert isinstance(ex, LocalExecutor)
+
+
+def test_sandbox_executor_docker_lifecycle(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("KA_EXECUTOR", "docker")
+    fake = FakeDocker()
+    with sandbox_executor(str(ws), docker_runner=fake.runner) as ex:
+        assert isinstance(ex, DockerExecutor)
+        assert any(c[:3] == ["docker", "run", "-d"] for c in fake.calls)
+        r = run_command("echo hi", workspace_root=str(ws))  # 上下文内模块级调用走容器
+        assert not isinstance(r, ToolError)
+    assert any(c[:3] == ["docker", "rm", "-f"] for c in fake.calls)
+
+
+def test_sandbox_executor_resets_context(monkeypatch, tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("KA_EXECUTOR", "docker")
+    fake = FakeDocker()
+    with sandbox_executor(str(ws), docker_runner=fake.runner):
+        pass
+    ex = get_executor()
+    assert isinstance(ex, ToolError)
+    assert "sandbox_executor" in ex.message
