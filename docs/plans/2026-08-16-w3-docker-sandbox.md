@@ -429,6 +429,11 @@ git commit -m "feat(tools): 新增沙箱基础镜像 Dockerfile 与 docker 集�
 
 ### Task 3: SandboxConfig 与 SandboxManager（容器生命周期 + 资源限制）
 
+> **Task 3 简报缺陷修正（2026-08-17，实施中发现并经用户裁决）**：
+> ① `ToolError` 在 `tools/file_tools.py` 是 `@dataclass` 非异常类，简报 8 处 `raise ToolError(...)` 与 `pytest.raises(ToolError)` 无法工作——用户裁决改为 `@dataclass class ToolError(Exception):`（向后兼容，文件范围扩展至 file_tools.py 一行）；
+> ② 测试 `run[-3:] == ["sleep","infinity"]` 笔误 → `run[-2:]`（docker run 尾部为 [image, sleep, infinity]）；
+> ③ `cd /workspace/sub &&` 断言改为带引号 `"cd '/workspace/sub' &&"`（实现用 _sh_quote 更健壮）。
+
 **Files:**
 - Create: `tools/docker_sandbox.py`（补全）
 - Create: `tests/test_docker_sandbox.py`
