@@ -92,13 +92,15 @@ class Executor(Protocol):
 
 | 限制 | 实现 | 默认值 |
 |------|------|--------|
-| timeout | 容器内 `timeout -s KILL -k 5s <sec> bash -lc '<cmd>'` | 60s（命令级，与 W2 一致） |
+| timeout | 容器内 `timeout -k 5s <sec> bash -lc '<cmd>'`（TERM → 5s 宽限 KILL；超时退出码 124 → timeout=True；OOM 137 → oom=True） | 60s（命令级，与 W2 一致） |
 | CPU | `--cpus` | 2 |
 | 内存 | `--memory` + `--memory-swap`（同值，禁 swap） | 1g |
 | 进程数 | `--pids-limit` | 512 |
-| 网络 | 运行阶段 `--network none`；创建阶段默认网络 | 禁网 |
+| 网络 | 默认桥接创建（创建期可装依赖/克隆）→ setup 完成后 `docker network disconnect bridge`（运行期失网）；network=True 时不切断（任务级 opt-in） | 运行期禁网 |
 | 文件系统 | 仅挂载 workspace（rw）+ tmpfs /tmp；容器内其他写盘随销毁清除 | — |
 | 秘密 | 不继承宿主环境变量、不挂载 .env、容器内无宿主凭据 | — |
+
+> 实现修订（2026-08-17，集成测试暴露后修复，已在 §6 体现）：① 超时包裹由 `timeout -s KILL -k 5s` 改为 `timeout -k 5s`——实测 `-s KILL` 恒返 137（128+SIGKILL）导致超时永不判中且与 OOM 同码；② 网络策略由 `--network none` 改为「桥接创建 + setup 后 disconnect」——`--network none` 创建时即生效，创建期 pip/git 无网，违背 D3 设计意图。TERM 免疫进程被宽限 KILL 亦返 137 的边角在代码注释中标注。
 
 配置项（env）：`KA_SANDBOX_CPUS`（默认 2）、`KA_SANDBOX_MEMORY`（默认 1g）、`KA_SANDBOX_PIDS`（默认 512）、`KA_SANDBOX_NETWORK`（默认 0；1 = 创建时容器带网络，任务级 opt-in）、`KA_SANDBOX_REPO_URL`（可选；workspace 为空时创建阶段克隆该仓库到 /workspace）、`KA_SANDBOX_IMAGE`（默认 ka-sandbox:py312-v1，镜像缺失时自动 docker build）。
 

@@ -1439,6 +1439,8 @@ git commit -m "test(tools): Docker 沙箱集成测试（生命周期/超时/OOM/
 
 ### Task 7: 真实演示（窗口验收）
 
+> **Task 6 实施修复记录（2026-08-17，集成测试暴露，已批准）**：① `SandboxManager.exec` 超时包裹由 `timeout -s KILL -k 5s` 改为 `timeout -k 5s`（`-s KILL` 实测恒返 137 致超时永不判中且与 OOM 同码；`-k 5s` 下超时返 124、OOM 返 137）；② `create()` 移除 `--network none`，改为默认桥接创建 + setup（pip/clone）完成后 `docker network disconnect bridge`（network=True 不切断）——`--network none` 创建时即生效导致创建期无网。同步更新：`tools/docker_sandbox.py`、`tests/test_docker_sandbox.py`（3 处断言）、spec §6 与本文档。集成测试 10/10 实跑通过（无 SKIP），全量 86 passed。
+
 **Files:**
 - 无代码变更；使用 `workspace/` 下已有 demo 材料（W1 demo-project 副本已删，演示前重新放置或使用新仓库副本）
 
