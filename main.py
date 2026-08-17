@@ -1,5 +1,5 @@
 # main.py
-"""CLI 入口：python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10]"""
+"""CLI 入口：python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10] [--executor local|docker] [--graph]"""
 import argparse
 import os
 import sys
@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--executor", choices=["local", "docker"], default=None,
                         help="命令执行器：local（宿主机）或 docker（容器沙箱）；缺省读 KA_EXECUTOR（默认 local）")
     parser.add_argument("--graph", action="store_true",
-                        help="使用 LangGraph 编排（8 工具，含 run_command/run_tests/git；默认使用 W1 最小循环）")
+                        help="使用 LangGraph 编排（完整工具集，含 run_command/run_tests/git；默认使用 W1 最小循环）")
     return parser
 
 

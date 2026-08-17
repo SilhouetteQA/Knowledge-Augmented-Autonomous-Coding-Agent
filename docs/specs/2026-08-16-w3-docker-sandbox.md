@@ -114,6 +114,8 @@ class Executor(Protocol):
 | 容器未创建即调用 exec | `ToolError`（SandboxManager 保证生命周期顺序，防御性校验） |
 | 输出超长 | 与 W2 相同的 100KB 截断逻辑 |
 
+注：TERM 免疫进程经 5s 宽限被 KILL 亦返回 137（与 OOM 同码），为已知限制；W5 可改用 docker inspect 的 ExitCode/OOMKilled 判别
+
 ## 8. 测试策略（TDD，seam = Executor 接口 + CommandResult）
 
 1. **单元测试**（不依赖真实 Docker）：

@@ -301,3 +301,17 @@ def test_sandbox_executor_resets_context(monkeypatch, tmp_path):
     ex = get_executor()
     assert isinstance(ex, ToolError)
     assert "sandbox_executor" in ex.message
+
+
+def test_sandbox_executor_destroys_on_create_failure(monkeypatch, tmp_path):
+    """创建期失败（pip 步骤非零）也必须销毁容器，防止泄漏与下个任务 --name 冲突。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "requirements.txt").write_text("six==1.16.0\n", encoding="utf-8")
+    monkeypatch.setenv("KA_EXECUTOR", "docker")
+    fake = FakeDocker()
+    fake.plan["pip install"] = subprocess.CompletedProcess([], 1, "", "boom")
+    with pytest.raises(ToolError):
+        with sandbox_executor(str(ws), docker_runner=fake.runner):
+            pass
+    assert any(c[:3] == ["docker", "rm", "-f"] for c in fake.calls)

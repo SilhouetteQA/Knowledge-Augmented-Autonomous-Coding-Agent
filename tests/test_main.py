@@ -1,5 +1,7 @@
 # tests/test_main.py
 """CLI 测试：参数解析与 main 输出（注入 fake，不触发真实 LLM）"""
+import os
+
 import main
 from agent.loop import AgentResult
 
@@ -23,7 +25,6 @@ def test_main_prints_result(monkeypatch, capsys):
 
 
 def test_main_executor_docker_sets_env(monkeypatch, capsys):
-    import os
     fake_result = AgentResult(steps=[], final_answer="搞定", iteration_count=1,
                               stopped_by_limit=False)
     monkeypatch.setattr("main.run_agent", lambda *a, **k: fake_result)
@@ -39,7 +40,6 @@ def test_main_executor_docker_sets_env(monkeypatch, capsys):
 
 
 def test_main_graph_flag_uses_graph(monkeypatch, capsys):
-    import os
     from agent.graph import AgentGraphResult
     fake = AgentGraphResult(plan=["步骤1"], steps=[], final_answer="搞定", iteration_count=1,
                             verify_rounds=0, stopped_by_limit=False, test_results=[])

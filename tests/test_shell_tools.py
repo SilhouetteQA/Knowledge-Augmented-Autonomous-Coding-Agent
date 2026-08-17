@@ -2,7 +2,8 @@
 """Shell 工具测试：run_command 成功/失败/超时/越界/截断；git 只读工具"""
 from tools.file_tools import ToolError
 from tools.shell_tools import (
-    MAX_COMMAND_OUTPUT, git_diff, git_log, git_status, run_command, run_tests,
+    MAX_COMMAND_OUTPUT, LocalExecutor, get_executor, git_diff, git_log, git_status,
+    run_command, run_tests,
 )
 
 
@@ -174,11 +175,6 @@ def test_git_tools_not_a_repo(tmp_path):
         else:
             os.environ["GIT_CEILING_DIRECTORIES"] = old
     assert isinstance(s, ToolError)
-
-
-from tools.shell_tools import (
-    LocalExecutor, get_executor,
-)
 
 
 def test_get_executor_default_local(monkeypatch):

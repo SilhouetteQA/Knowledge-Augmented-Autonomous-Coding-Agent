@@ -148,6 +148,7 @@ class SandboxManager:
             self._run("docker", "exec", self.name, "pip", "install",
                       "-r", "/workspace/requirements.txt")
         # 可选克隆：workspace 为空且配置了 repo_url
+        # 注意：若此前部分克隆残留文件，workspace 非空将跳过克隆（可接受，避免覆盖）
         if self.config.repo_url and not os.listdir(self.workspace_root):
             self._run("docker", "exec", self.name, "git", "clone",
                       self.config.repo_url, "/workspace")
@@ -238,7 +239,7 @@ class DockerExecutor:
         if isinstance(r, ToolError):
             return r
         if r.exit_code != 0:
-            return ToolError(f"git {args[0]} 失败: {r.stderr.strip()}")
+            return ToolError(f"git {args[0] if args else 'git'} 失败: {r.stderr.strip()}")
         return r.stdout
 
 
@@ -255,11 +256,13 @@ def sandbox_executor(workspace_root: str, config: SandboxConfig | None = None,
         return
     manager = SandboxManager(config or get_sandbox_config(), workspace_root,
                              docker_runner=docker_runner)
-    manager.create()
-    executor = DockerExecutor(manager)
-    token = _CURRENT_EXECUTOR.set(executor)
+    token = None
     try:
+        manager.create()          # 创建失败（含部分失败）也会走到 finally 的 destroy
+        executor = DockerExecutor(manager)
+        token = _CURRENT_EXECUTOR.set(executor)
         yield executor
     finally:
-        _CURRENT_EXECUTOR.reset(token)
-        manager.destroy()
+        if token is not None:
+            _CURRENT_EXECUTOR.reset(token)
+        manager.destroy()         # destroy 幂等（_created 守卫）：未创建则 no-op
