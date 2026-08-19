@@ -217,3 +217,38 @@ def test_graph_query_code_graph_without_index(tmp_path):
     result = run_agent_graph("查询", MockLLMClient(script), workspace_root=str(ws))
     from tools.file_tools import ToolError
     assert isinstance(result.steps[0].result, ToolError)
+
+
+def test_graph_decide_can_call_search_knowledge(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    from tools.knowledge_client import MockKnowledgeClient
+    knowledge = MockKnowledgeClient({("entity", "阿米娅"): "实体: 阿米娅 (罗德岛)"})
+    script = [
+        _plan_msg(["查询领域知识"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="k1", name="search_knowledge",
+                     arguments={"query": "阿米娅", "kind": "entity"})]),
+        LLMMessage(role="assistant", content="完成"),
+    ]
+    result = run_agent_graph("查询", MockLLMClient(script), workspace_root=str(ws),
+                             knowledge_client=knowledge)
+    assert len(result.steps) == 1
+    assert result.steps[0].tool_name == "search_knowledge"
+    assert result.steps[0].result == "实体: 阿米娅 (罗德岛)"
+    assert knowledge.calls == [("entity", "阿米娅")]
+
+
+def test_graph_search_knowledge_without_client(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    script = [
+        _plan_msg(["查询"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="k1", name="search_knowledge", arguments={"query": "阿米娅"})]),
+        LLMMessage(role="assistant", content="完成"),
+    ]
+    result = run_agent_graph("查询", MockLLMClient(script), workspace_root=str(ws))
+    from tools.file_tools import ToolError
+    assert isinstance(result.steps[0].result, ToolError)
+    assert "域知识未启用" in result.steps[0].result.message
