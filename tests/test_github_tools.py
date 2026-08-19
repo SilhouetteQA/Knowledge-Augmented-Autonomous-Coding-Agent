@@ -9,7 +9,9 @@ from tools.github_tools import (
     GitHubIssue,
     GitHubRepo,
     clone_repository,
+    comment_issue,
     commit_changes,
+    create_pull_request,
     create_branch,
     get_issue,
     get_repository,
@@ -125,3 +127,34 @@ def test_push_branch_passes_through(monkeypatch):
                         lambda cmd, **kw: calls.append(cmd) or "")
     assert push_branch("C:\\tmp\\dst", "fix/issue-1") is None
     assert calls == [["git", "push", "-u", "origin", "fix/issue-1"]]
+
+
+def test_create_pull_request(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return "https://github.com/test/arc-wiki/pull/999\n"
+
+    monkeypatch.setattr(github_tools, "_run", fake_run)
+    url = create_pull_request("test/arc-wiki", "fix/issue-1", "main",
+                              "fix: 修复 #1 x", "body text")
+    assert url == "https://github.com/test/arc-wiki/pull/999"
+    cmd = calls[0]
+    assert cmd[:4] == ["gh", "pr", "create", "--repo"]
+    assert "--head" in cmd and "fix/issue-1" in cmd
+    assert "--base" in cmd and "main" in cmd
+
+
+def test_create_pull_request_failure(monkeypatch):
+    monkeypatch.setattr(github_tools, "_run",
+                        lambda *a, **k: ToolError("PR 创建失败"))
+    assert isinstance(create_pull_request("a/b", "h", "m", "t", "b"), ToolError)
+
+
+def test_comment_issue(monkeypatch):
+    calls = []
+    monkeypatch.setattr(github_tools, "_run",
+                        lambda cmd, **kw: calls.append(cmd) or "")
+    assert comment_issue("test/arc-wiki", 1, "done") is None
+    assert "repos/test/arc-wiki/issues/1/comments" in calls[0]

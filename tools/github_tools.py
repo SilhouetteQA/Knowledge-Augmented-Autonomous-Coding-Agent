@@ -119,3 +119,25 @@ def push_branch(repo_dir: str, branch: str) -> ToolError | None:
     if isinstance(r, ToolError):
         return r
     return None
+
+
+def create_pull_request(repo: str, head: str, base: str, title: str,
+                        body: str) -> str | ToolError:
+    """gh pr create → 返回 PR URL。"""
+    out = _run(
+        ["gh", "pr", "create", "--repo", repo, "--head", head, "--base", base,
+         "--title", title, "--body", body],
+        timeout=300,
+    )
+    if isinstance(out, ToolError):
+        return out
+    return out.strip()
+
+
+def comment_issue(repo: str, number: int, body: str) -> ToolError | None:
+    """gh api POST 评论（演示辅助）。"""
+    r = _run(["gh", "api", f"repos/{repo}/issues/{number}/comments",
+              "--method", "POST", "-f", f"body={body}"])
+    if isinstance(r, ToolError):
+        return r
+    return None
