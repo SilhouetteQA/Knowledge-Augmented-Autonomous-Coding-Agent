@@ -11,7 +11,7 @@
 | W1 | 本地 Workspace | feature/w1-local-workspace | W0 | [x] 已完成 |
 | W2 | Shell + Test | feature/w2-shell-test | W1 | [x] 已完成 |
 | W3 | Docker Sandbox | feature/w3-docker-sandbox | W2 | [x] 已完成 |
-| W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [ ] 待开始 |
+| W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [x] 已完成 |
 | W5 | GitHub Issue Agent | feature/w5-github-issue | W3 | [ ] 待开始 |
 | W6 | Evaluation | feature/w6-evaluation | W5 | [ ] 待开始 |
 | W7 | Observability | feature/w7-observability | W5 | [ ] 待开始 |
@@ -114,15 +114,24 @@ coding-agent/
 
 **任务清单**：
 
-- [ ] Code Parser 调研与选型（Tree-sitter / Python AST / ripgrep 组合）
-- [ ] 代码元数据提取：Class 继承 / Function 调用 / API-Service-Repository 关系
-- [ ] Code Knowledge Graph 构建与查询
-- [ ] 接入 Arknights LLM Wiki 的 Knowledge Graph（MCP 或 API）
-- [ ] 双知识检索：`search_code()` + `search_knowledge()` 联合上下文
-- [ ] 验证领域逻辑 Issue：同一角色在不同章节被识别为不同 Entity 的定位与修复演示
-- [ ] TDD + Review + 合并回 main
+- [x] Code Parser 调研与选型（Python AST + ripgrep 组合，Tree-sitter 调研后否决）
+- [x] 代码元数据提取：Class 继承 / Function 调用 / Import 关系（`tools/code_parser.py`）
+- [x] Code Knowledge Graph 构建与查询（`tools/code_graph.py`：calls / inheritance / imports / module_of / symbols 五类查询）
+- [x] 接入 Arknights LLM Wiki 的 Knowledge Graph（MCP 子进程适配 `tools/knowledge_client.py`）
+- [x] 双知识检索：`query_code_graph` + `search_knowledge` 注入 LangGraph 图（decide 提示词引用 + 空结果自导航提示）
+- [x] 验证领域逻辑 Issue：同一角色跨章节是否重复创建 Entity 的定位演示
+- [x] TDD + Review + 合并回 main
 
-**验收标准**：能回答"哪个函数创建了角色 Entity""该逻辑依赖哪些模块"；领域 Issue 修复演示成功。
+**验收标准**：能回答"哪个函数创建了角色 Entity""该逻辑依赖哪些模块"；领域 Issue 修复演示成功。—— 全部达成
+
+**完成记录（2026-08-19）**：
+
+- 实现：AST 解析（语法错误/读取失败跳过并告警、60s 限时）→ CodeMetadata → 内存 CodeGraph；`query_code_graph` 分发五类查询；`search_knowledge` 经兄弟项目 MCP（子进程隔离，UTF-8 reconfigure，`ARKNIGHTS_USE_MCP`/`ARKNIGHTS_WIKI_DIR` 环境开关）；`main.py --graph` 一键构建双知识源（KA_CODE_INDEX）
+- 测试：113 项全绿（含 MCP 集成 3 项实跑，`@pytest.mark.mcp` 条件跳过）；审查基线 8441eff..HEAD 共 10 commits / 15 files / +2064/−10
+- 真实演示：`workspace/w4-demo`（兄弟项目副本）— Agent 用 query_code_graph（symbols/calls/imports）+ search_knowledge（阿米娅）定位 seed.py / character_aggregator.py / entity_repository.py，结论：同一角色跨章节不会重复创建（多层去重：主键 + resolve_name/get_by_name + normalize_and_merge + identity_map 模糊匹配 ≤0.6 + EntityIndexStore），Pass 1 事件按章存储是设计而非重复
+- 审查：双轴审查（技术标准 + 规格满足度）→ needs-fixes → 修复 4 项（decide 提示词引用双知识工具、空结果自导航提示、OSError 兜底、读取失败跳过）→ 复审 113 全绿，批准合并
+
+**说明（有意取舍，审查记录）**：同名类取首个定义/同名函数保留全量（v1 限制）；未知 kind 静默按 entity 处理；MCP 运行时子进程失败返回字符串错误而非 ToolError（图可观察，未做结构区分）。
 
 ---
 

@@ -74,6 +74,12 @@ def test_query_code_graph_dispatch():
     assert isinstance(result, ToolError)
 
 
+def test_query_code_graph_empty_hint():
+    graph = CodeGraph(_metadata())
+    result = query_code_graph(graph, "calls", "nobody")
+    assert len(result) == 1 and "未找到" in result[0] and "search_code" in result[0]
+
+
 def test_build_code_graph_from_workspace(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()

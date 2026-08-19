@@ -43,11 +43,14 @@ def _reflect_system(details: str) -> str:
 
 
 def _decide_system(plan: list[str], verify_rounds: int, max_verify_rounds: int) -> str:
-    """decide 节点系统提示词（引用计划与验证轮次）。"""
+    """decide 节点系统提示词（引用计划、验证轮次与可用查询工具）。"""
     plan_text = "\n".join(f"- {p}" for p in plan) or "- （无计划）"
     return (
         "你是编码助手。你可以调用工具查看、修改和执行工作区内的代码。\n"
         f"你的计划：\n{plan_text}\n"
+        f"可用查询工具：query_code_graph（调用关系 calls / 导入 imports / 定义位置 "
+        "module_of / 符号模糊搜索 symbols）、search_knowledge（领域知识检索）。"
+        "定位符号与理解代码时优先使用结构化查询，而非盲目全文搜索。\n"
         f"验证轮次：已进行 {verify_rounds}/{max_verify_rounds} 次。测试全部通过前不要声称完成；"
         "声称完成后系统会自动运行测试验证。\n"
         "规则：只操作工作区内文件；每次工具调用后先观察结果再行动；完成后用中文总结。"
@@ -55,7 +58,7 @@ def _decide_system(plan: list[str], verify_rounds: int, max_verify_rounds: int) 
 
 
 def _graph_tools() -> list[ToolSpec]:
-    """图内工具集：W1 四文件工具 + W2 shell/git 五工具，共 8 个暴露给 LLM。
+    """图内工具集：W1 四文件工具 + W2 shell/git 五工具 + W4 双知识源两工具，共 11 个暴露给 LLM。
 
     覆盖 W2 spec §3 要求的完整工具集，解决 decide 阶段仅暴露 4 个文件工具、
     无法主动运行测试/命令/git 的缺口。

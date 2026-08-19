@@ -143,5 +143,7 @@ def build_metadata(workspace_root: str, timeout: float = 60.0) -> CodeMetadata |
             except SyntaxError as e:
                 metadata.warnings.append(
                     f"语法错误跳过: {path.relative_to(root)}（{e.msg} 第 {e.lineno} 行）")
+            except OSError as e:
+                metadata.warnings.append(f"文件读取失败跳过: {path.relative_to(root)}（{e}）")
     metadata.modules.sort(key=lambda m: m.name)
     return metadata

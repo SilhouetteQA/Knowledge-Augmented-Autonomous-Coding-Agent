@@ -84,15 +84,23 @@ def build_code_graph(workspace_root: str) -> CodeGraph | ToolError:
 
 
 def query_code_graph(graph: CodeGraph, query: str, arg: str) -> list[str] | ToolError:
-    """工具分发：query ∈ calls / inheritance / imports / module_of / symbols。"""
+    """工具分发：query ∈ calls / inheritance / imports / module_of / symbols。
+
+    空结果附加自导航提示（spec §7）：未命中时引导 LLM 改用 symbols 模糊查询
+    或 search_code 全文搜索继续检索。
+    """
     if query == "calls":
-        return graph.query_calls(arg)
-    if query == "inheritance":
-        return graph.query_inheritance(arg)
-    if query == "imports":
-        return graph.query_imports(arg)
-    if query == "module_of":
-        return graph.query_module_of(arg)
-    if query == "symbols":
-        return graph.search_symbols(arg)
-    return ToolError(f"未知查询类型: {query}（可用 calls / inheritance / imports / module_of / symbols）")
+        out = graph.query_calls(arg)
+    elif query == "inheritance":
+        out = graph.query_inheritance(arg)
+    elif query == "imports":
+        out = graph.query_imports(arg)
+    elif query == "module_of":
+        out = graph.query_module_of(arg)
+    elif query == "symbols":
+        out = graph.search_symbols(arg)
+    else:
+        return ToolError(f"未知查询类型: {query}（可用 calls / inheritance / imports / module_of / symbols）")
+    if not out:
+        return [f"未找到与 {arg} 相关的符号信息，可用 symbols 模糊查询或 search_code 全文搜索"]
+    return out

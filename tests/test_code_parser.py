@@ -1,5 +1,6 @@
 """代码解析测试：AST 单文件解析 / 全工作区构建 / 语法错误跳过"""
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -88,6 +89,25 @@ def test_build_metadata_skips_ignored_dirs(tmp_path):
     (ws / ".venv" / "lib.py").write_text("y = 2\n", encoding="utf-8")
     meta = build_metadata(str(ws))
     assert [m.name for m in meta.modules] == ["ok"]
+
+
+def test_build_metadata_skips_unreadable_file(tmp_path, monkeypatch):
+    import tools.code_parser as cparser
+    orig_parse = cparser.parse_python_file
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "ok.py").write_text("x = 1\n", encoding="utf-8")
+    (ws / "locked.py").write_text("y = 2\n", encoding="utf-8")
+
+    def _raise(path, module_name):
+        if Path(path).name == "locked.py":
+            raise PermissionError("拒绝访问")
+        return orig_parse(path, module_name)
+
+    monkeypatch.setattr("tools.code_parser.parse_python_file", _raise)
+    meta = build_metadata(str(ws))
+    assert [m.name for m in meta.modules] == ["ok"]
+    assert any("locked.py" in w for w in meta.warnings)
 
 
 def test_build_metadata_missing_workspace(tmp_path):

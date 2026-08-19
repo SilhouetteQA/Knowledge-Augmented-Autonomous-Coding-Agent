@@ -85,6 +85,8 @@ class ArknightsMCPClient:
             )
         except FileNotFoundError:
             return f"域知识不可用: 兄弟项目 python 不存在（{self.python}）"
+        except OSError as e:
+            return f"域知识查询失败: {e}"
         except subprocess.TimeoutExpired:
             return f"域知识查询超时（{self.timeout}s）"
         if proc.returncode != 0:
