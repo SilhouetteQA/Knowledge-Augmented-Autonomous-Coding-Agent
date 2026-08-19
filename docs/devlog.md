@@ -151,3 +151,36 @@
 ### 下一步
 
 - W4（Repository Intelligence，可与 W5 并行）或 W5（GitHub Issue Agent，依赖 W3 已满足）。
+
+## W4 Repository Intelligence 完成（2026-08-19）
+
+### 完成内容
+
+- **窗口**：worktree `.worktrees/w4-repo-intelligence`，分支 `feature/w4-repo-intelligence`（10 commits），合并回 main（113 测试全绿，其中 MCP 集成 3 项实跑）。
+- **设计**：brainstorming 澄清（Python AST 选型（Tree-sitter 重/依赖深，否决）/ 内存 CodeGraph / 双知识源注入图）/ spec → plan（9 任务，全 TDD）→ 实施（Task 5 依赖倒置提前于 Task 4）。
+- **实现**：
+  - `tools/code_parser.py`：parse_python_file（AST）+ build_metadata（全工作区遍历，排除 IGNORED_DIRS，语法错误/读取失败跳过并告警，60s 限时返回部分结果）
+  - `tools/code_graph.py`：CodeGraph 内存图（module/class/function 节点，import/inherits/calls 边）+ `query_code_graph` 分发五类查询（calls / inheritance / imports / module_of / symbols），空结果附自导航提示
+  - `tools/knowledge_client.py`：KnowledgeClient 族（Mock 独立 + ArknightsMCPClient 子进程适配 + get_knowledge_client 工厂，`ARKNIGHTS_USE_MCP`/`ARKNIGHTS_WIKI_DIR` 环境开关；`_KIND_TOOL` 映射与兄弟项目 mcp_server 工具参数逐一核验；无 venv 回退 PATH python；子进程 stdout reconfigure(utf-8) 系统解决 GBK 乱码）
+  - `agent/graph.py`：注入 code_graph/knowledge_client 两 ToolSpec（search/knowledge 双知识工具），`_decide_system` 提示词显式引用可用查询工具；`agent/loop.py` `_result_to_text` 兼容 str/list
+  - `main.py --graph` 一键构建双知识源（`KA_CODE_INDEX`，构建失败静默回退 None→工具调用时 ToolError 不中止图）；`pyproject.toml` 加 `mcp` marker；`.env.example` 配置注释
+- **测试**：113 项全绿（新增 code_parser 8 / code_graph 11 / knowledge_client 7 / graph 3 / MCP 集成 3；`@pytest.mark.mcp` 条件跳过，配置 env 时实跑）。
+- **真实演示**（`workspace/w4-demo` 兄弟项目副本）：Agent 依次使用 query_code_graph（symbols → calls → imports）与 search_knowledge（阿米娅），阅读 entity_repository.py / character_aggregator.py / seed.py / identity_map.json 后给出结论——同一角色跨章节不会重复创建（多层去重：Seed 主键 + resolve_name/get_by_name 四层判重 + seed NPC 前置检查 + normalize_and_merge（id_map + 干员名 + 模糊匹配 ≤0.6）+ build_entity_index._ensure + EntityIndexStore O(1) lookup）；Pass 1 事件按章节存储为设计而非重复。
+
+### 关键决策与经验
+
+- **解析选型**：Python AST（stdlib，无重依赖）+ ripgrep 已覆盖需求；Tree-sitter 调研后否决。
+- **双知识源注入**：build_graph 闭包注入，未动既有节点逻辑；main.py 仅 11 行增量。
+- **MCP 适配**：不直接复用兄弟项目 client 代码（依赖隔离），改为每次查询一个子进程（python -c 固定脚本 + argv JSON 传参，无 shell，防注入）。
+- **审查后修复（needs-fixes → approve）**：① `_decide_system` 增加可用查询工具一行（spec §4.4 验收标准 1 核心）；② `query_code_graph` 空结果附「未找到…可用 symbols 模糊查询或 search_code 全文搜索」自导航提示（spec §7）；③ `_invoke`/build_metadata 补 OSError 兜底（工具错误返回结构化错误串/跳过文件，不抛异常）；④ 图内工具 docstring 8→11。
+- **规格用词偏差（记录）**：spec §4.3「懒加载单例」实为工厂非单例（main.py 仅调用一次并注入，无实际影响）；未知 kind 静默按 entity 处理；MCP 运行时子进程失败返回字符串错误（图可观察，未做 ToolError 结构区分）——均为 v1 有意取舍。
+
+### 遗留问题
+
+- 演示产物 `workspace/w4-demo/`（兄弟项目副本，157 py）与 `w4-demo-run.log` 未入库，收尾时清理或加入忽略。
+- 知识库查询未引入缓存（同一查询重复走子进程）；W5 若发现频繁可加进程级 lru_cache。
+- Code KG 为内存态，无持久化/增量更新；大仓库（>2k 文件）构建耗时待 W6 Benchmark 评估。
+
+### 下一步
+
+- W5（GitHub Issue Agent）：worktree `.worktrees/w5-github-issue`（分支 `feature/w5-github-issue`，计划已入库）执行规划 7 大任务，目标完成 GitHub Issue → PR 全链路闭环（MVP 交付）。

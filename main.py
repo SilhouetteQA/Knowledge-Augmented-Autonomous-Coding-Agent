@@ -9,6 +9,9 @@ from dotenv import load_dotenv
 from agent.graph import run_agent_graph
 from agent.llm import OpenAICompatClient
 from agent.loop import run_agent
+from tools.code_graph import build_code_graph
+from tools.file_tools import ToolError
+from tools.knowledge_client import get_knowledge_client
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,8 +44,17 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["KA_EXECUTOR"] = args.executor
     llm = OpenAICompatClient()
     if args.graph:
+        code_graph = None
+        if os.environ.get("KA_CODE_INDEX", "1") != "0":
+            built = build_code_graph(args.workspace)
+            if not isinstance(built, ToolError):
+                code_graph = built
+        knowledge = get_knowledge_client()
+        if isinstance(knowledge, ToolError):
+            knowledge = None
         result = run_agent_graph(args.task, llm, max_iterations=args.max_iterations,
-                                 workspace_root=args.workspace)
+                                 workspace_root=args.workspace, code_graph=code_graph,
+                                 knowledge_client=knowledge)
         print(f"任务: {args.task}")
         print(f"工作区: {args.workspace}")
         print(f"计划: {result.plan}")

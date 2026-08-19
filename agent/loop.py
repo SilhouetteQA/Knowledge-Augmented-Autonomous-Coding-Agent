@@ -142,11 +142,16 @@ def _dispatch(name: str, args: dict, workspace_root: str | None) -> object:
 
 
 def _result_to_text(result: object) -> str:
-    """工具结果序列化为回注文本；ToolError 转 {error: ...}。"""
+    """工具结果序列化为回注文本；ToolError 转 {error: ...}；字符串原样返回。"""
     if isinstance(result, ToolError):
         return json.dumps({"error": result.message}, ensure_ascii=False)
+    if isinstance(result, str):
+        return result
     if isinstance(result, list):
-        return json.dumps([asdict(x) for x in result], ensure_ascii=False)
+        return json.dumps([
+            asdict(x) if hasattr(x, "__dataclass_fields__") else x
+            for x in result
+        ], ensure_ascii=False)
     return json.dumps(asdict(result), ensure_ascii=False)
 
 
