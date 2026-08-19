@@ -5,6 +5,7 @@
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,8 +14,10 @@ from typing import Protocol
 from tools.file_tools import ToolError
 
 # 兄弟项目内一次性调用脚本：经其 ArknightsMcpClient 同步调用 MCP 工具，stdout 输出文本结果
+# （先重配 stdout 为 UTF-8，避免 Windows 默认 GBK 管道导致中文乱码）
 _CALL_SCRIPT = (
     "import json, sys;"
+    "sys.stdout.reconfigure(encoding='utf-8', errors='replace');"
     "from arknights_wiki.mcp_server.client import ArknightsMcpClient;"
     "c = ArknightsMcpClient();"
     "print(c.call_tool(sys.argv[1], json.loads(sys.argv[2])))"
@@ -49,12 +52,16 @@ class MockKnowledgeClient:
 
 
 def _resolve_sibling_python(wiki_dir: str) -> str:
-    """定位兄弟项目 venv python：Windows .venv/Scripts/python.exe，POSIX .venv/bin/python。"""
+    """定位兄弟项目 venv python：Windows .venv/Scripts/python.exe，POSIX .venv/bin/python。
+
+    兄弟项目无 venv 时回退系统 PATH 中的 python（兄弟项目依赖安装于全局环境）。
+    """
     venv = Path(wiki_dir) / ".venv"
     for cand in (venv / "Scripts" / "python.exe", venv / "bin" / "python"):
         if cand.exists():
             return str(cand)
-    return sys.executable
+    found = shutil.which("python")
+    return found or sys.executable
 
 
 class ArknightsMCPClient:
