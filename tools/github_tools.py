@@ -76,3 +76,46 @@ def get_repository(repo: str) -> GitHubRepo | ToolError:
         full_name=data["full_name"], clone_url=data["clone_url"],
         default_branch=data["default_branch"], language=data.get("language"),
     )
+
+
+def clone_repository(repo_dir: str, repo: str) -> ToolError | None:
+    """宿主 gh repo clone（认证经 gh，https 通道）。"""
+    result = _run(["gh", "repo", "clone", repo, repo_dir], timeout=600)
+    if isinstance(result, ToolError):
+        return result
+    return None
+
+
+def create_branch(repo_dir: str, branch: str, base: str) -> ToolError | None:
+    """从 base 检出并创建分支。"""
+    r1 = _run(["git", "checkout", base], cwd=repo_dir)
+    if isinstance(r1, ToolError):
+        return r1
+    r2 = _run(["git", "checkout", "-b", branch], cwd=repo_dir)
+    if isinstance(r2, ToolError):
+        return r2
+    return None
+
+
+def git_diff_since(repo_dir: str, base: str) -> str | ToolError:
+    """工作区相对 base 的未提交变更 diff（宿主执行）。"""
+    return _run(["git", "diff", base], cwd=repo_dir)
+
+
+def commit_changes(repo_dir: str, message: str) -> ToolError | None:
+    """宿主 git add -A + commit。"""
+    r1 = _run(["git", "add", "-A"], cwd=repo_dir)
+    if isinstance(r1, ToolError):
+        return r1
+    r2 = _run(["git", "commit", "-m", message], cwd=repo_dir)
+    if isinstance(r2, ToolError):
+        return r2
+    return None
+
+
+def push_branch(repo_dir: str, branch: str) -> ToolError | None:
+    """宿主 git push -u origin。"""
+    r = _run(["git", "push", "-u", "origin", branch], cwd=repo_dir, timeout=600)
+    if isinstance(r, ToolError):
+        return r
+    return None

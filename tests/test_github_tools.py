@@ -1,9 +1,21 @@
 """GitHub 工具测试：Fake gh（monkeypatch _run），不触网。"""
 import json
+import subprocess
+from pathlib import Path
 
 from tools import github_tools
 from tools.file_tools import ToolError
-from tools.github_tools import GitHubIssue, GitHubRepo, get_issue, get_repository
+from tools.github_tools import (
+    GitHubIssue,
+    GitHubRepo,
+    clone_repository,
+    commit_changes,
+    create_branch,
+    get_issue,
+    get_repository,
+    git_diff_since,
+    push_branch,
+)
 
 
 def test_get_issue_parses(monkeypatch):
@@ -53,3 +65,63 @@ def test_run_file_not_found(monkeypatch):
     result = github_tools._run(["gh", "api"])
     assert isinstance(result, ToolError)
     assert "不可用" in result.message
+
+
+def _init_repo(tmp_path) -> str:
+    """初始化本地 git 仓库（不触网），返回路径。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git_run(["init", "-b", "main"], repo)
+    (repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git_run(["add", "-A"], repo)
+    _git_run(["-c", "user.email=t@t", "-c", "user.name=t",
+              "commit", "-m", "init"], repo)
+    return str(repo)
+
+
+def _git_run(args, cwd) -> str:
+    """git 子进程封装（UTF-8 解码，规避 Windows GBK 乱码）。"""
+    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    return proc.stdout
+
+
+def test_create_branch_and_commit(tmp_path):
+    repo = _init_repo(tmp_path)
+    assert create_branch(repo, "fix/issue-1", "main") is None
+    out = _git_run(["branch", "--show-current"], repo)
+    assert out.strip() == "fix/issue-1"
+    (Path(repo) / "a.py").write_text("x = 2\n", encoding="utf-8")
+    assert commit_changes(repo, "fix: 修复 #1 x") is None
+    out = _git_run(["log", "--oneline"], repo)
+    assert "fix: 修复 #1 x" in out
+
+
+def test_git_diff_since(tmp_path):
+    repo = _init_repo(tmp_path)
+    create_branch(repo, "fix/issue-1", "main")
+    (Path(repo) / "a.py").write_text("x = 2\n", encoding="utf-8")
+    diff = git_diff_since(repo, "main")
+    assert isinstance(diff, str)
+    assert "-x = 1" in diff and "+x = 2" in diff
+
+
+def test_git_diff_since_failure(tmp_path):
+    repo = _init_repo(tmp_path)
+    assert isinstance(git_diff_since(repo, "nope-branch"), ToolError)
+
+
+def test_clone_repository_passes_through(monkeypatch):
+    calls = []
+    monkeypatch.setattr(github_tools, "_run",
+                        lambda cmd, **kw: calls.append(cmd) or "")
+    assert clone_repository("C:\\tmp\\dst", "test/arc-wiki") is None
+    assert calls == [["gh", "repo", "clone", "test/arc-wiki", "C:\\tmp\\dst"]]
+
+
+def test_push_branch_passes_through(monkeypatch):
+    calls = []
+    monkeypatch.setattr(github_tools, "_run",
+                        lambda cmd, **kw: calls.append(cmd) or "")
+    assert push_branch("C:\\tmp\\dst", "fix/issue-1") is None
+    assert calls == [["git", "push", "-u", "origin", "fix/issue-1"]]
