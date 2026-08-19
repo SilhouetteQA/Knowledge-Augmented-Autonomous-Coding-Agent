@@ -160,3 +160,60 @@ def test_graph_run_command_missing_arg_returns_toolerror(tmp_path):
     from tools.file_tools import ToolError
     assert isinstance(result.steps[0].result, ToolError)
     assert result.final_answer == "完成"
+
+
+def test_graph_decide_can_call_query_code_graph(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "app.py").write_text(
+        "def create_entity(name):\n    return name\n\ndef main():\n    return create_entity('x')\n",
+        encoding="utf-8")
+    from tools.code_graph import build_code_graph
+    code_graph = build_code_graph(str(ws))
+    script = [
+        _plan_msg(["查询代码结构"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="c1", name="query_code_graph",
+                     arguments={"query": "module_of", "arg": "create_entity"})]),
+        LLMMessage(role="assistant", content="完成"),
+    ]
+    result = run_agent_graph("查询", MockLLMClient(script), workspace_root=str(ws),
+                             code_graph=code_graph)
+    assert len(result.steps) == 1
+    assert result.steps[0].tool_name == "query_code_graph"
+    assert result.steps[0].result == ["app"]
+
+
+def test_graph_query_code_graph_calls(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "app.py").write_text(
+        "def create_entity(name):\n    return name\n\ndef main():\n    return create_entity('x')\n",
+        encoding="utf-8")
+    from tools.code_graph import build_code_graph
+    code_graph = build_code_graph(str(ws))
+    script = [
+        _plan_msg(["查询"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="c1", name="query_code_graph",
+                     arguments={"query": "calls", "arg": "create_entity"})]),
+        LLMMessage(role="assistant", content="完成"),
+    ]
+    result = run_agent_graph("查询", MockLLMClient(script), workspace_root=str(ws),
+                             code_graph=code_graph)
+    assert result.steps[0].result == ["app.main"]
+
+
+def test_graph_query_code_graph_without_index(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    script = [
+        _plan_msg(["查询"]),
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="c1", name="query_code_graph",
+                     arguments={"query": "calls", "arg": "x"})]),
+        LLMMessage(role="assistant", content="完成"),
+    ]
+    result = run_agent_graph("查询", MockLLMClient(script), workspace_root=str(ws))
+    from tools.file_tools import ToolError
+    assert isinstance(result.steps[0].result, ToolError)

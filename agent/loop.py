@@ -146,7 +146,10 @@ def _result_to_text(result: object) -> str:
     if isinstance(result, ToolError):
         return json.dumps({"error": result.message}, ensure_ascii=False)
     if isinstance(result, list):
-        return json.dumps([asdict(x) for x in result], ensure_ascii=False)
+        return json.dumps([
+            asdict(x) if hasattr(x, "__dataclass_fields__") else x
+            for x in result
+        ], ensure_ascii=False)
     return json.dumps(asdict(result), ensure_ascii=False)
 
 
