@@ -14,8 +14,10 @@ from langgraph.graph import END, StateGraph
 
 from agent.llm import LLMClient, LLMMessage, ToolCall, ToolSpec
 from agent.loop import AgentStep, _build_tools, _dispatch, _result_to_text
+from tools.code_graph import CodeGraph, query_code_graph
 from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import ToolError
+from tools.knowledge_client import KnowledgeClient
 from tools.shell_tools import (
     TestResult,
     git_diff,
@@ -41,11 +43,14 @@ def _reflect_system(details: str) -> str:
 
 
 def _decide_system(plan: list[str], verify_rounds: int, max_verify_rounds: int) -> str:
-    """decide 节点系统提示词（引用计划与验证轮次）。"""
+    """decide 节点系统提示词（引用计划、验证轮次与可用查询工具）。"""
     plan_text = "\n".join(f"- {p}" for p in plan) or "- （无计划）"
     return (
         "你是编码助手。你可以调用工具查看、修改和执行工作区内的代码。\n"
         f"你的计划：\n{plan_text}\n"
+        f"可用查询工具：query_code_graph（调用关系 calls / 导入 imports / 定义位置 "
+        "module_of / 符号模糊搜索 symbols）、search_knowledge（领域知识检索）。"
+        "定位符号与理解代码时优先使用结构化查询，而非盲目全文搜索。\n"
         f"验证轮次：已进行 {verify_rounds}/{max_verify_rounds} 次。测试全部通过前不要声称完成；"
         "声称完成后系统会自动运行测试验证。\n"
         "规则：只操作工作区内文件；每次工具调用后先观察结果再行动；完成后用中文总结。"
@@ -53,7 +58,7 @@ def _decide_system(plan: list[str], verify_rounds: int, max_verify_rounds: int) 
 
 
 def _graph_tools() -> list[ToolSpec]:
-    """图内工具集：W1 四文件工具 + W2 shell/git 五工具，共 8 个暴露给 LLM。
+    """图内工具集：W1 四文件工具 + W2 shell/git 五工具 + W4 双知识源两工具，共 11 个暴露给 LLM。
 
     覆盖 W2 spec §3 要求的完整工具集，解决 decide 阶段仅暴露 4 个文件工具、
     无法主动运行测试/命令/git 的缺口。
@@ -102,11 +107,37 @@ def _graph_tools() -> list[ToolSpec]:
                 },
             },
         ),
+        ToolSpec(
+            name="query_code_graph",
+            description="查询代码结构图（静态分析结果）：query=calls(谁调用了某函数) / inheritance(继承链) / imports(模块直接导入) / module_of(符号所在模块) / symbols(符号模糊搜索)，arg 为查询目标",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "查询类型: calls / inheritance / imports / module_of / symbols"},
+                    "arg": {"type": "string", "description": "查询目标（函数名/类名/模块名/关键词）"},
+                },
+                "required": ["query", "arg"],
+            },
+        ),
+        ToolSpec(
+            name="search_knowledge",
+            description="查询明日方舟领域知识库（Arknights Wiki 知识图谱）：kind=entity(实体)/event(事件)/relationship(关系)/timeline(时间线)/story(剧情原文)，缺省 entity",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "查询内容（角色名/概念/关键词）"},
+                    "kind": {"type": "string", "description": "检索类型，缺省 entity"},
+                },
+                "required": ["query"],
+            },
+        ),
     ]
 
 
-def _graph_dispatch(name: str, args: dict, workspace_root: str | None) -> object:
-    """图内工具分发：W2 shell/git 工具 + 回退 W1 四文件工具。"""
+def _graph_dispatch(name: str, args: dict, workspace_root: str | None,
+                    code_graph: CodeGraph | None = None,
+                    knowledge_client: KnowledgeClient | None = None) -> object:
+    """图内工具分发：W2 shell/git 工具 + W4 双知识工具 + 回退 W1 四文件工具。"""
     if name == "run_command":
         cmd = args.get("command")
         if not cmd:
@@ -121,6 +152,21 @@ def _graph_dispatch(name: str, args: dict, workspace_root: str | None) -> object
         return git_diff(workspace_root=workspace_root)
     if name == "git_log":
         return git_log(count=args.get("count", 10), workspace_root=workspace_root)
+    if name == "query_code_graph":
+        query = args.get("query")
+        arg = args.get("arg")
+        if not query or not arg:
+            return ToolError("缺少参数: query/arg")
+        if code_graph is None:
+            return ToolError("代码索引未构建（任务启动时未开启 KA_CODE_INDEX 或构建失败）")
+        return query_code_graph(code_graph, query, arg)
+    if name == "search_knowledge":
+        q = args.get("query")
+        if not q:
+            return ToolError("缺少参数: query")
+        if knowledge_client is None:
+            return ToolError("域知识未启用：请设置 ARKNIGHTS_USE_MCP=1 与 ARKNIGHTS_WIKI_DIR")
+        return knowledge_client.search(q, args.get("kind"))
     return _dispatch(name, args, workspace_root)
 
 
@@ -164,8 +210,10 @@ def _parse_plan(content: str) -> list[str]:
 
 def build_graph(llm: LLMClient, max_iterations: int = 20,
                 max_verify_rounds: int = 3,
-                workspace_root: str | None = None) -> object:
-    """构建 LangGraph 图（闭包捕获 llm 与上限参数）。"""
+                workspace_root: str | None = None,
+                code_graph: CodeGraph | None = None,
+                knowledge_client: KnowledgeClient | None = None) -> object:
+    """构建 LangGraph 图（闭包捕获 llm、上限参数与 W4 注入的双知识源）。"""
 
     def plan_node(state: AgentState) -> dict:
         msg = llm.chat(
@@ -198,7 +246,8 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
         steps = list(state["steps"])
         messages = list(state["messages"])
         for tc in state["pending_tool_calls"] or []:
-            result = _graph_dispatch(tc.name, tc.arguments, workspace_root)
+            result = _graph_dispatch(tc.name, tc.arguments, workspace_root,
+                                     code_graph, knowledge_client)
             steps.append(AgentStep(tool_name=tc.name, arguments=tc.arguments, result=result))
             messages.append({
                 "role": "tool",
@@ -276,9 +325,12 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
 
 def run_agent_graph(task: str, llm: LLMClient, max_iterations: int = 20,
                     max_verify_rounds: int = 3,
-                    workspace_root: str | None = None) -> AgentGraphResult:
+                    workspace_root: str | None = None,
+                    code_graph: CodeGraph | None = None,
+                    knowledge_client: KnowledgeClient | None = None) -> AgentGraphResult:
     """执行任务：LangGraph 图驱动（命令执行在沙箱上下文内，一个任务一个沙箱）。"""
-    graph = build_graph(llm, max_iterations, max_verify_rounds, workspace_root)
+    graph = build_graph(llm, max_iterations, max_verify_rounds, workspace_root,
+                        code_graph, knowledge_client)
     with sandbox_executor(workspace_root or os.getcwd()):
         result = graph.invoke({
             "task": task,

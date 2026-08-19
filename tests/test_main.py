@@ -41,11 +41,15 @@ def test_main_executor_docker_sets_env(monkeypatch, capsys):
 
 def test_main_graph_flag_uses_graph(monkeypatch, capsys):
     from agent.graph import AgentGraphResult
+    from tools.file_tools import ToolError
     fake = AgentGraphResult(plan=["步骤1"], steps=[], final_answer="搞定", iteration_count=1,
                             verify_rounds=0, stopped_by_limit=False, test_results=[])
     monkeypatch.setattr("main.run_agent_graph", lambda *a, **k: fake)
     monkeypatch.setattr("main.run_agent", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不应走 loop")))
     monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    monkeypatch.setattr("main.build_code_graph", lambda *a, **k: None)
+    monkeypatch.setattr("main.get_knowledge_client", lambda: ToolError("未启用"))
+    monkeypatch.delenv("KA_CODE_INDEX", raising=False)
     rc = main.main(["测试任务", "--graph"])
     out = capsys.readouterr().out
     assert rc == 0
