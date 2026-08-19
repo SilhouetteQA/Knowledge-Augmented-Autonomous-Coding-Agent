@@ -71,3 +71,28 @@ def test_main_prints_emoji_in_arguments_without_crash(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "write_file" in out
+
+
+def test_main_issue_mode_dry_run(monkeypatch, capsys):
+    from agent.issue import IssueAgentResult
+    from tools.github_tools import GitHubIssue
+    fake_issue = GitHubIssue(number=1, title="标题", body="b", labels=[], state="open")
+    fake = IssueAgentResult(issue=fake_issue, steps=[], final_answer="ok",
+                            branch="fix/issue-1", diff="+x", review="PASS ok",
+                            pr_url=None, stopped_by_limit=False,
+                            iteration_count=1, verify_rounds=1)
+    monkeypatch.setattr("main.run_issue_agent", lambda *a, **k: fake)
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    rc = main.main(["test/arc-wiki#1", "--issue"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "fix/issue-1" in out
+    assert "dry-run" in out
+
+
+def test_main_issue_mode_bad_format(monkeypatch, capsys):
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    rc = main.main(["no-issue-format", "--issue"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "格式" in out
