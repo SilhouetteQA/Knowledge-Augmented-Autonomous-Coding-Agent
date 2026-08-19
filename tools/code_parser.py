@@ -116,3 +116,32 @@ def parse_python_file(path: str, module_name: str) -> ModuleInfo:
             functions.append(_parse_function(node, module_name))
     return ModuleInfo(name=module_name, path=path, imports=imports,
                       classes=classes, functions=functions)
+
+
+def build_metadata(workspace_root: str, timeout: float = 60.0) -> CodeMetadata | ToolError:
+    """遍历工作区所有 .py 构建元数据；语法错误跳过并记录；超时返回部分结果。
+
+    排除 IGNORED_DIRS（.git / __pycache__ / .venv 等，与 list_files 一致）。
+    """
+    root = Path(workspace_root)
+    if not root.exists():
+        return ToolError(f"工作区不存在: {workspace_root}")
+    metadata = CodeMetadata()
+    start = time.monotonic()
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        for name in sorted(filenames):
+            if not name.endswith(".py"):
+                continue
+            if time.monotonic() - start > timeout:
+                metadata.warnings.append(f"解析超时（>{timeout}s），结果不完整")
+                return metadata
+            path = Path(dirpath) / name
+            try:
+                module_name = _module_name_from_path(path, root)
+                metadata.modules.append(parse_python_file(str(path), module_name))
+            except SyntaxError as e:
+                metadata.warnings.append(
+                    f"语法错误跳过: {path.relative_to(root)}（{e.msg} 第 {e.lineno} 行）")
+    metadata.modules.sort(key=lambda m: m.name)
+    return metadata
