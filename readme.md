@@ -160,7 +160,7 @@ python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 
 # 配置 LLM（复制 .env.example 为 .env 并填写）
-# opencode_go_api / OPENCODE_GO_BASE_URL / OPENCODE_GO_MODEL
+# arkcode_api / ARKCODE_BASE_URL（默认 https://ark.cn-beijing.volces.com/api/coding/v3）/ ARKCODE_MODEL（默认 deepseek-v4-flash-ga-260731）
 
 # 运行测试
 .venv\Scripts\python.exe -m pytest tests/
