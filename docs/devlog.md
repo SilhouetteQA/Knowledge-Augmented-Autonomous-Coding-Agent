@@ -281,3 +281,26 @@
 - 第二阶段（纠错写回）：LLM 事实核查（对照 stories 原文出 CONFIRMED/FALSE_POSITIVE/UNCERTAIN）→ 修复 patch → 重建索引 → 回归 → `--apply` 门禁（spec 已批准，待排期实施）。
 - 死数据 65 条清单已入库报告（output/correction/audit_report_*.md），供人工抽样复核。
 - 与评估器联动（v2）：评估器高错误率类别 → 引导优先审计该类知识。
+
+## W5 收尾与合并（2026-08-25）
+
+### 人工复核结论（覆盖死数据清单 65 条前序发现）
+
+- 用户复核抽查结果，重点质询重要内容（莱茵生命 / 瑕光 / 野鬃）被标死数据的问题；实证定位根因：
+  1. **代号↔真名命名脱节**：红松林事件 participants 用真名（玛莉娅 / 艾沃娜 / 索娜…），章节清单条目用代号（瑕光 / 野鬃 / 焰尾…），别名无 bridge → 结构化引用整名匹配不命中（瑕光有戏份但入度 0）。
+  2. **组织名粒度**：莱茵生命 9 个事件文本提及，但 participants 只写「莱茵研究员」等变体，整名从未进结构化字段。
+  - 结论：dead 语义 = 「未被结构化引用（疑似死数据）」粗筛信号，非结论；两类假阳性（有戏份未引用 / 命名脱节）由人工复核区分。
+- **冻结决定（用户拍板）**：知识纠错第二阶段（删除真死数据 / 补全假死数据别名与引用 / LLM 事实核查 / --apply 写回）**冻结，保留本次抽查全部产物，待 W8 Human-in-the-loop 审批门禁就绪后继续**——删除/修改兄弟项目知识数据属高风险写操作，须先有人工确认机制。
+
+### 窗口收尾记录
+
+- 自查双轴审查：Standards（无 emoji/中文注释/Conventional Commits/凭据不进沙箱/secrets 不入库）✓；Spec（W5 规格验收：Issue→PR 全链路 + dry-run 安全阀 ✓；知识纠错规格验收 6/7：2% 抽查达标 ✓，1-5 设计完整待 HITL 实施）✓。
+- 合并：`git merge feature/w5-github-issue`（main 快进至 7fba02d）；删除分支与 worktree；合并后全量回归 **154 passed / 3 skipped / 10 deselected**。
+- 文档：`docs/roadmap.md` W5 标记 [x] 完成（含知识抽查扩展与冻结事项）；readme 状态行更新。
+- 会话归档：`docs/sessions/2026-08-25-w5-close-session.md`。
+
+### 下会话入口（W6 Evaluation）
+
+- 创建 worktree `feature/w6-evaluation`；刷线：readme → 本 devlog → roadmap。
+- W6 第一块可复用 W5 知识抽查（--correct）作为知识质量指标源（可靠率/实用率/死数据率，可作版本对比证据）。
+- 冻结事项提醒：知识纠错第二阶段依赖 W8 HITL；若 W6 期间决定提前排期，需先实现 HITL 人工确认机制（审批门禁）。

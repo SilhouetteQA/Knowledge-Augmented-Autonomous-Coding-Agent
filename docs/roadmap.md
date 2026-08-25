@@ -12,7 +12,7 @@
 | W2 | Shell + Test | feature/w2-shell-test | W1 | [x] 已完成 |
 | W3 | Docker Sandbox | feature/w3-docker-sandbox | W2 | [x] 已完成 |
 | W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [x] 已完成 |
-| W5 | GitHub Issue Agent | feature/w5-github-issue | W3 | [ ] 待开始 |
+| W5 | GitHub Issue Agent + 知识抽查 | feature/w5-github-issue | W3 | [x] 已完成 |
 | W6 | Evaluation | feature/w6-evaluation | W5 | [ ] 待开始 |
 | W7 | Observability | feature/w7-observability | W5 | [ ] 待开始 |
 | W8 | Human-in-the-loop | feature/w8-human-in-the-loop | W6, W7 | [ ] 待开始 |
@@ -135,20 +135,28 @@ coding-agent/
 
 ---
 
-## W5：GitHub Issue Agent（阶段 5：最终 MVP）
+## W5：GitHub Issue Agent（阶段 5：最终 MVP）（已完成）
 
 **目标**：GitHub API 全链路闭环，Issue → PR。
 
 **任务清单**：
 
-- [ ] GitHub 工具：get_issue / get_repository / create_branch / create_pull_request / comment_issue
-- [ ] Git 工具：git_status / git_diff / git_log / git_create_branch / git_commit / git_push
-- [ ] 全链路编排：Get Issue → Clone Repo → Create Branch → Agent Work → Run Tests → Git Diff → Review → Commit → Push → Create PR
-- [ ] Agent 输入模型（repository / issue_number / task / runtime）与 AgentState
-- [ ] 端到端演示：真实 Issue（先用本地 mock 仓库，再试真实仓库）
-- [ ] TDD + Review + 合并回 main
+- [x] GitHub 工具：get_issue / get_repository / create_branch / create_pull_request / comment_issue
+- [x] Git 工具：git_status / git_diff / git_log / git_create_branch / git_commit / git_push
+- [x] 全链路编排：Get Issue → Clone Repo → Create Branch → Agent Work → Run Tests → Git Diff → Review → Commit → Push → Create PR
+- [x] Agent 输入模型（repository / issue_number / task / runtime）与 AgentState
+- [x] 端到端演示：真实 Issue（先用本地 mock 仓库，再试真实仓库）
+- [x] TDD + Review + 合并回 main
 
-**验收标准**：输入仓库 URL + Issue 编号，Agent 完成全部步骤并产出可审查的 PR（或人工确认的模拟 PR）。
+**验收标准**：输入仓库 URL + Issue 编号，Agent 完成全部步骤并产出可审查的 PR（或人工确认的模拟 PR）。—— 达成（dry-run 演示 + push 门禁内置）。
+
+**完成记录（2026-08-25）**：
+
+- 实现：gh CLI 封装（`tools/github_tools.py`，宿主执行、凭据不进沙箱）+ 全链路编排（`agent/issue.py`：fetch → clone/sync（幂等）→ branch（-B）→ LangGraph 工作 → diff → LLM Review（FAIL 重试 1 轮）→ push 门禁）+ `main.py --issue/--push`。
+- **真实 dry-run 演示**：dbader/schedule#646 —— Agent 自主修复 `__repr__` unit=None 崩溃，方案与社区 PR #652 一致；Review PASS；远端零副作用。能力边界实证 6 项（迭代上限、顺手改动、非正式测试、宿主环境失真、LLM 稳定性、仓库选择）记录于 devlog。
+- **知识纠错扩展（W5 内）**：规格《2026-08-25-knowledge-correction.md》+ 抽查验证落地（`tools/knowledge_audit.py` / `agent/correct.py` / `main.py --correct`）——三次提取产物 2% 分层抽样：来源可靠性 96.88%、内容实用性 70.98%（65 条疑似死数据清单）；人工复核发现命名 bridge 问题（代号↔真名，如瑕光↔玛莉娅）。
+- **测试**：合并后全量 154 项全绿（含 3 项 MCP / kg 集成，条件跳过）。
+- **冻结事项**：知识纠错第二阶段（LLM 事实核查 → 删除真死数据 / 补全假死数据别名与引用 → 重建索引 → --apply 写回）**冻结，待 W8 Human-in-the-loop 门禁就绪后继续**（2026-08-25 用户决定）。
 
 ---
 
@@ -165,6 +173,8 @@ coding-agent/
 - [ ] TDD + Review + 合并回 main
 
 **验收标准**：任意 Agent 版本变更可在同一基准上重跑并对比指标。
+
+**入口备注（下会话）**：依赖 W5 已满足；知识抽查（--correct）可作为 W6 的评估数据源之一（知识质量指标：可靠率/实用率/死数据率）；知识纠错第二阶段（冻结中）建议与 W8 HITL 联动排期。
 
 ---
 

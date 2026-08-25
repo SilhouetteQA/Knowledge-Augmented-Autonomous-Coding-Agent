@@ -8,9 +8,9 @@ __pycache__/
 # 缓存
 .cache/
 
-# 数据产物 (体积大, 可重新生成)
-data/
-output/
+# 数据产物 (体积大, 可重新生成) —— 仅忽略仓库根级目录（fixtures 内的 data/output 需入库）
+/data/
+/output/
 *.db
 *.sqlite3
 
