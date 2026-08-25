@@ -1057,8 +1057,9 @@ git commit -m "feat(benchmark): 新增评测报告（run metadata / JSON / Markd
 **Interfaces:**
 - Consumes: `benchmark.loader.load_cases / BenchmarkCase`、`benchmark.judge.judge_patch`、`benchmark.report.*`、`agent.issue.run_issue_agent / IssueTask`、`tools.shell_tools.run_tests`、`tools.tracing.traced`
 - Produces:
-  - `def run_benchmark(llm, case_dir: str, out_dir: str, executor: str = "local", repo_root: str = "workspace/benchmark") -> BenchmarkReport`：遍历 cases → 逐任务执行 → 判定 → 汇总
-  - 执行细节：每个 case 调 `run_issue_agent(IssueTask(repository=..., issue_number=..., workspace_root=repo_root, push=False, max_iterations=..., issue_snapshot=case.issue))`；随后对 `repo_root/<owner__name>`（`_repo_dir_name` 同 issue.py 规则）跑 `run_tests(path=<must_pass 条目相对路径>, workspace_root=<repo_dir>)` 判定 test_pass（failed==0 且 error==0 且 total>0）；`judge_patch(llm, result.diff, gold_patch_text, case.issue)` 判定 patch_acceptance；resolution = test_pass and patch_acceptance；异常 → status="error" 记入 errors 不中断；tokens 从 `llm.tokens_total` 前后差值；成本按 Task 8 单价表（本任务预留 `_cost_usd(prompt, completion)` 钩子，Task 8 实现单价）
+  - `def run_benchmark(llm, case_dir: str, out_dir: str, executor: str = "local", repo_root: str = "workspace/benchmark") -> BenchmarkReport`：加载案例 → 遍历执行 → 判定 → 汇总（report 落盘）
+  - `def run_benchmark_cases(llm, cases: list[BenchmarkCase], case_dir: str, out_dir: str, executor: str, repo_root: str) -> BenchmarkReport`：对已加载案例执行评测（Task 7 测试的 seam）
+  - 执行细节：每个 case 调 `run_issue_agent(IssueTask(repository=..., issue_number=..., workspace_root=repo_root, push=False, max_iterations=..., issue_snapshot=case.issue))`；随后对 `repo_root/<owner__name>`（`_repo_dir_name` 同 issue.py 规则）跑 `run_tests(path=<must_pass 条目相对路径>, workspace_root=<repo_dir>)` 判定 test_pass（failed==0 且 error==0 且 total>0）；gold patch 从 `case_dir/<case.gold_patch>` 读取；`judge_patch(llm, result.diff, gold_patch_text, case.issue)` 判定 patch_acceptance；resolution = test_pass and patch_acceptance；异常 → status="error" 记入 errors 不中断；tokens 从 `llm.tokens_total` 前后差值；成本按 `_cost_usd(model, prompt, completion)`（Task 8 单价表，未知模型 0.0）
   - `def _repo_dir_name(repository: str) -> str`：`owner/name → owner__name`
 
 - [ ] **Step 1: Write the failing test**
@@ -1084,8 +1085,16 @@ def _case(case_id="schedule-646", must_pass=None):
         id=case_id, category="bug", repository="dbader/schedule",
         issue=GitHubIssue(number=646, title="guard self.unit against None",
                           body="crash when unit is None", labels=[], state="open"),
-        gold_patch="(gold 文本)", must_pass=must_pass or ["test_ok.py"],
+        gold_patch="gold/%s.diff" % case_id, must_pass=must_pass or ["test_ok.py"],
         max_iterations=30, notes="")
+
+
+def _make_gold(tmp_path, case_id="schedule-646"):
+    """在 case_dir 下创建 gold patch 文件，返回 case_dir。"""
+    g = tmp_path / "gold"
+    g.mkdir(parents=True, exist_ok=True)
+    (g / ("%s.diff" % case_id)).write_text("+guard", encoding="utf-8")
+    return str(tmp_path)
 
 
 def _result_diff(diff="+guard"):
@@ -1103,7 +1112,8 @@ def test_resolved_case(tmp_path, monkeypatch):
                         lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
     llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
     cases = [_case()]
-    report = runner_mod.run_benchmark_cases(llm, cases, "", "local", tmp_path)
+    report = runner_mod.run_benchmark_cases(
+        llm, cases, _make_gold(tmp_path), "", "local", tmp_path)
     assert isinstance(report, BenchmarkReport)
     assert report.total == 1 and report.resolved == 1
     r = report.results[0]
@@ -1120,7 +1130,8 @@ def test_test_failure_not_resolved(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_mod, "run_tests",
                         lambda path, workspace_root: TestResult(1, 1, 0, 2, 0.1, []))
     llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
-    report = runner_mod.run_benchmark_cases(llm, [_case()], "", "local", tmp_path)
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
     assert report.resolved == 0
     assert report.results[0].test_pass is False
 
@@ -1131,7 +1142,8 @@ def test_judge_skip_when_diff_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_mod, "run_tests",
                         lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
     llm = MockLLMClient([])
-    report = runner_mod.run_benchmark_cases(llm, [_case()], "", "local", tmp_path)
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
     assert report.results[0].patch_acceptance is False
     assert report.results[0].judge_verdict == "SKIP"
 
@@ -1155,7 +1167,8 @@ def test_case_error_continues(tmp_path, monkeypatch):
         issue=GitHubIssue(number=1, title="t", body="b", labels=[], state="open"),
         gold_patch="g", must_pass=["t.py"], max_iterations=30, notes=""),
         _case("c2")]
-    report = runner_mod.run_benchmark_cases(llm, cases, "", "local", tmp_path)
+    report = runner_mod.run_benchmark_cases(
+        llm, cases, _make_gold(tmp_path, "c2"), "", "local", tmp_path)
     assert len(report.results) == 2
     by_id = {r.case_id: r for r in report.results}
     assert by_id["c1"].status == "error" and "clone 失败" in by_id["c1"].errors
@@ -1213,24 +1226,21 @@ def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
     return True
 
 
-def _case_result(case: BenchmarkCase, llm: LLMClient,
+def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
                  repo_dir: str, prompt_before: int,
                  completion_before: int, start: float, end: float,
                  run: object) -> CaseResult:
     """单 case 结果组装（含双判定与指标采集）。"""
+    errors: list[str] = []
     diff = getattr(run, "diff", "") or ""
     test_pass = _test_pass(case, repo_dir)
     gold_text = ""
-    gold_path = os.path.join(os.path.dirname(os.path.dirname(case.gold_patch)),
-                             "gold", os.path.basename(case.gold_patch))
+    gold_path = os.path.join(case_dir, case.gold_patch)
     try:
-        with open(os.path.abspath(gold_path)
-                  if os.path.isabs(gold_path) else gold_path,
-                  encoding="utf-8") as f:
+        with open(gold_path, encoding="utf-8") as f:
             gold_text = f.read()
     except OSError as e:
-        gold_text = ""
-        run_errors.append(f"gold patch 读取失败: {e}")
+        errors.append(f"gold patch 读取失败: {e}")
     judge = judge_patch(llm, diff, gold_text, case.issue)
     resolution = test_pass and judge.verdict == "PASS"
     prompt, completion = (llm.tokens_total["prompt"] - prompt_before,
@@ -1247,11 +1257,12 @@ def _case_result(case: BenchmarkCase, llm: LLMClient,
         latency_s=end - start,
         tokens_prompt=prompt, tokens_completion=completion,
         cost_usd=_cost_usd(model, prompt, completion),
-        diff=diff, errors=list(run_errors),
+        diff=diff, errors=errors,
     )
 
 
 def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
+                        case_dir: str,
                         out_dir: str, executor: str,
                         repo_root: str) -> BenchmarkReport:
     """执行一组案例并返回汇总报告（任一 case 异常不中断）。"""
@@ -1271,7 +1282,7 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
                           issue_snapshot=case.issue),
                 llm)
             results.append(_case_result(
-                case, llm, repo_dir, prompt_before, completion_before,
+                case, llm, case_dir, repo_dir, prompt_before, completion_before,
                 start, time.monotonic(), run))
         except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
             results.append(CaseResult(
@@ -1304,7 +1315,7 @@ def run_benchmark(llm: LLMClient, case_dir: str, out_dir: str,
     """一键评测：加载案例 → 执行 → 报告。"""
     from benchmark.loader import load_cases
     cases = load_cases(case_dir)
-    return run_benchmark_cases(llm, cases, out_dir, executor, repo_root)
+    return run_benchmark_cases(llm, cases, case_dir, out_dir, executor, repo_root)
 ```
 
 > 注：`_case_result` 中 `run_errors` 引用处应改为局部变量初始化后再传入（实施时修正为：`errors: list = []` 起始，gold 读取失败时 append；已在上文代码以注释标注——实施者按此修正）。
@@ -1393,13 +1404,14 @@ Expected: FAIL（AttributeError: module 'main' has no attribute '_run_benchmark_
 # main.py 新增：
 def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
     """评测模式：加载基准案例 → 运行 → 报告；--compare 输出版本对比表。"""
+    import json
+    import os
+
     from benchmark.loader import load_cases
-    from benchmark.report import (BenchmarkReport, RunMetadata,
+    from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
                                   compare_reports)
     from benchmark.runner import run_benchmark
     if args.compare:
-        import json
-        import os
         reports = []
         for run_id in args.compare.split(","):
             path = os.path.join(args.benchmark_out, run_id, "report.json")
@@ -1407,11 +1419,11 @@ def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
                 print(f"报告不存在: {path}")
                 return 1
             data = json.loads(open(path, encoding="utf-8").read())
-            m = RunMetadata(**data["metadata"])
+            cases = [CaseResult(**d) for d in data["results"]]
             reports.append(BenchmarkReport(
-                metadata=m, total=data["total"], resolved=data["resolved"],
-                resolution_rate=data["resolution_rate"],
-                results=[BenchmarkReport.__mro__[0] and eval(x) for x in []] or []))
+                metadata=RunMetadata(**data["metadata"]),
+                total=data["total"], resolved=data["resolved"],
+                resolution_rate=data["resolution_rate"], results=cases))
         print(compare_reports(reports))
         return 0
     executor = args.executor or os.environ.get("KA_EXECUTOR", "local")
@@ -1424,7 +1436,7 @@ def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
     return 0
 ```
 
-> 注：以上 `--compare` 分支中 `results` 重建表达式含占位写法，实施时应改为利用 `CaseResult(**x)` 的 asdict 反序列化（Task 6 的 CaseResult dataclass 支持 `**data` 构造）；实施者以 `CaseResult(**{"case_id": ...})` 从 JSON dict 重建，报告对比表即正确。此实现细节在实施时按真实 dataclass 字段修正。
+> 注：`--compare` 分支用 `CaseResult(**d)` / `RunMetadata(**d)` 从 JSON dict 重建（Task 6 dataclass 字段与 report.json 的 asdict 输出一一对应）。
 
 ```python
 # main.py main() 内，llm 创建之前追加分支：
