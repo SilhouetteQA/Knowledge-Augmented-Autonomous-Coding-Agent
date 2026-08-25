@@ -96,3 +96,29 @@ def test_main_issue_mode_bad_format(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert "格式" in out
+
+
+def test_main_correct_mode_dry_run(monkeypatch, capsys, tmp_path):
+    from agent.correct import AuditReport
+    (tmp_path / "data" / "extractions").mkdir(parents=True)
+    fake = AuditReport(
+        total=100, sample_count=2, stats={"by_kind": {"concept": 60}},
+        reliability={"rate": 0.5, "reliable": 1, "unreliable": 1},
+        utility={"rate": 0.9, "dead_count": 1, "used": 1},
+        dead_list=[{"id": "x", "kind": "concept", "name": "《三山谈》",
+                    "origin_file": "f.json"}],
+        samples=[], out_dir="")
+    monkeypatch.setattr("main.run_audit", lambda *a, **k: fake)
+    rc = main.main(["--correct", "--wiki-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "知识抽查完成" in out
+    assert "《三山谈》" in out
+
+
+def test_main_correct_mode_requires_wiki_dir(monkeypatch, capsys):
+    monkeypatch.delenv("ARKNIGHTS_WIKI_DIR", raising=False)
+    rc = main.main(["--correct"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "兄弟项目目录" in out

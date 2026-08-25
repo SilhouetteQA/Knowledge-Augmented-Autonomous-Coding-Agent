@@ -1,11 +1,12 @@
 # main.py
-"""CLI 入口：python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10] [--executor local|docker] [--graph]；Issue 模式：python main.py "<owner/name>#<issue_number>" --issue [--push]"""
+"""CLI 入口：python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10] [--executor local|docker] [--graph]；Issue 模式：python main.py "<owner/name>#<issue_number>" --issue [--push]；知识抽查：python main.py --correct [--wiki-dir <兄弟项目>]"""
 import argparse
 import os
 import sys
 
 from dotenv import load_dotenv
 
+from agent.correct import print_audit_summary, run_audit
 from agent.graph import run_agent_graph
 from agent.issue import run_issue_agent
 from agent.llm import OpenAICompatClient
@@ -20,7 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Knowledge-Augmented Autonomous Coding Agent - W1 本地工作区",
     )
-    parser.add_argument("task", help="任务描述，例如：在 demo-project 中定位某函数并修改")
+    parser.add_argument("task", nargs="?", default=None,
+                        help="任务描述，例如：在 demo-project 中定位某函数并修改（--correct/--issue 模式可为空）")
     parser.add_argument("--workspace", default="workspace",
                         help="工作区根目录（默认 workspace）")
     parser.add_argument("--max-iterations", type=int, default=10,
@@ -33,12 +35,40 @@ def build_parser() -> argparse.ArgumentParser:
                         help="GitHub Issue 模式：任务参数格式 <owner/name>#<issue_number>，例如 test/arc-wiki#123")
     parser.add_argument("--push", action="store_true",
                         help="Issue 模式：通过审查后 push 并创建 PR（默认 dry-run 停在 review）")
+    parser.add_argument("--correct", action="store_true",
+                        help="知识抽查模式：对兄弟项目三次提取产物做 2% 分层抽查（dry-run，零写回）")
+    parser.add_argument("--wiki-dir", default="",
+                        help="兄弟项目根目录（缺省读 ARKNIGHTS_WIKI_DIR）")
+    parser.add_argument("--audit-ratio", type=float, default=0.02,
+                        help="抽查比例（默认 0.02 = 2%）")
+    parser.add_argument("--audit-seed", type=int, default=42, help="抽查随机种子")
+    parser.add_argument("--audit-out", default="output/correction",
+                        help="抽查报告输出目录")
     return parser
+
+
+def _run_correct_mode(args: argparse.Namespace) -> int:
+    """知识抽查模式：对兄弟项目三次提取产物做比例抽查（规则层，无 LLM、零写回）。"""
+    wiki_dir = args.wiki_dir or os.environ.get("ARKNIGHTS_WIKI_DIR", "")
+    if not wiki_dir:
+        print("知识抽查需要兄弟项目目录：设置 ARKNIGHTS_WIKI_DIR 或 --wiki-dir")
+        return 1
+    if not os.path.isdir(os.path.join(wiki_dir, "data", "extractions")):
+        print(f"extractions 目录不存在: {os.path.join(wiki_dir, 'data', 'extractions')}")
+        return 1
+    try:
+        report = run_audit(wiki_dir, ratio=args.audit_ratio, seed=args.audit_seed,
+                           out_dir=args.audit_out)
+    except Exception as e:  # noqa: BLE001  # CLI 层统一报错退出
+        print(f"抽查失败: {e}")
+        return 1
+    print_audit_summary(report)
+    return 0
 
 
 def _run_issue_mode(args: argparse.Namespace, llm) -> int:
     """Issue 模式：解析 owner/name#number 并执行全链路编排。"""
-    if "#" not in args.task:
+    if not args.task or "#" not in args.task:
         print("Issue 模式任务格式: <owner/name>#<issue_number>，例如 test/arc-wiki#123")
         return 1
     repo, _, num = args.task.rpartition("#")
@@ -74,11 +104,16 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     load_dotenv()
     args = build_parser().parse_args(argv)
+    if args.correct:
+        return _run_correct_mode(args)
     if args.executor:
         os.environ["KA_EXECUTOR"] = args.executor
     llm = OpenAICompatClient()
     if args.issue:
         return _run_issue_mode(args, llm)
+    if not args.task:
+        print("缺少任务描述：python main.py \"<任务描述>\"（--correct 模式无需任务）")
+        return 1
     if args.graph:
         code_graph = None
         if os.environ.get("KA_CODE_INDEX", "1") != "0":
