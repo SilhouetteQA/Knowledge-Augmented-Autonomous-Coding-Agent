@@ -304,3 +304,39 @@
 - 创建 worktree `feature/w6-evaluation`；刷线：readme → 本 devlog → roadmap。
 - W6 第一块可复用 W5 知识抽查（--correct）作为知识质量指标源（可靠率/实用率/死数据率，可作版本对比证据）。
 - 冻结事项提醒：知识纠错第二阶段依赖 W8 HITL；若 W6 期间决定提前排期，需先实现 HITL 人工确认机制（审批门禁）。
+
+## W6 Evaluation 实施与收尾（2026-08-26）
+
+### 完成内容
+
+- **规格/计划**：`docs/specs/2026-08-25-w6-evaluation.md`（用户批准）+ `docs/plans/2026-08-25-w6-evaluation.md`（10 任务 TDD 分解）。
+- **实现**（Task 1-9 已完成并审查通过）：
+  - `benchmark/` 包：`loader.py`（五类案例 schema 逐键校验，gold 目录跳过）/ `judge.py`（LLM-as-a-Judge 等价性判定：词边界匹配 + 外部数据隔离）/ `report.py`（run metadata / JSON / Markdown / 版本对比）/ `runner.py`（双判定 + 指标采集：Resolution / TestPass / PatchAcceptance / Iteration / Latency / Cost）
+  - `tools/tracing.py` 可开关 Langfuse trace（懒加载 client + traced 装饰器 + usage 记录，SDK v4 上下文管理器修复）+ `agent/llm.py` chat generation 埋点与 token 累计 + `agent/issue.py` issue_snapshot 离线注入（评测可离线路由）
+  - `main.py`：`--benchmark/--cases/--executor/--benchmark-out/--compare`
+  - 案例库 5 个：bug（schedule-608 daylight saving / schedule-646 __repr__ 崩溃）+ feature（schedule-99 workday/weekend）+ test（schedule-602 时区测试补充）+ refactor（schedule-622 去 mock 依赖）；gold 取自社区已合并 PR（#623/#653/#656/#622/#602）；domain 类暂缺（后续可补 Arknights 领域逻辑 case）
+- **Task 10 部署文件**：从兄弟项目 Arknights LLM Wiki 复制 `docker/langfuse/docker-compose.yml`（官方 v4：web+worker+postgres+clickhouse+redis+minio 6 容器）与 `.env.example`（模板，含 change-me 占位符）；**.env（含密钥）不复制**，git status 仅见 compose 与模板。
+- **测试**：全量回归 **185 passed / 14 skipped / 1 failed**（唯一失败 `test_sync_repository_fetch_and_reset`，控制器预声明为已知环境性：git clone 需 cygwin sh 信号管道、被会话沙箱拒绝——与 docker 引擎 npipe 受限同源，非本窗口变更导致；14 skipped = docker 集成 + kg/mcp 条件跳过）。
+- **真实验收尝试（docker 执行器）**：实跑 5 case（run_id `20260826-002247`）——
+  - 环境注入全成功：主仓库 .env 四键（opencode_go_api / OPENCODE_GO_BASE_URL / OPENCODE_GO_MODEL / NO_PROXY）+ 兄弟项目 langfuse .env 的 headless 初始化键 LANGFUSE_INIT_PROJECT_PUBLIC_KEY/SECRET_KEY 运行时映射为 SDK 键（BASE_URL=http://localhost:3000），`is_enabled()=True`；
+  - **5 case 全部 error、0/5**：根因 = 宿主 git 全局 http.proxy=127.0.0.1:7892（Clash）未运行（TCP 主动拒绝）+ 本会话沙箱禁止 named pipe（docker 引擎 npipe `permission denied`、git sh 信号管道 Win32 error 5）→ `gh repo clone` 全部失败；**本 run 是环境性失败证据，不作为 Agent 能力结论**（零 LLM token 消耗，iteration=0）；
+  - `--compare 20260826-002247` 单 run 对比表验证通过（exit 0）；`report.json`（metadata/逐 case 字段完整）/ `report.md`（核心指标/分类/明细/Judge 理由）结构正确。
+
+### Langfuse 落库验证（v4 events 通道）
+
+- 经 ClickHouse `127.0.0.1:8123` 直查确认：`events_core` 含评测 run 的 `benchmark.run` SPAN（16:22:16→16:22:47 UTC）+ 5× `issue.run` AGENT（与 5 case 一一对应，顺序 16:22:16→16:22:47）+ 冒烟 `w6-trace-smoke` GENERATION（trace f658d5ee…，16:27:52）；traces/observations 经典表为空。
+- **发现**：兄弟项目 Langfuse 栈为 **v4 events_only 模式**（直接 POST `/api/public/traces` 返回 404 并提示 events_only）；langfuse SDK 4.14.4 自动适配事件通道，埋点数据落 events 表，v4 面板可读。经典读接口 `/api/public/traces` GET 在本部署不可用（与文档差异，W7 若需读接口需复核部署模式或升级路径）。
+
+### 关键决策与经验
+
+- **执行器硬约束**：dbader/schedule 的 test_schedule.py 在 Windows 宿主因 time.tzset() 崩溃（W5 遗留），评测必须 `--executor docker` / `KA_EXECUTOR=docker`；本会话沙箱限制使 docker 评测不可行 → 全量真实评测留待非沙箱环境执行，命令已记录（见遗留）。
+- **密钥边界**：SDK 三键仅运行时从兄弟项目 `.env` 映射注入（headless 初始化键即项目 API 键），不写入任何代码/文档/提交；评测产物（output/、workspace/*）均 gitignore。
+- **代理是评测前置条件**：git 全局 http.proxy 指向 127.0.0.1:7892（Clash）；运行评测前须确认代理在线（或临时 `git config --global http.proxy ""` 并确保直连可行）。
+- **事件模型兼容**：Langfuse v4 events_only 下经典观测 API 不可用但 SDK 摄取正常——`traced`/`record_usage` 无需改动即可落库；W7 接入时以 events_core 为数据真实层。
+
+### 遗留问题
+
+- **全量真实验收（5 case × ≤30 迭代 × 真实 LLM）未在本会话完成**：docker 引擎与 git 通道均被沙箱限制；推荐在非沙箱环境执行 `$env:KA_EXECUTOR="docker"; python main.py --benchmark --cases benchmark/cases --benchmark-out output/benchmark --executor docker --workspace workspace`（先确认代理/网络与 docker daemon）。**schedule-646 resolution 锚点（W5 人工验证可解）未在本会话重证**，需在真实验收中复核。
+- Langfuse UI 复核：数据层确认落库（events_core）；v4 面板为 SPA，未做 UI 截图级验证——可在 http://localhost:3000（项目 arknights-wiki-main，trace `aa9fe241…` / `f658d5ee…`）人工复核。
+- `benchmark/runner.py` 单价表 `MODEL_PRICE_USD_PER_1K` 为空 → 成本列恒 0（待提供模型单价后填入）。
+- domain 类案例缺 1 例（五类未全）；知识抽查（--correct）可作为知识质量指标数据源并入后续对比。

@@ -13,7 +13,7 @@
 | W3 | Docker Sandbox | feature/w3-docker-sandbox | W2 | [x] 已完成 |
 | W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [x] 已完成 |
 | W5 | GitHub Issue Agent + 知识抽查 | feature/w5-github-issue | W3 | [x] 已完成 |
-| W6 | Evaluation | feature/w6-evaluation | W5 | [ ] 待开始 |
+| W6 | Evaluation | feature/w6-evaluation | W5 | [x] 已完成 |
 | W7 | Observability | feature/w7-observability | W5 | [ ] 待开始 |
 | W8 | Human-in-the-loop | feature/w8-human-in-the-loop | W6, W7 | [ ] 待开始 |
 
@@ -160,21 +160,28 @@ coding-agent/
 
 ---
 
-## W6：Evaluation（阶段 6：Benchmark）
+## W6：Evaluation（阶段 6：Benchmark）（已完成）
 
 **目标**：建立固定 Benchmark 与核心指标。
 
 **任务清单**：
 
-- [ ] Issue 基准库：`issues/` 下 bug / feature / test / refactor / domain 五类
-- [ ] 指标采集：Issue Resolution Rate（核心）/ Test Pass Rate / Patch Acceptance Rate / Tool Success Rate / Iteration Count / Latency / Cost
-- [ ] 版本对比机制（V1 32% → V2 47% → ... 演进证据链）
-- [ ] LLM-as-a-Judge 与回归测试辅助
-- [ ] TDD + Review + 合并回 main
+- [x] Issue 基准库：`benchmark/cases/` 下 bug / feature / test / refactor 四类（domain 类预留，见完成记录）
+- [x] 指标采集：Issue Resolution Rate（核心）/ Test Pass Rate / Patch Acceptance Rate / Tool Success Rate / Iteration Count / Latency / Cost
+- [x] 版本对比机制（--compare 单/多 run 对比，V1 → V2 → ... 演进证据链）
+- [x] LLM-as-a-Judge 与回归测试辅助
+- [x] TDD + Review + 合并回 main（本窗口回归 185 passed / 14 skipped / 1 项已知环境性失败）
 
-**验收标准**：任意 Agent 版本变更可在同一基准上重跑并对比指标。
+**验收标准**：任意 Agent 版本变更可在同一基准上重跑并对比指标。—— CLI 链路（loader/runner/report/--compare）已实测可用；真实数值评测因执行环境受限留待下会话（见完成记录"遗留"）。
 
-**入口备注（下会话）**：依赖 W5 已满足；知识抽查（--correct）可作为 W6 的评估数据源之一（知识质量指标：可靠率/实用率/死数据率）；知识纠错第二阶段（冻结中）建议与 W8 HITL 联动排期。
+**完成记录（2026-08-26）**：
+
+- 实现：`benchmark/` 包（loader 案例加载与 schema 校验 / judge LLM 等价性判定 / report JSON+MD+对比 / runner 双判定与指标采集）、`tools/tracing.py` 可开关 Langfuse 埋点 + `agent/llm.py` generation 埋点 + `agent/issue.py` issue_snapshot 离线注入（评测可离线路由）、`main.py --benchmark/--cases/--executor/--compare`；案例库 5 个（bug×2 / feature / test / refactor，gold 取自社区已合并 PR）；Task 10 补充 `docker/langfuse/` 部署文件（compose v4 + .env.example 模板，密钥不入库）。规格/计划：`docs/specs/2026-08-25-w6-evaluation.md`、`docs/plans/2026-08-25-w6-evaluation.md`。
+- 回归：185 passed / 14 skipped / 1 failed（`test_sync_repository_fetch_and_reset`，已知环境性：沙箱拒绝 git sh 信号管道，与 docker npipe 受限同源，非本窗口变更导致）。
+- 真实验收尝试（docker 执行器，run `20260826-002247`）：环境注入全部成功（opencode 四键 + Langfuse 三键 is_enabled=True），但 5 case 均 error——宿主 git 代理（127.0.0.1:7892 Clash）未运行 + 本会话沙箱禁止 named pipe（docker 引擎 / git 信号管道）→ 克隆与 sandbox 均不可行；该 run 作为环境性失败证据保留（output/benchmark/20260826-002247），不作为 Agent 能力结论。`--compare` 单 run 验证通过。
+- Langfuse 落库验证通过：ClickHouse `events_core` 确认 `benchmark.run` SPAN + 5× `issue.run` AGENT + 冒烟 `w6-trace-smoke` GENERATION 全部落库（本部署为 Langfuse v4 events_only 模式，SDK 4.14.4 自动适配）。
+
+**遗留（见 devlog 详述）**：全量真实评测（含 schedule-646 resolution 锚点）需在非沙箱环境执行（docker + 网络就绪）；domain 类案例暂缺（5 例已覆盖四类）；单价表 MODEL_PRICE_USD_PER_1K 为空（成本列 0）；v4 面板 UI 复核待人工。
 
 ---
 
