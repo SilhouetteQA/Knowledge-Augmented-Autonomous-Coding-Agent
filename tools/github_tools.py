@@ -87,13 +87,30 @@ def clone_repository(repo_dir: str, repo: str) -> ToolError | None:
 
 
 def create_branch(repo_dir: str, branch: str, base: str) -> ToolError | None:
-    """从 base 检出并创建分支。"""
+    """从 base 检出并创建分支（-B 幂等：重复运行时重置同名分支而非报错）。"""
     r1 = _run(["git", "checkout", base], cwd=repo_dir)
     if isinstance(r1, ToolError):
         return r1
-    r2 = _run(["git", "checkout", "-b", branch], cwd=repo_dir)
+    r2 = _run(["git", "checkout", "-B", branch], cwd=repo_dir)
     if isinstance(r2, ToolError):
         return r2
+    return None
+
+
+def sync_repository(repo_dir: str, base: str) -> ToolError | None:
+    """已存在仓库：fetch 远端并把 base 重置到远端状态（丢弃残留未提交变更）。"""
+    r1 = _run(["git", "fetch", "origin"], cwd=repo_dir, timeout=600)
+    if isinstance(r1, ToolError):
+        return r1
+    r2 = _run(["git", "checkout", base], cwd=repo_dir)
+    if isinstance(r2, ToolError):
+        return r2
+    r3 = _run(["git", "reset", "--hard", f"origin/{base}"], cwd=repo_dir)
+    if isinstance(r3, ToolError):
+        return r3
+    r4 = _run(["git", "clean", "-fd"], cwd=repo_dir)
+    if isinstance(r4, ToolError):
+        return r4
     return None
 
 

@@ -20,6 +20,7 @@ from tools.github_tools import (
     get_repository,
     git_diff_since,
     push_branch,
+    sync_repository,
 )
 
 # Review 提示词：审查 diff 并输出结论（首行 PASS/FAIL）
@@ -88,6 +89,10 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         err = clone_repository(repo_dir, task.repository)
         if err is not None:
             raise ToolError(f"克隆失败: {err.message}")
+    else:
+        err = sync_repository(repo_dir, repo_info.default_branch)
+        if err is not None:
+            raise ToolError(f"同步仓库失败: {err.message}")
 
     branch = f"{os.environ.get('KA_GITHUB_BRANCH_PREFIX', 'fix/issue-')}{task.issue_number}"
     err = create_branch(repo_dir, branch, repo_info.default_branch)

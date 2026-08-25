@@ -17,6 +17,7 @@ from tools.github_tools import (
     get_repository,
     git_diff_since,
     push_branch,
+    sync_repository,
 )
 
 
@@ -158,3 +159,41 @@ def test_comment_issue(monkeypatch):
                         lambda cmd, **kw: calls.append(cmd) or "")
     assert comment_issue("test/arc-wiki", 1, "done") is None
     assert "repos/test/arc-wiki/issues/1/comments" in calls[0]
+
+
+def test_sync_repository_passes_through(monkeypatch):
+    calls = []
+    monkeypatch.setattr(github_tools, "_run",
+                        lambda cmd, **kw: calls.append(cmd) or "")
+    assert sync_repository("C:\\tmp\\dst", "main") is None
+    assert calls == [
+        ["git", "fetch", "origin"],
+        ["git", "checkout", "main"],
+        ["git", "reset", "--hard", "origin/main"],
+        ["git", "clean", "-fd"],
+    ]
+
+
+def test_sync_repository_fetch_and_reset(tmp_path):
+    src = _init_repo(tmp_path)
+    dst = tmp_path / "clone"
+    subprocess.run(["git", "clone", src, str(dst)], check=True,
+                   capture_output=True)
+    (dst / "a.py").write_text("x = 99\n", encoding="utf-8")
+    subprocess.run(["git", "checkout", "-b", "dirty"], cwd=dst,
+                   check=True, capture_output=True)
+    assert sync_repository(str(dst), "main") is None
+    out = subprocess.run(["git", "branch", "--show-current"], cwd=dst,
+                         capture_output=True, text=True)
+    assert out.stdout.strip() == "main"
+    assert (dst / "a.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+def test_create_branch_recreates_existing(tmp_path):
+    repo = _init_repo(tmp_path)
+    assert create_branch(repo, "fix/issue-1", "main") is None
+    # 第二次运行：同名分支已存在，应重置重建而非报错
+    assert create_branch(repo, "fix/issue-1", "main") is None
+    out = subprocess.run(["git", "branch", "--show-current"], cwd=repo,
+                         capture_output=True, text=True)
+    assert out.stdout.strip() == "fix/issue-1"
