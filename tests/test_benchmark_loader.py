@@ -67,3 +67,14 @@ def test_invalid_case_raises(tmp_path, bad):
         p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     with pytest.raises(CaseError, match=""):
         load_cases(str(tmp_path))
+
+
+def test_labels_as_string_raises(tmp_path):
+    # 负向用例（IMP-1）：labels 为字符串不得静默通过——旧校验放行后被
+    # list("open") 悄悄拆成 ['o','p','e','n']，逐键校验须以 CaseError 拒绝。
+    _write_case(
+        tmp_path, "bug", "schedule-646",
+        issue={"number": 646, "title": "t", "body": "",
+               "labels": "open", "state": "open"})
+    with pytest.raises(CaseError, match="labels"):
+        load_cases(str(tmp_path))

@@ -41,10 +41,23 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
     if not isinstance(repo, str) or "/" not in repo:
         raise CaseError(f"{path.name}: repository 缺失或非法（应为 owner/name）")
     issue = data.get("issue")
-    if not isinstance(issue, dict) or not all(
-            k in issue and isinstance(issue[k], (str, int, list)) for k in
-            ("number", "title", "body", "labels", "state")):
-        raise CaseError(f"{path.name}: issue 字段缺失或类型非法")
+    # issue 字段逐键类型校验（IMP-1）：labels 为字符串时若只做粗粒度
+    # isinstance 放行，后续 list("open") 会静默拆成单字符列表；逐键精确
+    # 校验并在任一不符时抛 CaseError（含文件名与原因），不抛裸 TypeError。
+    if not isinstance(issue, dict):
+        raise CaseError(f"{path.name}: issue 缺失或非对象")
+    if any(k not in issue for k in ("number", "title", "body", "labels", "state")):
+        raise CaseError(f"{path.name}: issue 字段缺失（须含 number/title/body/labels/state）")
+    number, title, body, labels, state = (issue["number"], issue["title"],
+                                          issue["body"], issue["labels"],
+                                          issue["state"])
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        raise CaseError(f"{path.name}: issue.number 须为正整数（got {number!r}）")
+    for key in ("title", "body", "state"):
+        if not isinstance(issue[key], str):
+            raise CaseError(f"{path.name}: issue.{key} 须为字符串（got {issue[key]!r}）")
+    if not isinstance(labels, list) or not all(isinstance(l, str) for l in labels):
+        raise CaseError(f"{path.name}: issue.labels 须为字符串列表（got {labels!r}）")
     gold = data.get("gold_patch")
     gold_full = path.parent.parent / gold if isinstance(gold, str) else None
     if gold_full is None or not gold_full.is_file():
