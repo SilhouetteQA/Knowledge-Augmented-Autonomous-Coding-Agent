@@ -63,6 +63,8 @@ def traced(name: str | None = None, as_type: str = "span", metadata_fn=None):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             c = get_client()
+            if c is None:
+                return func(*args, **kwargs)
             with c.start_as_current_observation(
                     name=name or func.__name__, as_type=as_type) as span:
                 result = func(*args, **kwargs)

@@ -66,3 +66,46 @@ def test_openai_client_chat_converts_response(monkeypatch):
     assert fake.kwargs["tools"][0]["function"]["name"] == "read_file"
     assert msg.tool_calls[0].name == "read_file"
     assert msg.tool_calls[0].arguments == {"path": "a.py"}
+
+
+def test_tokens_total_accumulates(monkeypatch):
+    """OpenAICompatClient.chat 从 response usage 累计 tokens。"""
+    from agent.llm import OpenAICompatClient
+
+    class FakeResp:
+        def __init__(self):
+            self.choices = [type("C", (), {"message": type(
+                "M", (), {"content": "ok", "tool_calls": None})()})()]
+            self.usage = type("U", (), {"prompt_tokens": 11,
+                                        "completion_tokens": 7})()
+
+    captured = {}
+
+    class FakeCompletions:
+        """真实调用链 self._client.chat.completions.create(**params) 的末端。"""
+
+        def create(self, **params):
+            captured.update(params)
+            return FakeResp()
+
+    class FakeClient:
+        # 修正说明：代理 openai.OpenAI 的构造；chat 必须为带 completions.create
+        # 的属性链对象。brief 原版把 chat 写成直接返回响应的方法，会导致
+        # self._client.chat.completions 抛 'method' object has no attribute
+        # 'completions'，测试永远失败；这里改为与真实调用链一致的形状。
+        def __init__(self, *a, **kw):
+            self.chat = SimpleNamespace(completions=FakeCompletions())
+
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+    c = OpenAICompatClient(api_key="k")
+    c.chat([{"role": "user", "content": "hi"}], [])
+    assert c.tokens_total == {"prompt": 11, "completion": 7}
+    c.chat([{"role": "user", "content": "hi"}], [])
+    assert c.tokens_total == {"prompt": 22, "completion": 14}
+
+
+def test_mock_tokens_total_zero():
+    """MockLLMClient 提供同构 tokens_total（默认 0）。"""
+    from agent.llm import MockLLMClient
+    m = MockLLMClient([])
+    assert m.tokens_total == {"prompt": 0, "completion": 0}

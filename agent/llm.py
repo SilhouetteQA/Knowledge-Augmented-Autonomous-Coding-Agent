@@ -11,6 +11,8 @@ from typing import Protocol
 
 import openai
 
+from tools.tracing import record_usage, traced
+
 
 @dataclass
 class ToolSpec:
@@ -55,7 +57,9 @@ class OpenAICompatClient:
         if not self.api_key:
             raise ValueError("缺少 API Key：请设置环境变量 opencode_go_api")
         self._client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.tokens_total: dict[str, int] = {"prompt": 0, "completion": 0}
 
+    @traced("llm.chat", as_type="generation")
     def chat(self, messages: list[dict], tools: list[ToolSpec]) -> LLMMessage:
         params: dict = {"model": self.model, "messages": messages}
         if tools:
@@ -71,6 +75,13 @@ class OpenAICompatClient:
                 for t in tools
             ]
         resp = self._client.chat.completions.create(**params)
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+            ct = int(getattr(usage, "completion_tokens", 0) or 0)
+            self.tokens_total["prompt"] += pt
+            self.tokens_total["completion"] += ct
+            record_usage(self.model, pt, ct, 0.0)
         msg = resp.choices[0].message
         tool_calls = None
         if msg.tool_calls:
@@ -91,6 +102,7 @@ class MockLLMClient:
     def __init__(self, script: list[LLMMessage]):
         self.script = script
         self.calls: list[tuple[list[dict], list[ToolSpec]]] = []
+        self.tokens_total: dict[str, int] = {"prompt": 0, "completion": 0}
 
     def chat(self, messages: list[dict], tools: list[ToolSpec]) -> LLMMessage:
         self.calls.append((messages, tools))
