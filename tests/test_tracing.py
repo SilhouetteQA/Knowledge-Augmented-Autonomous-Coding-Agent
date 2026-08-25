@@ -48,27 +48,53 @@ def test_traced_disabled_returns_same_function():
     assert decorated(1) == 2
 
 
-def test_traced_enabled_wraps_observe(monkeypatch):
+def test_traced_enabled_writes_metadata(monkeypatch):
+    """开启态：metadata_fn 结果写入 span（上下文管理器模式，SDK v4 下生效）。"""
     os.environ["LANGFUSE_PUBLIC_KEY"] = "pk"
     os.environ["LANGFUSE_SECRET_KEY"] = "sk"
     os.environ["LANGFUSE_BASE_URL"] = "http://localhost:3000"
-    calls = []
-    class FakeObserve:
-        def __init__(self, name, as_type, capture_input=False,
-                     capture_output=False):
-            calls.append((name, as_type))
-        def __call__(self, func):
-            def wrapped(*a, **kw):
-                return func(*a, **kw)
-            return wrapped
-    import langfuse
-    monkeypatch.setattr(langfuse, "observe", FakeObserve)
+    events = []
+
+    class FakeSpan:
+        def __init__(self, name, as_type):
+            events.append(("start", name, as_type))
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+        def update(self, **kw):
+            events.append(("update", kw))
+
+    class FakeClient:
+        def start_as_current_observation(self, name=None, as_type=None):
+            return FakeSpan(name, as_type)
+
+    monkeypatch.setattr(tracing, "get_client", lambda: FakeClient())
+    monkeypatch.setattr(tracing, "_client", object())
+
     def f(x):
         return x + 1
-    decorated = tracing.traced("span1", as_type="span")(f)
-    assert decorated is not f
+    decorated = tracing.traced("span1", as_type="span",
+                               metadata_fn=lambda a, k, r: {"result": r})(f)
     assert decorated(1) == 2
-    assert calls == [("span1", "span")]
+    assert ("start", "span1", "span") in events
+    assert ("update", {"metadata": {"result": 2}}) in events
+
+
+def test_traced_enabled_async_not_wrapped(monkeypatch):
+    """开启态：异步函数直通不包装（不支持异步埋点，保持行为）。"""
+    import asyncio
+    os.environ["LANGFUSE_PUBLIC_KEY"] = "pk"
+    os.environ["LANGFUSE_SECRET_KEY"] = "sk"
+    os.environ["LANGFUSE_BASE_URL"] = "http://localhost:3000"
+    called = []
+    monkeypatch.setattr(tracing, "get_client",
+                        lambda: (_ for _ in ()).throw(AssertionError("不应调用 client")))
+    async def f(x):
+        return x + 1
+    decorated = tracing.traced("a")(f)
+    assert decorated is f
+    assert asyncio.run(decorated(1)) == 2
 
 
 def test_record_usage_disabled_noop():

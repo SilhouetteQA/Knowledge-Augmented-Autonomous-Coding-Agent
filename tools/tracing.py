@@ -49,27 +49,30 @@ def traced(name: str | None = None, as_type: str = "span", metadata_fn=None):
     """可开关 trace 装饰器；关闭态返回原函数。
 
     metadata_fn: (args, kwargs, result) -> dict | None，结果写入 span metadata。
+    开启态用 start_as_current_observation 上下文管理器，在 span 仍 current 时
+    （函数返回后、with 退出前）写入 metadata，保证 SDK v4 下写入生效。
+    注：仅支持同步函数（本项目埋点均为同步；异步函数开启态不包装、直通）。
     """
     def deco(func):
         if not is_enabled():
             return func
-        from langfuse import observe
-        decorated = observe(name=name or func.__name__,
-                            as_type=as_type)(func)
-        if metadata_fn is None:
-            return decorated
+        import asyncio
+        if asyncio.iscoroutinefunction(func):
+            return func
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            result = decorated(*args, **kwargs)
-            try:
-                meta = metadata_fn(args, kwargs, result)
-                if meta:
-                    c = get_client()
-                    if c is not None:
-                        c.update_current_span(metadata=meta)
-            except Exception:  # noqa: BLE001 — 观测层失败不影响业务
-                pass
+            c = get_client()
+            with c.start_as_current_observation(
+                    name=name or func.__name__, as_type=as_type) as span:
+                result = func(*args, **kwargs)
+                if metadata_fn is not None:
+                    try:
+                        meta = metadata_fn(args, kwargs, result)
+                        if meta:
+                            span.update(metadata=meta)
+                    except Exception:  # noqa: BLE001 — 观测层失败不影响业务
+                        pass
             return result
         return wrapper
     return deco
