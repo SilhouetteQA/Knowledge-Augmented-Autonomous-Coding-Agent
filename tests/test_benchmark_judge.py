@@ -1,4 +1,6 @@
 """LLM-as-a-Judge 判定测试。"""
+import pytest
+
 from agent.llm import LLMMessage, MockLLMClient
 from benchmark.judge import JudgeResult, judge_patch
 from tools.github_tools import GitHubIssue
@@ -35,6 +37,23 @@ def test_judge_nonstandard_output_treated_fail():
     llm = MockLLMClient([LLMMessage(role="assistant", content="不确定")])
     r = judge_patch(llm, "+a", "+b", _issue())
     assert r.verdict == "FAIL"
+
+
+@pytest.mark.parametrize("text", [
+    "PASS：修复点一致",
+    "PASS: ok",
+    "PASS。",
+    "PASS，一致",
+    "PASS,一致",
+    "PASS；",
+    "PASS;",
+    "PASS",
+])
+def test_judge_pass_with_punctuation_separators(text):
+    """PASS 后常见标点分隔（半角/全角冒号、逗号、句号、分号）不误判为 FAIL。"""
+    llm = MockLLMClient([LLMMessage(role="assistant", content=text)])
+    r = judge_patch(llm, "+a", "+b", _issue())
+    assert r.verdict == "PASS", text
 
 
 def test_judge_pass_requires_word_boundary():

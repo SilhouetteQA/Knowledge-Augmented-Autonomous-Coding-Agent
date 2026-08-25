@@ -42,6 +42,8 @@ def judge_patch(llm: LLMClient, agent_diff: str, gold_patch: str,
         [],
     )
     text = (msg.content or "FAIL 判定无输出").strip()
-    if re.match(r"^PASS(?:\s|$)", text):
+    # 词边界：PASS 后允许空白或常见标点分隔（半角/全角冒号、逗号、句号、分号），
+    # 避免 "PASS：" 等被误判为 FAIL；"PASSED" 等前缀不命中
+    if re.match(r"^PASS(?:\s|[:：,，。.;；]|$)", text):
         return JudgeResult(verdict="PASS", reason=text)
     return JudgeResult(verdict="FAIL", reason=text)
