@@ -1,9 +1,8 @@
 # agent/llm.py
 """LLM 客户端：可插拔协议 + OpenAI 兼容实现 + Mock 实现。
 
-真实配置从环境变量读取：arkcode_api（Key）、ARKCODE_BASE_URL（端点，
-默认 https://ark.cn-beijing.volces.com/api/coding/v3）、
-ARKCODE_MODEL（模型，默认 deepseek-v4-flash-ga-260731）。
+真实配置从环境变量读取：opencode_go_api（Key）、OPENCODE_GO_BASE_URL（端点，
+默认 https://opencode.ai/zen/go/v1）、OPENCODE_GO_MODEL（模型，默认 mimo-v2.5）。
 """
 import json
 import os
@@ -45,16 +44,16 @@ class LLMClient(Protocol):
 
 
 class OpenAICompatClient:
-    """OpenAI 兼容实现（火山引擎 Ark Coding Plan 的 deepseek-v4-flash-ga）。"""
+    """OpenAI 兼容实现（opencode go 服务的 mimo-v2.5）。"""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None,
                  model: str | None = None):
-        self.api_key = api_key or os.environ.get("arkcode_api", "")
+        self.api_key = api_key or os.environ.get("opencode_go_api", "")
         self.base_url = base_url or os.environ.get(
-            "ARKCODE_BASE_URL", "https://ark.cn-beijing.volces.com/api/coding/v3")
-        self.model = model or os.environ.get("ARKCODE_MODEL", "deepseek-v4-flash-ga-260731")
+            "OPENCODE_GO_BASE_URL", "https://opencode.ai/zen/go/v1")
+        self.model = model or os.environ.get("OPENCODE_GO_MODEL", "mimo-v2.5")
         if not self.api_key:
-            raise ValueError("缺少 API Key：请设置环境变量 arkcode_api")
+            raise ValueError("缺少 API Key：请设置环境变量 opencode_go_api")
         self._client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
 
     def chat(self, messages: list[dict], tools: list[ToolSpec]) -> LLMMessage:
