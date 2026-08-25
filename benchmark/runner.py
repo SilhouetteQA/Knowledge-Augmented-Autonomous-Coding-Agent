@@ -11,8 +11,10 @@ from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
 from tools.shell_tools import TestResult, run_tests
 from tools.tracing import traced
 
-# 模型单价表（每 1K token 的美元成本）；未知模型记 0 并在报告注明
-MODEL_PRICE_USD_PER_1K = {}
+# 模型单价表（每 1K token 的美元成本）；未知模型或空单价表 → cost_usd=0；CLI 摘要提示单价未知
+MODEL_PRICE_USD_PER_1K = {
+    # "mimo-v2.5": 0.004,   # 示例：每 1K token 美元（待用户提供实际单价）
+}
 
 
 def _repo_dir_name(repository: str) -> str:
