@@ -1,0 +1,18 @@
+{
+  "id": "schedule-602",
+  "category": "test",
+  "repository": "dbader/schedule",
+  "issue": {
+    "number": 602,
+    "title": "Add more timezone tests",
+    "body": "",
+    "labels": [],
+    "state": "closed"
+  },
+  "gold_patch": "gold/schedule-602.diff",
+  "must_pass": [
+    "test_schedule.py"
+  ],
+  "max_iterations": 30,
+  "notes": "类别 test；issue #602 Add more timezone tests（closed，body 为空属真实数据）；gold 即 PR #602 本身，纯 test_schedule.py 测试补充（POSIX TZ 常量 + mock_datetime zone 支持 + issue #598/#592 时区用例）。"
+}

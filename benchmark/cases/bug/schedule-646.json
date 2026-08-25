@@ -1,0 +1,18 @@
+{
+  "id": "schedule-646",
+  "category": "bug",
+  "repository": "dbader/schedule",
+  "issue": {
+    "number": 646,
+    "title": "[CRASH CONDITION] - Guard self.unit against None",
+    "body": "https://github.com/dbader/schedule/blob/82a43db1b938d8fdf60103bd41f329e06c8d3651/schedule/__init__.py#L305\n\n- If `self.interval == 1` is _**True**_, and, `self.unit` is _**None**_ (which is what its being initialized to here) : https://github.com/dbader/schedule/blob/3863effe15ec8239ba88c65a4231a67e43b116df/schedule/__init__.py#L232\nIt results in crash.\n\n- The code should guard against `self.unit` being **_None_** before attempting `self.unit[:-1]`\n",
+    "labels": [],
+    "state": "open"
+  },
+  "gold_patch": "gold/schedule-646.diff",
+  "must_pass": [
+    "test_schedule.py"
+  ],
+  "max_iterations": 30,
+  "notes": "类别 bug；issue #646 open（CRASH CONDITION: guard self.unit against None）；gold 取社区 PR #653（已合并），仅 schedule/__init__.py 的 __repr__ 两处 unit[:-1] 判空修复，与 W5 演示验证方案一致。"
+}

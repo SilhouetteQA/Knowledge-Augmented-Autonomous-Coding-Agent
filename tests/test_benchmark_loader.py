@@ -78,3 +78,12 @@ def test_labels_as_string_raises(tmp_path):
                "labels": "open", "state": "open"})
     with pytest.raises(CaseError, match="labels"):
         load_cases(str(tmp_path))
+
+
+def test_real_cases_loaded():
+    """真实基准案例库可全量加载（纯本地文件校验）。"""
+    cases = load_cases("benchmark/cases")
+    assert len(cases) == 5
+    cats = {c.category for c in cases}
+    assert {"bug", "feature", "test", "refactor"} <= cats
+    assert all(c.gold_patch.endswith(".diff") for c in cases)
