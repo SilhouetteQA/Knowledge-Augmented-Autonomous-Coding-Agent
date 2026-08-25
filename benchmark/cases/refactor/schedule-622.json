@@ -1,0 +1,18 @@
+{
+  "id": "schedule-622",
+  "category": "refactor",
+  "repository": "dbader/schedule",
+  "issue": {
+    "number": 622,
+    "title": "remove dependency on old mock",
+    "body": "https://github.com/testing-cabal/mock\r\n\r\nmock is now part of the Python standard library, available as [unittest.mock](https://docs.python.org/dev/library/unittest.mock.html) in Python 3.3 onwards.",
+    "labels": [],
+    "state": "closed"
+  },
+  "gold_patch": "gold/schedule-622.diff",
+  "must_pass": [
+    "test_schedule.py"
+  ],
+  "max_iterations": 30,
+  "notes": "类别 refactor；issue #622 remove dependency on old mock（closed）；gold 取 PR #622 中 test_schedule.py 的 import mock -> unittest.mock 迁移 hunk，requirements-dev.txt 与 tox.ini 的 hunk 已裁剪。"
+}

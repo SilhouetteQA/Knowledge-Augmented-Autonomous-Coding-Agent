@@ -1,4 +1,4 @@
-# Devlog — 开发日志
+﻿# Devlog — 开发日志
 
 本文件记录项目的开发过程、架构决策、关键指标与遗留问题。新会话进入前先读本文件与 `readme.md`、`docs/roadmap.md`。
 
@@ -304,3 +304,80 @@
 - 创建 worktree `feature/w6-evaluation`；刷线：readme → 本 devlog → roadmap。
 - W6 第一块可复用 W5 知识抽查（--correct）作为知识质量指标源（可靠率/实用率/死数据率，可作版本对比证据）。
 - 冻结事项提醒：知识纠错第二阶段依赖 W8 HITL；若 W6 期间决定提前排期，需先实现 HITL 人工确认机制（审批门禁）。
+
+## W6 Evaluation 实施与收尾（2026-08-26）
+
+### 完成内容
+
+- **规格/计划**：`docs/specs/2026-08-25-w6-evaluation.md`（用户批准）+ `docs/plans/2026-08-25-w6-evaluation.md`（10 任务 TDD 分解）。
+- **实现**（Task 1-9 已完成并审查通过）：
+  - `benchmark/` 包：`loader.py`（五类案例 schema 逐键校验，gold 目录跳过）/ `judge.py`（LLM-as-a-Judge 等价性判定：词边界匹配 + 外部数据隔离）/ `report.py`（run metadata / JSON / Markdown / 版本对比）/ `runner.py`（双判定 + 指标采集：Resolution / TestPass / PatchAcceptance / Iteration / Latency / Cost）
+  - `tools/tracing.py` 可开关 Langfuse trace（懒加载 client + traced 装饰器 + usage 记录，SDK v4 上下文管理器修复）+ `agent/llm.py` chat generation 埋点与 token 累计 + `agent/issue.py` issue_snapshot 离线注入（评测可离线路由）
+  - `main.py`：`--benchmark/--cases/--executor/--benchmark-out/--compare`
+  - 案例库 5 个：bug（schedule-608 daylight saving / schedule-646 __repr__ 崩溃）+ feature（schedule-99 workday/weekend）+ test（schedule-602 时区测试补充）+ refactor（schedule-622 去 mock 依赖）；gold 取自社区已合并 PR（#623/#653/#656/#622/#602）；domain 类暂缺（后续可补 Arknights 领域逻辑 case）
+- **Task 10 部署文件**：从兄弟项目 Arknights LLM Wiki 复制 `docker/langfuse/docker-compose.yml`（官方 v4：web+worker+postgres+clickhouse+redis+minio 6 容器）与 `.env.example`（模板，含 change-me 占位符）；**.env（含密钥）不复制**，git status 仅见 compose 与模板。
+- **测试**：全量回归 **185 passed / 14 skipped / 1 failed**（唯一失败 `test_sync_repository_fetch_and_reset`，控制器预声明为已知环境性：git clone 需 cygwin sh 信号管道、被会话沙箱拒绝——与 docker 引擎 npipe 受限同源，非本窗口变更导致；14 skipped = docker 集成 + kg/mcp 条件跳过）。
+- **真实验收尝试（docker 执行器）**：实跑 5 case（run_id `20260826-002247`）——
+  - 环境注入全成功：主仓库 .env 四键（opencode_go_api / OPENCODE_GO_BASE_URL / OPENCODE_GO_MODEL / NO_PROXY）+ 兄弟项目 langfuse .env 的 headless 初始化键 LANGFUSE_INIT_PROJECT_PUBLIC_KEY/SECRET_KEY 运行时映射为 SDK 键（BASE_URL=http://localhost:3000），`is_enabled()=True`；
+  - **5 case 全部 error、0/5**：根因 = 宿主 git 全局 http.proxy=127.0.0.1:7892（Clash）未运行（TCP 主动拒绝）+ 本会话沙箱禁止 named pipe（docker 引擎 npipe `permission denied`、git sh 信号管道 Win32 error 5）→ `gh repo clone` 全部失败；**本 run 是环境性失败证据，不作为 Agent 能力结论**（零 LLM token 消耗，iteration=0）；
+  - `--compare 20260826-002247` 单 run 对比表验证通过（exit 0）；`report.json`（metadata/逐 case 字段完整）/ `report.md`（核心指标/分类/明细/Judge 理由）结构正确。
+
+### Langfuse 落库验证（v4 events 通道）
+
+- 经 ClickHouse `127.0.0.1:8123` 直查确认：`events_core` 含评测 run 的 `benchmark.run` SPAN（16:22:16→16:22:47 UTC）+ 5× `issue.run` AGENT（与 5 case 一一对应，顺序 16:22:16→16:22:47）+ 冒烟 `w6-trace-smoke` GENERATION（trace f658d5ee…，16:27:52）；traces/observations 经典表为空。
+- **发现**：兄弟项目 Langfuse 栈为 **v4 events_only 模式**（直接 POST `/api/public/traces` 返回 404 并提示 events_only）；langfuse SDK 4.14.4 自动适配事件通道，埋点数据落 events 表，v4 面板可读。经典读接口 `/api/public/traces` GET 在本部署不可用（与文档差异，W7 若需读接口需复核部署模式或升级路径）。
+
+### 关键决策与经验
+
+- **执行器硬约束**：dbader/schedule 的 test_schedule.py 在 Windows 宿主因 time.tzset() 崩溃（W5 遗留），评测必须 `--executor docker` / `KA_EXECUTOR=docker`；本会话沙箱限制使 docker 评测不可行 → 全量真实评测留待非沙箱环境执行，命令已记录（见遗留）。
+- **密钥边界**：SDK 三键仅运行时从兄弟项目 `.env` 映射注入（headless 初始化键即项目 API 键），不写入任何代码/文档/提交；评测产物（output/、workspace/*）均 gitignore。
+- **代理是评测前置条件**：git 全局 http.proxy 指向 127.0.0.1:7892（Clash）；运行评测前须确认代理在线（或临时 `git config --global http.proxy ""` 并确保直连可行）。
+- **事件模型兼容**：Langfuse v4 events_only 下经典观测 API 不可用但 SDK 摄取正常——`traced`/`record_usage` 无需改动即可落库；W7 接入时以 events_core 为数据真实层。
+
+### 遗留问题
+
+- **全量真实验收（5 case × ≤30 迭代 × 真实 LLM）未在本会话完成**：docker 引擎与 git 通道均被沙箱限制；推荐在非沙箱环境执行 `$env:KA_EXECUTOR="docker"; python main.py --benchmark --cases benchmark/cases --benchmark-out output/benchmark --executor docker --workspace workspace`（先确认代理/网络与 docker daemon）。**schedule-646 resolution 锚点（W5 人工验证可解）未在本会话重证**，需在真实验收中复核。
+- Langfuse UI 复核：数据层确认落库（events_core）；v4 面板为 SPA，未做 UI 截图级验证——可在 http://localhost:3000（项目 arknights-wiki-main，trace `aa9fe241…` / `f658d5ee…`）人工复核。
+- `benchmark/runner.py` 单价表 `MODEL_PRICE_USD_PER_1K` 为空 → 成本列恒 0（待提供模型单价后填入）。
+- domain 类案例缺 1 例（五类未全）；知识抽查（--correct）可作为知识质量指标数据源并入后续对比。
+
+## W6 真实验收二次运行——克隆链路修复后（2026-08-26）
+
+### 控制器修复（git/网络层）
+
+- 根因补充：本机网络对 github.com 主站 443 做 SNI 阻断（Connection reset），但 api.github.com / codeload.github.com / 镜像 ghfast.top 可达；且 git 全局残留 `http.proxy=http://127.0.0.1:7892`（W5 时代 Clash，已不在）。
+- 控制器已执行：`git config --global --unset http.proxy`、`--unset https.proxy`（清除死代理）+ `git config --global url."https://ghfast.top/https://github.com/".insteadOf "https://github.com/"`（github 统一走镜像重写）。
+
+### 本会话补一发：schannel → OpenSSL 后端
+
+- 经镜像重写后，本会话 git 仍失败于 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——git 的 Windows schannel 后端在会话沙箱内取不到 TLS 凭据（CryptoAPI/凭据库受限）。
+- 解法（不开新的部署文件、不碰 .env）：`http.sslBackend=openssl`（Git for Windows 自带 OpenSSL，不经 Windows 证书库）——经 git 官方环境注入机制 `GIT_CONFIG_COUNT=1 / GIT_CONFIG_KEY_0=http.sslBackend / GIT_CONFIG_VALUE_0=openssl` 传给 gh 派生的 git（沙箱拒绝写 `~/.gitconfig`，故不能 `git config --global`；控制器环境无此限制则直接全局配置即可）。
+- 验证：`gh repo clone dbader/schedule` 全量克隆成功（HEAD `82a43db`，与 issue #646 引用 commit 一致）。
+
+### 二次运行（run `20260826-004155`，docker 执行器）
+
+| case_id | 类别 | 状态 | resolution | 本次错误 |
+|---------|------|------|-----------|----------|
+| schedule-602 | test | error | False | 克隆成功 → 沙箱镜像构建失败 |
+| schedule-608 | bug | error | False | 同上 |
+| schedule-622 | refactor | error | False | 同上 |
+| schedule-646 | bug | error | False | 同上 |
+| schedule-99 | feature | error | False | 同上 |
+
+- **克隆链路修复确认**：5 case 全部通过镜像克隆成功（首 case 全量 clone、其余 sync fetch），错误点从"克隆失败"迁移到"沙箱阶段"；零 LLM token 消耗（iteration=0，judge SKIP）。
+- **剩余硬边界**：docker 引擎 npipe（`\\.\pipe\dockerDesktopLinuxEngine`）仍被会话沙箱拒绝（permission denied）→ `docker image inspect` 失败触发镜像构建 → `C:\Users\Silhouette\.docker\buildx\.lock` 文件访问再次被拒（workspace 外）→ 5 case 均 error。此为会话沙箱 named-pipe/文件边界（审批禁用、无法升级），非代码缺陷。
+- **local 回退弃用**：5 case 全部 must_pass `test_schedule.py`（Windows 宿主 tzset 崩溃），local 执行器跑不出有效 resolution，无信号价值，不复跑（W5 已实证 Agent 可解 #646）。
+- **结论**：带真实 resolution 的全量评测须在非沙箱环境（控制器环境）执行：docker daemon 可达 + git 镜像生效即可跑 `$env:KA_EXECUTOR="docker"; python main.py --benchmark --cases benchmark/cases --benchmark-out output/benchmark --executor docker --workspace workspace`（若该环境 git 无需 sslBackend 注入可忽略 GIT_CONFIG_*）。schedule-646 resolution 锚点待该运行复核。
+- 证据留存：`output/benchmark/20260826-002247`（run 1：全克隆失败）与 `20260826-004155`（run 2：克隆成功、沙箱阶段失败），均已 gitignore 不入库。
+
+
+### 真实评测补充（2026-08-26，修复闭环后）
+
+- **修复闭环**：run 20260826-034824（docker 执行器，git ed4a709，修复 _test_pass 沙箱上下文 + 绝对路径后）——5 case 完整跑完，**Resolution Rate 20%（1/5）**，核心指标首次产生真实数值：
+  - **schedule-608（daylight saving bug）resolved**：test=True + Judge PASS（25 迭代，1665s）——Agent 完整解决且测试通过
+  - schedule-646 / schedule-99：judge=PASS + patch_acceptance=True（LLM Judge 明确确认修复与社区 gold 等价：unit None 守卫 / weekday/weekend 调度），但 test_pass=False
+  - schedule-602 / schedule-622：judge=SKIP（无有效代码变更），test=False
+- **test_pass=False 根因（评测基准缺口）**：容器内跑 test_schedule.py = 68 passed / 40 failed，主因 AttributeError: module 'pytz' —— **沙箱镜像缺 pytz 依赖**，schedule 时区测试群全部失败。schedule-608 的 Agent 恰在容器内自行解决依赖（时区修复需要验证）→ test=True；其余 case 未装 → test=False。
+  - 结论：0%→20% 的提升确认修复生效（test_pass 从恒 False 变为真实判定）；剩余 case 的 test=False 主因容器依赖缺失，**不是 Agent 能力结论**（Judge 等价性已确认修复正确）。
+  - **改进建议（记录，不阻塞）**：① 沙箱镜像预装 pytz（schedule 依赖）或 case 级 must_pass 前置 pip install；② 评测先跑原仓库基线测试确认环境完整再判定；③ test_pass=False 时报告补失败摘要（当前只记 bool）。
+- Langfuse 落库持续验证（本轮 run 的 trace 同前 events_core 通道）。

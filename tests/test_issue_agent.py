@@ -1,4 +1,4 @@
-﻿"""GitHub Issue Agent 编排测试：Mock LLM + Fake GitHub（不触网、不真推）。"""
+"""GitHub Issue Agent 编排测试：Mock LLM + Fake GitHub（不触网、不真推）。"""
 import json
 
 import pytest
@@ -135,6 +135,24 @@ def test_push_mode_creates_pr(tmp_path, monkeypatch):
     assert calls["commit"] == ["fix: 修复 #123 修复重复创建实体"]
     assert calls["push"] == ["fix/issue-123"]
     assert calls["pr"][0][:2] == ("fix/issue-123", "main")
+
+
+def test_issue_snapshot_skips_get_issue(tmp_path, monkeypatch):
+    """issue_snapshot 非 None 时跳过在线 get_issue（离线可重跑）。"""
+    _patch_github(monkeypatch)
+    called = []
+    monkeypatch.setattr(issue_mod, "get_issue",
+                        lambda repo, n: called.append(n) or _fake_issue())
+    snap = GitHubIssue(number=646, title="[CRASH] guard self.unit against None",
+                       body="crash when unit is None", labels=[], state="open")
+    task = IssueTask(repository="test/arc-wiki", issue_number=646,
+                     workspace_root=_make_workdir(tmp_path),
+                     issue_snapshot=snap)
+    result = run_issue_agent(task, MockLLMClient(_graph_script() + [
+        LLMMessage(role="assistant", content="PASS 变更解决了问题。")]))
+    assert called == []                      # get_issue 未被调用
+    assert result.issue.number == 646        # 使用快照数据
+    assert result.issue.title == "[CRASH] guard self.unit against None"
 
 
 def test_push_mode_review_fail_aborts(tmp_path, monkeypatch):

@@ -1,0 +1,18 @@
+{
+  "id": "schedule-608",
+  "category": "bug",
+  "repository": "dbader/schedule",
+  "issue": {
+    "number": 608,
+    "title": "daylight saving bug",
+    "body": "This is a re-open of #598 \r\nI schedule a daily job to run at a particular time in UTC. Most of the year the job runs at the correct local time corresponding to that time in UTC. However for approximately three weeks of the year an incorrect offset from UTC gets applied and the job runs at the wrong time. The weeks when the job runs at the incorrect time are:\r\na. One week after daylight saving comes into effect in my local timezone\r\nb. Roughly two weeks before daylight saving ends in my local timezone.\r\n\r\nHere are some tests to demonstrate this. The first two tests pass\r\n```\r\nwith mock_datetime(2023, 9, 18, 10, 00, 0, TZ_AUCKLAND):\r\n    # Testing timezone conversion the week before daylight saving comes into effect\r\n    # Current time: Monday 18 September 10:00 NZST\r\n    # Current time UTC: Sunday 17 September 22:00\r\n    # Expected next run in NZST: 2023-09-18 11:00:00\r\n    schedule.clear()\r\n    next = schedule.every().day.at(\"23:00\", \"UTC\").do(mock_job).next_run\r\n    assert next.day == 18\r\n    assert next.hour == 11\r\n    assert next.minute == 0\r\n\r\nwith mock_datetime(2024, 4, 8, 10, 00, 0, TZ_AUCKLAND):\r\n    # Testing timezone conversion the week after daylight saving ends\r\n    # Current time: Monday 8 April 10:00 NZST\r\n    # Current time UTC: Sunday 7 April 22:00\r\n    # Expected next run in NZDT: 2023-04-08 11:00:00\r\n    schedule.clear()\r\n    next = schedule.every().day.at(\"23:00\", \"UTC\").do(mock_job).next_run\r\n    assert next.day == 8\r\n    assert next.hour == 11\r\n    assert next.minute == 0\r\n```\r\n\r\nAnd these next two tests fail\r\n```\r\nwith mock_datetime(2023, 9, 25, 10, 00, 0, TZ_AUCKLAND):\r\n    # Testing timezone conversion during the week after daylight saving comes into effect\r\n    # Current time: Monday 25 September 10:00 NZDT\r\n    # Current time UTC: Sunday 24 September 21:00\r\n    # Expected next run in NZDT: 2023-09-25 12:00:00\r\n    schedule.clear()\r\n    next = schedule.every().day.at(\"23:00\", \"UTC\").do(mock_job).next_run\r\n    assert next.day == 25\r\n    assert next.hour == 12 #FAIL\r\n    assert next.minute == 0\r\n\r\nwith mock_datetime(2024, 4, 1, 10, 00, 0, TZ_AUCKLAND):\r\n    # Testing timezone conversion during the week before daylight saving ends\r\n    # Current time: Monday 1 April 10:00 NZDT\r\n    # Current time UTC: Sunday 31 March 21:00\r\n    # Expected next run in NZDT: 2024-04-01 12:00:00\r\n    schedule.clear()\r\n    next = schedule.every().day.at(\"23:00\", \"UTC\").do(mock_job).next_run\r\n    assert next.day == 1\r\n    assert next.hour == 12 #FAIL\r\n    assert next.minute == 0\r\n```\r\n\r\nIf you'd like me to do a PR to include these tests then let me know.",
+    "labels": [],
+    "state": "closed"
+  },
+  "gold_patch": "gold/schedule-608.diff",
+  "must_pass": [
+    "test_schedule.py"
+  ],
+  "max_iterations": 30,
+  "notes": "类别 bug；issue #608 daylight saving bug（closed，被 PR #623 Timezone bugfixes 修复，merged 2024-05-20）；gold 取 PR #623 中 schedule/__init__.py 核心时区修复（_schedule_next_run 重构 + _correct_utc_offset/_move_to_at_time），docs/timezones.rst 与 test_schedule.py 的 hunk 已裁剪。"
+}

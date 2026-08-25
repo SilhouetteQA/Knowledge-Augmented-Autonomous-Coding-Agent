@@ -1,0 +1,13 @@
+diff --git a/test_schedule.py b/test_schedule.py
+index 875d5ebc..339f2d75 100644
+--- a/test_schedule.py
++++ b/test_schedule.py
+@@ -1,7 +1,7 @@
+ """Unit tests for schedule.py"""
+ import datetime
+ import functools
+-import mock
++from unittest import mock
+ import unittest
+ import os
+ import time
