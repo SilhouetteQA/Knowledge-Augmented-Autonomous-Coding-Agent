@@ -1,0 +1,26 @@
+{
+  "summary": "示例章节摘要",
+  "events": [
+    {"event": "甲与乙在龙门会面", "type": "revelation", "line_range": [3, 8], "participants": ["甲", "乙"], "location": "龙门", "significance": "会面揭示情报", "is_imaginary": false},
+    {"event": "丙调查罗德岛", "type": "investigation", "line_range": [10, 12], "participants": ["丙"], "location": "罗德岛", "significance": "调查行动", "is_imaginary": false}
+  ],
+  "characters": [
+    {"name": "甲", "type": "npc", "role_in_chapter": "主导会面", "first_appearance_chapter": false},
+    {"name": "乙", "type": "npc", "role_in_chapter": "参与会面", "first_appearance_chapter": false},
+    {"name": "丙", "type": "npc", "role_in_chapter": "调查者", "first_appearance_chapter": false}
+  ],
+  "concepts": [
+    {"concept": "感染者的复仇", "line_range": [5, 6], "discussion_summary": "复仇理念讨论", "is_substantive": true},
+    {"concept": "无行号的讨论", "discussion_summary": "没有 line_range", "is_substantive": false}
+  ],
+  "factions": [
+    {"faction": "罗德岛", "line_range": [1, 2], "description": "制药公司"}
+  ],
+  "locations": [
+    {"location": "龙门", "line_range": [3, 4], "description": "移动城市"}
+  ],
+  "chapter": "示例章",
+  "category": "main",
+  "batch_count": 1,
+  "_raw": {}
+}
