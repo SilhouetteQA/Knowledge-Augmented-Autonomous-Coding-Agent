@@ -1,4 +1,4 @@
-# Devlog — 开发日志
+﻿# Devlog — 开发日志
 
 本文件记录项目的开发过程、架构决策、关键指标与遗留问题。新会话进入前先读本文件与 `readme.md`、`docs/roadmap.md`。
 
@@ -369,3 +369,15 @@
 - **local 回退弃用**：5 case 全部 must_pass `test_schedule.py`（Windows 宿主 tzset 崩溃），local 执行器跑不出有效 resolution，无信号价值，不复跑（W5 已实证 Agent 可解 #646）。
 - **结论**：带真实 resolution 的全量评测须在非沙箱环境（控制器环境）执行：docker daemon 可达 + git 镜像生效即可跑 `$env:KA_EXECUTOR="docker"; python main.py --benchmark --cases benchmark/cases --benchmark-out output/benchmark --executor docker --workspace workspace`（若该环境 git 无需 sslBackend 注入可忽略 GIT_CONFIG_*）。schedule-646 resolution 锚点待该运行复核。
 - 证据留存：`output/benchmark/20260826-002247`（run 1：全克隆失败）与 `20260826-004155`（run 2：克隆成功、沙箱阶段失败），均已 gitignore 不入库。
+
+
+### 真实评测补充（2026-08-26，修复闭环后）
+
+- **修复闭环**：run 20260826-034824（docker 执行器，git ed4a709，修复 _test_pass 沙箱上下文 + 绝对路径后）——5 case 完整跑完，**Resolution Rate 20%（1/5）**，核心指标首次产生真实数值：
+  - **schedule-608（daylight saving bug）resolved**：test=True + Judge PASS（25 迭代，1665s）——Agent 完整解决且测试通过
+  - schedule-646 / schedule-99：judge=PASS + patch_acceptance=True（LLM Judge 明确确认修复与社区 gold 等价：unit None 守卫 / weekday/weekend 调度），但 test_pass=False
+  - schedule-602 / schedule-622：judge=SKIP（无有效代码变更），test=False
+- **test_pass=False 根因（评测基准缺口）**：容器内跑 test_schedule.py = 68 passed / 40 failed，主因 AttributeError: module 'pytz' —— **沙箱镜像缺 pytz 依赖**，schedule 时区测试群全部失败。schedule-608 的 Agent 恰在容器内自行解决依赖（时区修复需要验证）→ test=True；其余 case 未装 → test=False。
+  - 结论：0%→20% 的提升确认修复生效（test_pass 从恒 False 变为真实判定）；剩余 case 的 test=False 主因容器依赖缺失，**不是 Agent 能力结论**（Judge 等价性已确认修复正确）。
+  - **改进建议（记录，不阻塞）**：① 沙箱镜像预装 pytz（schedule 依赖）或 case 级 must_pass 前置 pip install；② 评测先跑原仓库基线测试确认环境完整再判定；③ test_pass=False 时报告补失败摘要（当前只记 bool）。
+- Langfuse 落库持续验证（本轮 run 的 trace 同前 events_core 通道）。

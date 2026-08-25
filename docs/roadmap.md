@@ -172,16 +172,16 @@ coding-agent/
 - [x] LLM-as-a-Judge 与回归测试辅助
 - [x] TDD + Review + 合并回 main（本窗口回归 185 passed / 14 skipped / 1 项已知环境性失败）
 
-**验收标准**：任意 Agent 版本变更可在同一基准上重跑并对比指标。—— CLI 链路（loader/runner/report/--compare）已实测可用；真实数值评测因执行环境受限留待下会话（见完成记录"遗留"）。
+**验收标准**：任意 Agent 版本变更可在同一基准上重跑并对比指标。—— 已达成：CLI 链路（loader/runner/report/--compare）实测可用，真实评测（docker 执行器）产出 Resolution Rate 20%（见完成记录）。
 
 **完成记录（2026-08-26）**：
 
 - 实现：`benchmark/` 包（loader 案例加载与 schema 校验 / judge LLM 等价性判定 / report JSON+MD+对比 / runner 双判定与指标采集）、`tools/tracing.py` 可开关 Langfuse 埋点 + `agent/llm.py` generation 埋点 + `agent/issue.py` issue_snapshot 离线注入（评测可离线路由）、`main.py --benchmark/--cases/--executor/--compare`；案例库 5 个（bug×2 / feature / test / refactor，gold 取自社区已合并 PR）；Task 10 补充 `docker/langfuse/` 部署文件（compose v4 + .env.example 模板，密钥不入库）。规格/计划：`docs/specs/2026-08-25-w6-evaluation.md`、`docs/plans/2026-08-25-w6-evaluation.md`。
 - 回归：185 passed / 14 skipped / 1 failed（`test_sync_repository_fetch_and_reset`，已知环境性：沙箱拒绝 git sh 信号管道，与 docker npipe 受限同源，非本窗口变更导致）。
-- 真实验收尝试（docker 执行器）：run 1（`20260826-002247`）5 case 全克隆失败——宿主 git 死代理（127.0.0.1:7892）未运行；控制器清除代理并配置 ghfast.top 镜像后，run 2（`20260826-004155`）克隆全部成功（网络链路修复确认），失败点迁移至沙箱阶段（本会话沙箱拒绝 docker 引擎 named pipe 与 workspace 外文件访问）——两 run 均为环境性失败证据（零 LLM 消耗），不作为 Agent 能力结论；带真实 resolution 的全量评测须在非沙箱环境执行（详见 devlog"真实验收二次运行"）。`--compare` 单 run 验证通过。
+- 真实验收（docker 执行器，run `20260826-034824`，含 runner 沙箱上下文+绝对路径修复闭环）：**Resolution Rate 20%（1/5）**——schedule-608 resolved（test=True + Judge PASS，25 迭代）；schedule-646/99 judge=PASS（LLM Judge 确认修复与 gold 等价：unit None 守卫 / weekday·weekend 调度）但 test_pass=False，根因=沙箱镜像缺 pytz 依赖致 schedule 时区测试群失败（评测基准缺口，非 Agent 能力结论，详见 devlog"真实评测补充"）；早期 run `20260826-002247/004155`（环境性失败：死代理/沙箱限制）保留作对比证据；`--compare` 验证通过。
 - Langfuse 落库验证通过：ClickHouse `events_core` 确认 `benchmark.run` SPAN + 5× `issue.run` AGENT + 冒烟 `w6-trace-smoke` GENERATION 全部落库（本部署为 Langfuse v4 events_only 模式，SDK 4.14.4 自动适配）。
 
-**遗留（见 devlog 详述）**：全量真实评测（含 schedule-646 resolution 锚点）需在非沙箱环境执行（docker + 网络就绪）；domain 类案例暂缺（5 例已覆盖四类）；单价表 MODEL_PRICE_USD_PER_1K 为空（成本列 0）；v4 面板 UI 复核待人工。
+**遗留（见 devlog 详述）**：评测基准依赖缺口（沙箱镜像缺 pytz）致 test_pass 偏严——改进方向：镜像预装依赖或 case 级 pip install、基线测试预检、test_pass=False 补失败摘要；domain 类案例暂缺（5 例已覆盖四类）；单价表 MODEL_PRICE_USD_PER_1K 为空（成本列 0）；v4 面板 UI 复核待人工。
 
 ---
 
