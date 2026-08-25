@@ -11,6 +11,10 @@ from agent.graph import run_agent_graph
 from agent.issue import run_issue_agent
 from agent.llm import OpenAICompatClient
 from agent.loop import run_agent
+from benchmark.loader import load_cases
+from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
+                              compare_reports)
+from benchmark.runner import MODEL_PRICE_USD_PER_1K, run_benchmark
 from tools.code_graph import build_code_graph
 from tools.file_tools import ToolError
 from tools.knowledge_client import get_knowledge_client
@@ -44,6 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audit-seed", type=int, default=42, help="抽查随机种子")
     parser.add_argument("--audit-out", default="output/correction",
                         help="抽查报告输出目录")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="评测模式：在固定基准上运行 Agent 并产出报告")
+    parser.add_argument("--cases", default="benchmark/cases",
+                        help="基准案例目录（默认 benchmark/cases）")
+    parser.add_argument("--benchmark-out", default="output/benchmark",
+                        help="评测报告输出目录（默认 output/benchmark）")
+    parser.add_argument("--compare", default=None,
+                        help="对比多轮报告：run_id1,run_id2（读取 output/benchmark/<run_id>/report.json）")
     return parser
 
 
@@ -95,6 +107,38 @@ def _run_issue_mode(args: argparse.Namespace, llm) -> int:
     return 0
 
 
+def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
+    """评测模式：加载基准案例 → 运行 → 报告；--compare 输出版本对比表。"""
+    import json
+    import os
+
+    if args.compare:
+        reports = []
+        for run_id in args.compare.split(","):
+            path = os.path.join(args.benchmark_out, run_id, "report.json")
+            if not os.path.isfile(path):
+                print(f"报告不存在: {path}")
+                return 1
+            data = json.loads(open(path, encoding="utf-8").read())
+            cases = [CaseResult(**d) for d in data["results"]]
+            reports.append(BenchmarkReport(
+                metadata=RunMetadata(**data["metadata"]),
+                total=data["total"], resolved=data["resolved"],
+                resolution_rate=data["resolution_rate"], results=cases))
+        print(compare_reports(reports))
+        return 0
+    executor = args.executor or os.environ.get("KA_EXECUTOR", "local")
+    report = run_benchmark(llm, args.cases, args.benchmark_out, executor,
+                           repo_root=os.path.join(args.workspace, "benchmark"))
+    print(f"评测完成: {report.metadata.run_id}")
+    print(f"案例: {report.total}  解决: {report.resolved}  "
+          f"Resolution Rate: {report.resolution_rate:.0%}")
+    print(f"报告: {os.path.join(args.benchmark_out, report.metadata.run_id)}")
+    if report.results and not MODEL_PRICE_USD_PER_1K:
+        print("提示: 模型单价表为空，成本列全部为 0（待提供实际单价后填入 benchmark/runner.py 的 MODEL_PRICE_USD_PER_1K）")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """运行一次 Agent 任务并打印过程。"""
     # Windows 控制台/重定向默认 GBK 编码，LLM 输出可能含 emoji 等 GBK 无法表示的字符，
@@ -108,7 +152,13 @@ def main(argv: list[str] | None = None) -> int:
         return _run_correct_mode(args)
     if args.executor:
         os.environ["KA_EXECUTOR"] = args.executor
+    if args.benchmark:
+        # 评测模式在创建 LLM 前处理 --compare（纯读报告无需 key）
+        if args.compare:
+            return _run_benchmark_mode(args, None)
     llm = OpenAICompatClient()
+    if args.benchmark:
+        return _run_benchmark_mode(args, llm)
     if args.issue:
         return _run_issue_mode(args, llm)
     if not args.task:

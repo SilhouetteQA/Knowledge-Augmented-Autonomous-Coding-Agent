@@ -122,3 +122,34 @@ def test_main_correct_mode_requires_wiki_dir(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert "兄弟项目目录" in out
+
+
+def test_benchmark_cli_reads_args(monkeypatch):
+    """--benchmark 模式解析并调用 run_benchmark（Fake 不触网）。"""
+    import main as main_mod
+    captured = {}
+    class FakeReport:
+        metadata = type("M", (), {"run_id": "r1"})()
+        total = 2
+        resolved = 1
+        resolution_rate = 0.5
+        results = []
+    monkeypatch.setattr(main_mod, "run_benchmark",
+                        lambda llm, case_dir, out_dir, executor, repo_root: (
+                            captured.update(case_dir=case_dir, out_dir=out_dir,
+                                            executor=executor) or FakeReport()))
+    monkeypatch.setattr(main_mod, "load_cases", lambda d: [])
+    rc = main_mod._run_benchmark_mode(
+        type("A", (), {"benchmark": True, "cases": "benchmark/cases",
+                       "benchmark_out": "output/benchmark",
+                       "executor": "docker", "compare": None,
+                       "task": None, "workspace": "workspace"}), None)
+    assert rc == 0
+    assert captured["executor"] == "docker"
+
+
+def test_compare_flag_parses():
+    import main as main_mod
+    parser = main_mod.build_parser()
+    args = parser.parse_args(["--compare", "a,b"])
+    assert args.compare == "a,b"

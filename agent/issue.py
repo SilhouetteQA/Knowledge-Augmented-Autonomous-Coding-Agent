@@ -22,6 +22,7 @@ from tools.github_tools import (
     push_branch,
     sync_repository,
 )
+from tools.tracing import traced
 
 # Review 提示词：审查 diff 并输出结论（首行 PASS/FAIL）
 REVIEW_PROMPT = (
@@ -39,6 +40,7 @@ class IssueTask:
     workspace_root: str          # 仓库克隆父目录（如 workspace/repos）
     push: bool = False           # True 才 push + 建 PR；False 停在 review（dry-run）
     max_iterations: int = 20
+    issue_snapshot: GitHubIssue | None = None   # 非 None 时离线模式：跳过 get_issue
 
 
 @dataclass
@@ -73,12 +75,16 @@ def _review_diff(llm: LLMClient, diff: str, issue_text: str) -> str:
     return (msg.content or "FAIL 审查无输出").strip()
 
 
+@traced("issue.run", as_type="agent")
 def run_issue_agent(task: IssueTask, llm: LLMClient,
                     code_graph=None, knowledge_client=None) -> IssueAgentResult:
     """执行 Issue 全链路；push=False 时停在 review（不产生远端副作用）。"""
-    issue = get_issue(task.repository, task.issue_number)
-    if isinstance(issue, ToolError):
-        raise ToolError(f"读取 Issue 失败: {issue.message}")
+    if task.issue_snapshot is not None:
+        issue = task.issue_snapshot
+    else:
+        issue = get_issue(task.repository, task.issue_number)
+        if isinstance(issue, ToolError):
+            raise ToolError(f"读取 Issue 失败: {issue.message}")
     repo_info = get_repository(task.repository)
     if isinstance(repo_info, ToolError):
         raise ToolError(f"读取仓库失败: {repo_info.message}")

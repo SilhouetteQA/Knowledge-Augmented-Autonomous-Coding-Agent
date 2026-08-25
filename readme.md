@@ -6,7 +6,7 @@
 
 基于现有的《明日方舟》全量剧情结构化知识库、Knowledge Graph 与 LangGraph ReAct Agent，进一步构建能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，最终产出 GitHub Pull Request。
 
-> 项目状态：W0-W5 已完成 —— W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox（容器化执行 + 六维资源限制 + 一个任务一个沙箱）、W4 Repository Intelligence（代码图 + Arknights 域知识双检索）、W5 GitHub Issue Agent（Issue → 沙箱工作 → Review → push 门禁的 PR 全链路；真实演示 dbader/schedule#646 修复与社区方案一致）+ 知识抽查扩展（三次提取产物 2% 抽查：来源可靠性 96.88% / 内容实用性 70.98%，main.py --correct）。合并后全量 154 项测试全绿。下一步：W6 Evaluation（知识纠错第二阶段冻结，待 W8 Human-in-the-loop 门禁就绪后继续）。
+> 项目状态：W0-W6 已完成 —— W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox（容器化执行 + 六维资源限制 + 一个任务一个沙箱）、W4 Repository Intelligence（代码图 + Arknights 域知识双检索）、W5 GitHub Issue Agent（Issue → 沙箱工作 → Review → push 门禁的 PR 全链路；真实演示 dbader/schedule#646 修复与社区方案一致）+ 知识抽查扩展（三次提取产物 2% 抽查：来源可靠性 96.88% / 内容实用性 70.98%，main.py --correct）、W6 Evaluation（Issue Benchmark 案例库五类 + Issue Resolution Rate 核心指标 + LLM-as-a-Judge 双判定 + `--benchmark/--compare` CLI + Langfuse 部署文件与可开关 tracing，评测执行器须 docker）。全量回归 185 passed / 14 skipped / 1 项已知环境性失败（test_sync_repository_fetch_and_reset：沙箱禁止 git 信号管道）。下一步：W7 Observability（知识纠错第二阶段冻结，待 W8 Human-in-the-loop 门禁就绪后继续）。
 > 开发规范见 [agents.md](agents.md)，窗口路线图见 [docs/roadmap.md](docs/roadmap.md)。
 
 ---
@@ -138,7 +138,7 @@ Knowledge-Augmented Autonomous Coding Agent/
 | W3 | Docker Sandbox | 容器化执行 + timeout / CPU / 内存 / 网络 / 文件系统限制 |
 | W4 | Repository Intelligence | Code Parser → Code Knowledge Graph + 接入 Arknights KG |
 | W5 | GitHub Issue Agent | Issue → Clone → Branch → Work → Test → Review → Commit → Push → PR（MVP） |
-| W6 | Evaluation | Issue Benchmark 五类 + Issue Resolution Rate 核心指标 |
+| W6 | Evaluation | Issue Benchmark 五类 + Issue Resolution Rate 核心指标（已完成） |
 | W7 | Observability | 全链路 Trace + Langfuse / OpenTelemetry |
 | W8 | Human-in-the-loop | Reviewer Agent + 人工审批门禁后自动 PR |
 
