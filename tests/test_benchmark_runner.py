@@ -1,5 +1,6 @@
 """评测运行器测试：Fake run_issue_agent + 假 must_pass 判定。"""
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -104,7 +105,8 @@ def test_test_pass_wraps_run_tests_in_sandbox(monkeypatch):
     monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
     case = _case(must_pass=["test_a.py", "test_b.py"])
     assert runner_mod._test_pass(case, "/repo") is True
-    assert calls == [("test_a.py", "/repo", True), ("test_b.py", "/repo", True)]
+    assert calls == [(os.path.join("/repo", "test_a.py"), "/repo", True),
+                     (os.path.join("/repo", "test_b.py"), "/repo", True)]
 
 
 def test_test_pass_verdicts_and_local_mode_unchanged(monkeypatch):
@@ -137,6 +139,22 @@ def test_test_pass_verdicts_and_local_mode_unchanged(monkeypatch):
     assert runner_mod._test_pass(_case(), "/repo") is False
 
     assert sandbox_calls == ["/repo"] * 4
+
+
+def test_test_pass_joins_relative_must_pass_to_abs(monkeypatch):
+    """相对 must_pass 路径必须拼接 repo_dir 为绝对路径（docker 执行器宿主 CWD 基准解析）。"""
+    import contextlib
+
+    seen: list[str] = []
+    monkeypatch.setattr(runner_mod, "sandbox_executor",
+                        lambda repo_dir: contextlib.nullcontext(),
+                        raising=False)
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: (
+                            seen.append(path) or TestResult(1, 0, 0, 1, 0.1, [])))
+    assert runner_mod._test_pass(_case(must_pass=["test_schedule.py"]),
+                                 "/work/repo") is True
+    assert seen == [os.path.join("/work/repo", "test_schedule.py")]
 
 
 def test_case_error_continues(tmp_path, monkeypatch):
