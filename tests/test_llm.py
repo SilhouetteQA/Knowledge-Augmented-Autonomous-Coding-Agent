@@ -26,18 +26,18 @@ def test_mock_llm_pops_script_and_records_calls():
 
 
 def test_openai_client_requires_env(monkeypatch):
-    monkeypatch.delenv("arkcode_api", raising=False)
-    with pytest.raises(ValueError, match="arkcode_api"):
+    monkeypatch.delenv("opencode_go_api", raising=False)
+    with pytest.raises(ValueError, match="opencode_go_api"):
         OpenAICompatClient()
-    monkeypatch.setenv("arkcode_api", "k")
+    monkeypatch.setenv("opencode_go_api", "k")
     client = OpenAICompatClient()
-    assert client.base_url == "https://ark.cn-beijing.volces.com/api/coding/v3"
-    assert client.model == "deepseek-v4-flash-ga-260731"
+    assert client.base_url == "https://opencode.ai/zen/go/v1"
+    assert client.model == "mimo-v2.5"
 
 
 def test_openai_client_chat_converts_response(monkeypatch):
-    # 固定模型默认值，避免本机 ARKCODE_MODEL 环境变量干扰断言
-    monkeypatch.delenv("ARKCODE_MODEL", raising=False)
+    # 固定模型默认值，避免本机 OPENCODE_GO_MODEL 环境变量干扰断言
+    monkeypatch.delenv("OPENCODE_GO_MODEL", raising=False)
     client = OpenAICompatClient(api_key="test-key", base_url="http://localhost:1")
 
     class FakeCompletions:
@@ -62,7 +62,7 @@ def test_openai_client_chat_converts_response(monkeypatch):
                       parameters={"type": "object", "properties": {}})]
     msg = client.chat([{"role": "user", "content": "hi"}], tools)
     assert msg.content == "回答"
-    assert fake.kwargs["model"] == "deepseek-v4-flash-ga-260731"
+    assert fake.kwargs["model"] == "mimo-v2.5"
     assert fake.kwargs["tools"][0]["function"]["name"] == "read_file"
     assert msg.tool_calls[0].name == "read_file"
     assert msg.tool_calls[0].arguments == {"path": "a.py"}
