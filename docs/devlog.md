@@ -184,3 +184,31 @@
 ### 下一步
 
 - W5（GitHub Issue Agent）：worktree `.worktrees/w5-github-issue`（分支 `feature/w5-github-issue`，计划已入库）执行规划 7 大任务，目标完成 GitHub Issue → PR 全链路闭环（MVP 交付）。
+
+## W5 GitHub Issue Agent 实施进行中（2026-08-25）
+
+### 完成内容
+
+- **窗口**：worktree `.worktrees/w5-github-issue`，分支 `feature/w5-github-issue`（Task 1-6 已提交 + 重复运行幂等修复，共 9 commits 待合并）。
+- **实现**（按计划 7 大任务，TDD）：
+  - `tools/github_tools.py`：gh CLI 封装（get_issue / get_repository / clone_repository / create_branch（-B 幂等）/ git_diff_since / commit_changes / push_branch / create_pull_request / comment_issue）+ `sync_repository`（仓库已存在时 fetch + checkout base + reset --hard origin/base + clean -fd，spec §4.2）；全部宿主执行，凭据不进沙箱。
+  - `agent/issue.py`：`IssueTask` / `IssueAgentResult` / `run_issue_agent` 全链路编排（fetch issue → clone/sync → branch → run_agent_graph（沙箱工作）→ diff → LLM Review（PASS/FAIL 首行）→ FAIL 重试 1 轮 → push 门禁（`task.push` 才 commit+push+PR））；Review 提示词 REVIEW_PROMPT。
+  - `main.py`：`--issue`（`<owner/name>#<number>` 格式）与 `--push` 开关 + `_run_issue_mode`（dry-run 无远端副作用）。
+  - `agent/graph.py` 不变：`run_agent_graph` 内部 `sandbox_executor` 包裹，KA_EXECUTOR=docker 时工作与测试自动容器化。
+- **测试**：非 docker 全量 **133 项全绿**（github_tools 15 / issue_agent 6 / main 含 issue 模式 2 项；Fake gh monkeypatch 不触网，git 写操作用本地临时仓库；重复运行回归 3 项）。
+- **模型依赖**：本窗口已随主线迁移至 opencode_go + mimo-v2.5（见主仓库 devlog 迁移条目）。
+
+### 关键决策与经验
+
+- **凭据边界**：gh/git 写操作宿主执行；沙箱容器内仅只读 git 三件套 + 工作/测试（延续 W3 秘密隔离）。
+- **Review 轻量化**：diff → LLM 审查出 PASS/FAIL 首行结论，FAIL 时审查意见回注重跑一轮（上限 1 次）；独立 Reviewer Agent 留 W8。
+- **dry-run 安全阀**：默认不 push；`--push` 或 `KA_ISSUE_PUSH=1` 才 commit → push → PR（body 含验证轮数与审查结论）。
+- **重复运行幂等**（审查前自检发现）：仓库已存在时 fetch+reset 丢弃残留未提交变更；`checkout -B` 重置同名分支——二次运行不污染（spec §4.2 合规补丁 e1c6a39）。
+- **宿主环境检查**：gh CLI 2.92.0 已装但**未登录**（需 `gh auth login` 或 GH_TOKEN）；进程环境已含 opencode_go_api（User 级）。
+
+### 遗留问题与待办（人工测试后继续）
+
+- 真实演示 dry-run（待用户提供目标仓库 + Issue 号；二哥项目若无 GitHub remote 可选小型 Python 仓库）。
+- 真实演示 push 模式（需用户有写权限的测试仓库 + open issue）。
+- 双轴审查（requesting-code-review）→ 修复 → 全量回归。
+- 更新 `docs/roadmap.md` W5 状态 → 合并回 main → 删除 worktree（收尾流程）。
