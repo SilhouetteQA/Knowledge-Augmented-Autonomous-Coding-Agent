@@ -22,6 +22,7 @@ from tools.github_tools import (
     push_branch,
     sync_repository,
 )
+from tools.tracing import traced
 
 # Review 提示词：审查 diff 并输出结论（首行 PASS/FAIL）
 REVIEW_PROMPT = (
@@ -74,6 +75,7 @@ def _review_diff(llm: LLMClient, diff: str, issue_text: str) -> str:
     return (msg.content or "FAIL 审查无输出").strip()
 
 
+@traced("issue.run", as_type="agent")
 def run_issue_agent(task: IssueTask, llm: LLMClient,
                     code_graph=None, knowledge_client=None) -> IssueAgentResult:
     """执行 Issue 全链路；push=False 时停在 review（不产生远端副作用）。"""
