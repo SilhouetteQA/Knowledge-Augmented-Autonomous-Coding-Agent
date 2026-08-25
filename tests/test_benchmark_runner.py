@@ -30,10 +30,10 @@ def _make_gold(tmp_path, case_id="schedule-646"):
     return str(tmp_path)
 
 
-def _result_diff(diff="+guard"):
+def _result_diff(diff="+guard", steps=None):
     return type("R", (), {
         "diff": diff, "iteration_count": 12, "stopped_by_limit": False,
-        "steps": []})()
+        "steps": steps or []})()
 
 
 def test_resolved_case(tmp_path, monkeypatch):
@@ -55,6 +55,31 @@ def test_resolved_case(tmp_path, monkeypatch):
     assert r.judge_verdict == "PASS"
     assert out["task"].push is False
     assert out["task"].issue_snapshot is not None
+
+
+def test_resolved_case_tool_success_rate(tmp_path, monkeypatch):
+    """tool_success_rate 由 AgentStep.result 真实采集：ToolError 计失败、其余计成功。"""
+    from agent.loop import AgentStep
+    from tools.file_tools import ToolError
+
+    steps = [
+        AgentStep(tool_name="read_file", arguments={"path": "a.py"},
+                  result="1: x"),
+        AgentStep(tool_name="search_code", arguments={"query": "foo"},
+                  result=[]),
+        AgentStep(tool_name="write_file", arguments={"path": "a.py"},
+                  result="written"),
+        AgentStep(tool_name="read_file", arguments={"path": "missing.py"},
+                  result=ToolError("文件不存在")),
+    ]
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff(steps=steps))
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    assert report.results[0].tool_success_rate == pytest.approx(0.75)
 
 
 def test_test_failure_not_resolved(tmp_path, monkeypatch):

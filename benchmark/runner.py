@@ -9,6 +9,7 @@ from benchmark.loader import BenchmarkCase
 from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
                               current_metadata, save_json, save_markdown)
 from tools.docker_sandbox import sandbox_executor
+from tools.file_tools import ToolError
 from tools.shell_tools import TestResult, run_tests
 from tools.tracing import traced
 
@@ -29,6 +30,19 @@ def _cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     if price is None:
         return 0.0
     return (prompt_tokens + completion_tokens) / 1000.0 * price
+
+
+def _tool_success_rate(steps: list) -> float:
+    """工具调用成功率 = 成功次数 / 总调用次数。
+
+    判定口径：AgentStep.result 为 ToolError（agent/loop.py 的工具分发
+    对缺参/未知工具/执行失败返回 ToolError）视为失败，其余视为成功；
+    无任何工具调用时返回 0.0。
+    """
+    if not steps:
+        return 0.0
+    failed = sum(1 for s in steps if isinstance(getattr(s, "result", None), ToolError))
+    return (len(steps) - failed) / len(steps)
 
 
 def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
@@ -71,13 +85,14 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     prompt, completion = (llm.tokens_total["prompt"] - prompt_before,
                           llm.tokens_total["completion"] - completion_before)
     model = getattr(llm, "model", "unknown")
+    tool_success = _tool_success_rate(getattr(run, "steps", None) or [])
     return CaseResult(
         case_id=case.id, category=case.category,
         status="resolved" if resolution else "not_resolved",
         resolution=resolution, test_pass=test_pass,
         patch_acceptance=judge.verdict == "PASS",
         judge_verdict=judge.verdict, judge_reason=judge.reason,
-        tool_success_rate=0.0,
+        tool_success_rate=tool_success,
         iteration_count=getattr(run, "iteration_count", 0),
         latency_s=end - start,
         tokens_prompt=prompt, tokens_completion=completion,
