@@ -17,8 +17,8 @@ from tools.knowledge_audit import (
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "kg_mini"
-EXTRACTIONS = FIXTURE / "extractions"
-STORIES = FIXTURE / "stories"
+EXTRACTIONS = FIXTURE / "data" / "extractions"
+STORIES = FIXTURE / "data" / "stories"
 
 
 def test_load_inventory_counts_and_kinds():
@@ -119,6 +119,22 @@ def test_chapter_file_missing_unreliable():
     )
     r = check_reliability(missing, str(STORIES))
     assert r["verdict"] == "unreliable"
+
+
+def test_reliability_character_weak_anchor():
+    """character 无行号锚点：角色名出现在章节原文中即可靠（弱锚点）。"""
+    entries = load_inventory(str(EXTRACTIONS))
+    jia = [e for e in entries if e.name == "甲"][0]
+    r = check_reliability(jia, str(STORIES))
+    assert r["verdict"] == "reliable", r
+    ghost = KnowledgeEntry(
+        id="z", kind="character", name="幽灵角色", aliases=[], source_records=[],
+        line_range=None, chapter="示例章", category="main",
+        origin_file="v1_events/main/示例章.json", raw={},
+    )
+    r2 = check_reliability(ghost, str(STORIES))
+    assert r2["verdict"] == "unreliable"
+    assert any("原文" in i for i in r2["issues"])
 
 
 def test_name_index_with_aliases():

@@ -17,9 +17,14 @@ from pathlib import Path
 _NORM_RE = re.compile(r"[《》「」『』【】()（）\[\]·\s]+")
 
 
-def _norm(name: str) -> str:
-    """规范化名称：去书名号/引号/空白，用于引用匹配。"""
-    return _NORM_RE.sub("", name or "").strip()
+def _norm(name) -> str:
+    """规范化名称：去书名号/引号/空白，用于引用匹配。
+
+    真实数据个别字段为 dict/None（schema 漂移），非字符串统一按空处理。
+    """
+    if not isinstance(name, str):
+        return ""
+    return _NORM_RE.sub("", name).strip()
 
 
 @dataclass
@@ -193,15 +198,34 @@ def check_reliability(entry: KnowledgeEntry, stories_dir: str) -> dict:
     verdict = "reliable"
     if entry.line_range:
         has_source = True
-        path = Path(stories_dir) / (entry.category or "") / f"{entry.chapter}.json"
-        if not path.exists():
-            issues.append(f"章节文件不存在: stories/{entry.category}/{entry.chapter}.json")
-            verdict = "unreliable"
+        # stories 布局：stories/{category}/{chapter}.json（单文件）或 stories/{category}/{chapter}/（目录）
+        chap_file = Path(stories_dir) / (entry.category or "") / f"{entry.chapter}.json"
+        chap_dir = Path(stories_dir) / (entry.category or "") / (entry.chapter or "")
+        if chap_file.exists():
+            n_lines = len(chap_file.read_text(encoding="utf-8").splitlines())
+        elif chap_dir.is_dir():
+            n_lines = sum(len(p.read_text(encoding="utf-8").splitlines())
+                          for p in sorted(chap_dir.glob("*.json")))
         else:
-            n_lines = len(path.read_text(encoding="utf-8").splitlines())
-            if entry.line_range[1] > n_lines:
-                issues.append(f"line_range 越界 {entry.line_range}（超出文件行数 {n_lines}）")
-                verdict = "unreliable"
+            issues.append(f"章节文件不存在: stories/{entry.category}/{entry.chapter}")
+            verdict = "unreliable"
+            return {"has_source": has_source, "issues": issues, "verdict": verdict}
+        if entry.line_range[1] > n_lines:
+            issues.append(f"line_range 越界 {entry.line_range}（超出文件行数 {n_lines}）")
+            verdict = "unreliable"
+    elif entry.kind == "character" and entry.chapter:
+        # 弱锚点：角色名（含别名）出现在对应章节 stories 原文中
+        has_source = True
+        chap_dir = Path(stories_dir) / (entry.category or "") / (entry.chapter or "")
+        names = [n for n in [entry.name] + list(entry.aliases) if n]
+        found = False
+        if chap_dir.is_dir():
+            hay = "".join(p.read_text(encoding="utf-8", errors="replace")
+                          for p in sorted(chap_dir.glob("*.json")))
+            found = any(n in hay for n in names)
+        if not found:
+            issues.append(f"角色名未在章节原文出现: {entry.name}")
+            verdict = "unreliable"
     elif entry.source_records:
         has_source = True
         for sr in entry.source_records[:5]:

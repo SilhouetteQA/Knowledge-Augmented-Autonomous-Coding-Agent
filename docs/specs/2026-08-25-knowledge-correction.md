@@ -1,9 +1,9 @@
 # 知识库纠错（Knowledge Correction）设计规格
 
 > 日期：2026-08-25
-> 状态：草稿（待用户批准后进入 writing-plans 与实施）
-> 关联：`docs/roadmap.md` W5/W6、《03_Knowledge_Augmented_Autonomous_Coding_Agent_实现内容与实现路径.md》领域知识增强定位、兄弟项目《Arknights LLM Wiki》`arknights_wiki/eval/`
-> 说明：本规格是对兄弟项目评估器「只评回答、不评知识内容」短板的补齐——用本项目 Autonomous Coding Agent 能力对知识库内容本身做评估与修复。
+> 状态：已批准（用户 2026-08-25 确认设计决策与验收方式；**归入 W5 窗口** `feature/w5-github-issue` 实施）
+> 关联：`docs/roadmap.md` W5、《03_Knowledge_Augmented_Autonomous_Coding_Agent_实现内容与实现路径.md》领域知识增强定位、兄弟项目《Arknights LLM Wiki》`arknights_wiki/eval/`
+> 说明：本规格是对兄弟项目评估器「只评回答、不评知识内容」短板的补齐——用本项目 Autonomous Coding Agent 能力对知识库内容本身做评估与修复。第一阶段实施重点为**三次提取产物抽查验证**（用户验收），第二阶段为写回纠错。
 
 ## 1. 背景与目标
 
@@ -26,6 +26,23 @@
 
 与兄弟项目评估器互补：评估器管「答得对不对」（输出层），纠错器管「库里的知识对不对」（数据层）。
 
+### 1.3 三次提取产物（抽查对象，实证调研 2026-08-25）
+
+兄弟项目知识抽取 pipeline 的产物（`data/extractions/`）：
+
+| 轮次 | 产物 | 结构 | 规模（实测） |
+|------|------|------|--------------|
+| Pass1 事件/实体提取 | `v1_events/{main,side,special}/*.json` | 每章节：summary / events[] / characters[] / concepts[] / factions[] / locations[] | 106 个章节文件 |
+| Pass2 实体聚合种子 | `v3_seed_db_v2.json` | concepts/factions/locations/timeline_events（中间版） | 少量（1 concept） |
+| Pass3 世界观/概念提取 | `v3_seed_db_v3_final.json` | concepts / factions / locations / timeline_events（含 source_records、aliases、related_* 字段） | concepts 1199 / factions 234 / locations 245 / timeline 49 |
+
+**用户实证样例**：Pass3 概念《三山谈》（category 技术/技艺体系）`source_records` 为空——**来源不可靠**（无法对照原文）+ **实用性存疑**（无事件参与、无 related 引用）：规则识别出条目但实际检索/回答用不到。
+
+### 1.4 抽查验证的两个维度（用户验收定义）
+
+- **来源可靠性**：抽取条目能否追溯到原文（`source_records` 非空且指向的 stories 文件存在；LLM 核查时内容与原文一致）。
+- **内容实用性**：条目是否被实际使用（被事件/角色/概念/关系/查询索引引用，即引用入度 > 0）；无任何引用的条目判定为「死数据」（如《三山谈》类：概念无事件参与）。
+
 ## 2. 验收标准
 
 1. 规则化校验器在合成小 KG 上能发现：悬空关系、实体重复、schema 违例、时间线冲突（各类型有测试覆盖）。
@@ -33,6 +50,11 @@
 3. dry-run：产出错误清单 + 修复 diff + 审查结论，**账面上零写回**（不修改任何知识数据文件）。
 4. `--apply`：写回 extractions JSON → 重建索引 → 定向查询前后对比通过 → 兄弟项目核心测试通过；重建失败则中止且不写回。
 5. 修复可追溯：每项修复含依据（issue id → 原文引用 → 修改字段前后值）。
+6. **三次提取产物抽查（用户验收，2026-08-25 确认）**：盘点 Pass1/Pass2/Pass3 全部产物（v1_events 章节 JSON + v3_seed_db_v2/v3_final）→ 分层抽样样本量 **≥ 总数 2%**（固定种子、可复现）→ 逐条检查两维度：
+   - 来源可靠性：`source_records` 非空率 + 指向 stories 文件存在率（规则）；LLM 内容与原文一致性（可选增强）
+   - 内容实用性：条目引用入度（被事件/角色/概念/关系/entity_source_map/查询索引引用）> 0；无引用标记「死数据」（《三山谈》类：概念无事件参与）
+   - 输出抽查报告（可靠率 / 实用率 / 问题清单 / 样本明细），并列出已知样例《三山谈》。
+7. 抽查在真实兄弟项目数据上可运行，`@pytest.mark.kg` 集成测试守护（env 开关，条件跳过）。
 
 ## 3. 设计决策（brainstorming 已确认 2026-08-25）
 
@@ -43,7 +65,7 @@
 | D3 | 修复写回目标 | **extractions JSON 源头 + 重建索引** | 源头修复惠及全部查询路径（db/向量索引/lorebook 由重建生成）；直接改 db 会被重建覆盖 |
 | D4 | 核查执行形态 | **显式批量 LLM 核查步骤（非全自由 ReAct）** | 成本可控、结果可审计（逐条 PASS/FAIL + 依据）；自由探索型纠错留 v2 |
 | D5 | 编排复用 | 复用 W5 的「前置/后置顺序编排 + LLM 步骤」模式，不新增图节点 | 核查/修复/重建/回归均为确定性流程，无需 decide 循环；与 issue.py 同构 |
-| D6 | 窗口归属 | 建议并入 **W6 Evaluation**（知识质量属评估范畴）作领域扩展，或独立窗口 | 待用户批准时一并定 |
+| D6 | 窗口归属 | **并入 W5 窗口**实施（与 GitHub Issue Agent 同窗口交付） | 用户 2026-08-25 拍板；纠错的抽查验收与 W5 练习同一开发/验收流程 |
 
 ## 4. 架构与组件
 

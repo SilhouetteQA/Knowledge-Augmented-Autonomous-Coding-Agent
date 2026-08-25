@@ -253,3 +253,31 @@
 
 - `workspace/dbader__schedule/`（演示克隆）与 `demo-schedule-646.log` 保留供人工检查；已加 `.gitignore` 规则 `workspace/*/` 不污染状态。
 - 用户将用自有项目复测（含潜在 push 模式）；第 2/3/5 项改进建议待用户测试后择机实施。
+
+## W5 知识纠错——三次提取产物 2% 抽查验收完成（2026-08-25）
+
+### 完成内容
+
+- **规格/计划**：`docs/specs/2026-08-25-knowledge-correction.md`（用户批准，归入 W5 窗口；验收标准 6/7 = 三次提取产物 2% 抽查）+ `docs/plans/2026-08-25-w5-knowledge-correction.md`（6 个任务分解）。
+- **实现**（TDD，规则层全无 LLM）：
+  - `tools/knowledge_audit.py`：`load_inventory`（v1_events 106 章 + v3_seed v2/v3_final 统一条目模型，实测 11072 条：event 4131 / character 2253 / concept 2170 / faction 1438 / location 1031 / timeline 49）、`sample_entries`（分层 ≥ceil(ratio×N)、同 seed 可复现）、`check_reliability`（Pass1 line_range 对照章节行数 / character 弱锚点=原文出现 / Pass3 source_records）、`check_utility`（结构化引用入度，0 = 死数据）、`build_name_index`/`build_reference_map`
+  - `agent/correct.py`：`run_audit` 编排 + markdown/jsonl 报告（**零写回**）
+  - `main.py --correct`（--wiki-dir/--audit-ratio/--audit-seed/--audit-out；correct 分支在 LLM 客户端创建之前，纯规则层无需 key）
+- **测试**：27 项单元 + 1 项真实数据集成（`@pytest.mark.kg` 条件跳过）= 全绿；全量回归通过。
+- **真实验收运行**（兄弟项目全量数据，ratio=0.02 seed=42）：总数 11072，抽样 224 条（≥2%）。
+  - **来源可靠性 96.88%**（217/7）——迭代修复记录：初版 12.95%（stories 目录布局误判单文件 + character 无锚点），修正 stories `{category}/{chapter}/` 目录定位与 character 弱锚点（原文出现）后收敛
+  - **内容实用性 70.98%**（used 159 / dead 65）——死数据 65 条：concept 37 / faction 17 / location 8 / character 3；v3 世界观 27 / v1 章节清单 38
+  - 死数据代表：《三山谈》类 v3 概念（无 source_records + 无事件参与）、v1 章节派系/地点清单（未被结构化引用）——与用户预判一致
+
+### 关键决策与经验
+
+- **抽查两维度落地**：来源可靠性 = 可对照原文（line_range/原文出现/source_records 三锚点）；内容实用性 = 结构化引用入度（events.participants / related_* / involved_*），不做正文文本包含（防短名误伤）。
+- **真实数据 schema 漂移**：个别引用字段为 dict（_norm 加类型防御）；v1 characters 无行号锚点（弱锚点方案）；stories 目录布局（先探测后实现，初版假设错误已修正——「实现前先探测真实数据结构」教训）。
+- **实用性的现实信号**：v1 章节清单（factions/locations）大量不被结构化引用属数据特征而非缺陷；v3 概念死数据（《三山谈》类）是纠错第二阶段（LLM 核查 + 写回）的目标。
+- 抽查与纠错分离：本轮验收 = 只读审计（dry-run 报告）；`--apply` 写回（LLM 事实核查 + 重建索引 + 回归）留第二阶段（spec §4.2/4.3 已定义）。
+
+### 遗留与下一步
+
+- 第二阶段（纠错写回）：LLM 事实核查（对照 stories 原文出 CONFIRMED/FALSE_POSITIVE/UNCERTAIN）→ 修复 patch → 重建索引 → 回归 → `--apply` 门禁（spec 已批准，待排期实施）。
+- 死数据 65 条清单已入库报告（output/correction/audit_report_*.md），供人工抽样复核。
+- 与评估器联动（v2）：评估器高错误率类别 → 引导优先审计该类知识。
