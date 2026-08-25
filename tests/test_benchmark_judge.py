@@ -35,3 +35,18 @@ def test_judge_nonstandard_output_treated_fail():
     llm = MockLLMClient([LLMMessage(role="assistant", content="不确定")])
     r = judge_patch(llm, "+a", "+b", _issue())
     assert r.verdict == "FAIL"
+
+
+def test_judge_pass_requires_word_boundary():
+    """'PASSED' 等前缀不误判为 PASS（词边界匹配）。"""
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASSED 但语义不同")])
+    r = judge_patch(llm, "+a", "+b", _issue())
+    assert r.verdict == "FAIL"
+
+
+def test_judge_empty_gold_skips():
+    """gold patch 为空 → SKIP。"""
+    llm = MockLLMClient([])
+    r = judge_patch(llm, "+a", "", _issue())
+    assert r.verdict == "SKIP"
+    assert "gold patch 为空" in r.reason
