@@ -212,3 +212,25 @@
 - 真实演示 push 模式（需用户有写权限的测试仓库 + open issue）。
 - 双轴审查（requesting-code-review）→ 修复 → 全量回归。
 - 更新 `docs/roadmap.md` W5 状态 → 合并回 main → 删除 worktree（收尾流程）。
+
+## W5 真实 dry-run 演示：dbader/schedule#646（2026-08-25）
+
+### 演示记录（真实环境）
+
+- **环境**：gh 已登录（SilhouetteQA，scopes read:org/repo/workflow）；LLM=mimo-v2.5（opencode go，NO_PROXY 直连）；local 执行器；`--issue` 模式 dry-run。
+- **链路实测**：get_issue（真 gh api）→ 仓库已存在走 sync（fetch+reset 幂等生效）→ create_branch fix/issue-646 → Agent 自主分析 → 修改 `schedule/__init__.py`（`__repr__` 两处 `self.unit is not None and self.interval == 1` 守卫，与社区 PR #651/#652 方案一致）→ 自写验证脚本运行通过 → LLM Review **PASS** → dry-run 停在 review，远端零副作用。
+- **QA 复核**：修复逻辑与社区未合并 PR #652 一致（同方案），正确。
+
+### 能力边界实证发现（诚实记录）
+
+1. **迭代上限触达**：30 轮执行 + guard 结束（stopped_by_limit=True，final_answer 为「已达到上限」），Review 兜底判定 PASS；Agent 探索与自我验证轮次消耗大（写了 2 个独立验证脚本反复验证）——成本/耗时随复杂度快速上升。
+2. **顺手改动风险**：Agent 顺带改坏 `every()` docstring（`:meth:`every <Scheduler.every` 丢失 `>`），LLM Review 未发现——文档/格式回归是当前 Review 盲区。
+3. **验证脚本非正式测试**：未把回归测试写入仓库既有 test_schedule.py，而是留下 test_fix.py / test_fix_verification.py 两个独立脚本；push 模式 `git add -A` 会将其带进 PR（待改进：Review 提示词要求「测试并入现有套件」）。
+4. **宿主环境失真**：dbader/schedule 的 test_schedule.py 导入时无条件 `time.tzset()`（仅 Unix），Windows local 模式收集即崩——真实项目测试应跑 `KA_EXECUTOR=docker`（Linux 容器）；本次 Agent 未能跑仓库自带测试即属此因。
+5. **LLM 链路稳定性**：本机系统代理（127.0.0.1:7892 Clash）访问 opencode.ai 偶发 TLS 握手超时（两次 APITimeoutError 整单崩溃），已在 .env 加 `NO_PROXY=opencode.ai` 直连解决；graph 内 LLM 异常无重试仍会冒泡终止任务（后续可给 OpenAICompatClient 配 timeout/max_retries）。
+6. **仓库选择经验**：演示应选小型 Python 库（dbader/schedule 4 py 文件 2517 行、★12k、77+ 测试）——clone/探索/验证轻量；大仓库会放大第 1 条问题。
+
+### 遗留（本次演示后）
+
+- `workspace/dbader__schedule/`（演示克隆）与 `demo-schedule-646.log` 保留供人工检查；已加 `.gitignore` 规则 `workspace/*/` 不污染状态。
+- 用户将用自有项目复测（含潜在 push 模式）；第 2/3/5 项改进建议待用户测试后择机实施。

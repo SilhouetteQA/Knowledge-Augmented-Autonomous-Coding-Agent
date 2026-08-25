@@ -41,3 +41,6 @@ venv/
 
 # Git worktrees（窗口任务制工作区）
 .worktrees/
+
+# 演示克隆仓库（Issue 模式产物，不入库）
+workspace/*/
