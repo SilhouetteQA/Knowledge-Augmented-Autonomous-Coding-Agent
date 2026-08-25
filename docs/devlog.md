@@ -185,6 +185,25 @@
 
 - W5（GitHub Issue Agent）：worktree `.worktrees/w5-github-issue`（分支 `feature/w5-github-issue`，计划已入库）执行规划 7 大任务，目标完成 GitHub Issue → PR 全链路闭环（MVP 交付）。
 
+## 模型依赖统一迁移（2026-08-25）
+
+### 完成内容
+
+- **现状**：W1-W2 沿用 `opencode_go_api` / `OPENCODE_GO_BASE_URL` / `OPENCODE_GO_MODEL`（端点 `https://opencode.ai/zen/go/v1`），W3-W4 期间代码与文档漂移为火山引擎 Ark（`arkcode_api` / `ARKCODE_BASE_URL` / `ARKCODE_MODEL`，模型 `deepseek-v4-flash-ga-260731`）；两套配置并存造成混乱。
+- **决策**：所有模型依赖统一回到 **opencode_go_api**（用户级环境变量，端点 `https://opencode.ai/zen/go/v1`），模型定为 **`mimo-v2.5`**（小米 Mimo v2.5），废弃 arkcode 遗留配置。
+- **模型 ID 修正（重要）**：端点实测确认 `mimo_v2.5`（下划线）返回 `ModelError: Model mimo_v2.5 is not supported`；端点 `/zen/go/v1/models` 列表中该模型的标准 ID 为 **`mimo-v2.5`**（连字符），`mimo-v2.5` 实测连通成功。代码/配置统一使用 `mimo-v2.5`。
+- **变更范围**（主 worktree + W5 worktree 同步）：
+  - `agent/llm.py`：`OpenAICompatClient` 环境变量与默认值改为 `opencode_go_api` / `OPENCODE_GO_BASE_URL=https://opencode.ai/zen/go/v1` / `OPENCODE_GO_MODEL=mimo-v2.5`，docstring 同步。
+  - `tests/test_llm.py`：断言同步（env 名、base_url、model=mimo-v2.5）。
+  - `.env.example` / `readme.md` 快速开始同步。
+  - `.env`（本地，不入库）：重写为 `opencode_go_api` + base_url + `mimo-v2.5`。
+
+### 关键决策与经验
+
+- 双快捷键只保留一个真实入口，避免「改代码忘了改 .env / 改了 .env 忘了改代码」的隐性分歧；历史 spec/plan 保留原样（记录性质，不追溯改写）。
+- 模型由 `deepseek-v4-flash` 切换为用户指定的 `mimo-v2.5`（端点列表另有 `mimo-v2.5-pro`，本次按用户要求取 `mimo-v2.5`）。
+- 待办：W5 端到端真实演示前需实测 `mimo-v2.5` 在 `https://opencode.ai/zen/go/v1` 的功能调用（tool call）表现；若该模型不支持 tool calling（可试 `mimo-v2.5-pro`），需在本日志回溯记录并调整。
+
 ## W5 GitHub Issue Agent 实施进行中（2026-08-25）
 
 ### 完成内容
