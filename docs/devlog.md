@@ -340,3 +340,32 @@
 - Langfuse UI 复核：数据层确认落库（events_core）；v4 面板为 SPA，未做 UI 截图级验证——可在 http://localhost:3000（项目 arknights-wiki-main，trace `aa9fe241…` / `f658d5ee…`）人工复核。
 - `benchmark/runner.py` 单价表 `MODEL_PRICE_USD_PER_1K` 为空 → 成本列恒 0（待提供模型单价后填入）。
 - domain 类案例缺 1 例（五类未全）；知识抽查（--correct）可作为知识质量指标数据源并入后续对比。
+
+## W6 真实验收二次运行——克隆链路修复后（2026-08-26）
+
+### 控制器修复（git/网络层）
+
+- 根因补充：本机网络对 github.com 主站 443 做 SNI 阻断（Connection reset），但 api.github.com / codeload.github.com / 镜像 ghfast.top 可达；且 git 全局残留 `http.proxy=http://127.0.0.1:7892`（W5 时代 Clash，已不在）。
+- 控制器已执行：`git config --global --unset http.proxy`、`--unset https.proxy`（清除死代理）+ `git config --global url."https://ghfast.top/https://github.com/".insteadOf "https://github.com/"`（github 统一走镜像重写）。
+
+### 本会话补一发：schannel → OpenSSL 后端
+
+- 经镜像重写后，本会话 git 仍失败于 `schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`——git 的 Windows schannel 后端在会话沙箱内取不到 TLS 凭据（CryptoAPI/凭据库受限）。
+- 解法（不开新的部署文件、不碰 .env）：`http.sslBackend=openssl`（Git for Windows 自带 OpenSSL，不经 Windows 证书库）——经 git 官方环境注入机制 `GIT_CONFIG_COUNT=1 / GIT_CONFIG_KEY_0=http.sslBackend / GIT_CONFIG_VALUE_0=openssl` 传给 gh 派生的 git（沙箱拒绝写 `~/.gitconfig`，故不能 `git config --global`；控制器环境无此限制则直接全局配置即可）。
+- 验证：`gh repo clone dbader/schedule` 全量克隆成功（HEAD `82a43db`，与 issue #646 引用 commit 一致）。
+
+### 二次运行（run `20260826-004155`，docker 执行器）
+
+| case_id | 类别 | 状态 | resolution | 本次错误 |
+|---------|------|------|-----------|----------|
+| schedule-602 | test | error | False | 克隆成功 → 沙箱镜像构建失败 |
+| schedule-608 | bug | error | False | 同上 |
+| schedule-622 | refactor | error | False | 同上 |
+| schedule-646 | bug | error | False | 同上 |
+| schedule-99 | feature | error | False | 同上 |
+
+- **克隆链路修复确认**：5 case 全部通过镜像克隆成功（首 case 全量 clone、其余 sync fetch），错误点从"克隆失败"迁移到"沙箱阶段"；零 LLM token 消耗（iteration=0，judge SKIP）。
+- **剩余硬边界**：docker 引擎 npipe（`\\.\pipe\dockerDesktopLinuxEngine`）仍被会话沙箱拒绝（permission denied）→ `docker image inspect` 失败触发镜像构建 → `C:\Users\Silhouette\.docker\buildx\.lock` 文件访问再次被拒（workspace 外）→ 5 case 均 error。此为会话沙箱 named-pipe/文件边界（审批禁用、无法升级），非代码缺陷。
+- **local 回退弃用**：5 case 全部 must_pass `test_schedule.py`（Windows 宿主 tzset 崩溃），local 执行器跑不出有效 resolution，无信号价值，不复跑（W5 已实证 Agent 可解 #646）。
+- **结论**：带真实 resolution 的全量评测须在非沙箱环境（控制器环境）执行：docker daemon 可达 + git 镜像生效即可跑 `$env:KA_EXECUTOR="docker"; python main.py --benchmark --cases benchmark/cases --benchmark-out output/benchmark --executor docker --workspace workspace`（若该环境 git 无需 sslBackend 注入可忽略 GIT_CONFIG_*）。schedule-646 resolution 锚点待该运行复核。
+- 证据留存：`output/benchmark/20260826-002247`（run 1：全克隆失败）与 `20260826-004155`（run 2：克隆成功、沙箱阶段失败），均已 gitignore 不入库。
