@@ -8,6 +8,7 @@ from benchmark.judge import judge_patch
 from benchmark.loader import BenchmarkCase
 from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
                               current_metadata, save_json, save_markdown)
+from tools.docker_sandbox import sandbox_executor
 from tools.shell_tools import TestResult, run_tests
 from tools.tracing import traced
 
@@ -31,14 +32,19 @@ def _cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
 
 
 def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
-    """must_pass 全部通过（failed==0 且 error==0 且 total>0）才 True。"""
-    for p in case.must_pass:
-        res = run_tests(path=p, workspace_root=repo_dir)
-        if isinstance(res, TestResult):
-            if res.failed != 0 or res.error != 0 or res.total <= 0:
+    """must_pass 全部通过（failed==0 且 error==0 且 total>0）才 True。
+
+    判定阶段的测试运行包在 sandbox_executor 上下文内：docker 执行器下
+    一个 case 一个沙箱（Agent 工作沙箱已销毁，判定阶段独立沙箱）。
+    """
+    with sandbox_executor(repo_dir):
+        for p in case.must_pass:
+            res = run_tests(path=p, workspace_root=repo_dir)
+            if isinstance(res, TestResult):
+                if res.failed != 0 or res.error != 0 or res.total <= 0:
+                    return False
+            else:
                 return False
-        else:
-            return False
     return True
 
 

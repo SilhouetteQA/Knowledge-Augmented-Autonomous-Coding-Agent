@@ -80,6 +80,65 @@ def test_judge_skip_when_diff_empty(tmp_path, monkeypatch):
     assert report.results[0].judge_verdict == "SKIP"
 
 
+def test_test_pass_wraps_run_tests_in_sandbox(monkeypatch):
+    """docker 模式下判定阶段 run_tests 必须包在 sandbox_executor 上下文内（W3 沙箱机制）。"""
+    import contextlib
+
+    inside: list[bool] = []
+    calls: list[tuple[str, str, bool]] = []
+
+    @contextlib.contextmanager
+    def fake_sandbox_executor(repo_dir):
+        inside.append(True)
+        try:
+            yield None
+        finally:
+            inside.pop()
+
+    def fake_run_tests(path, workspace_root):
+        calls.append((path, workspace_root, bool(inside)))
+        return TestResult(1, 0, 0, 1, 0.1, [])
+
+    monkeypatch.setattr(runner_mod, "sandbox_executor", fake_sandbox_executor,
+                        raising=False)
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    case = _case(must_pass=["test_a.py", "test_b.py"])
+    assert runner_mod._test_pass(case, "/repo") is True
+    assert calls == [("test_a.py", "/repo", True), ("test_b.py", "/repo", True)]
+
+
+def test_test_pass_verdicts_and_local_mode_unchanged(monkeypatch):
+    """判定语义 + local 模式（默认）行为不变：判定始终经 sandbox_executor 包装。"""
+    import contextlib
+
+    sandbox_calls: list[str] = []
+    monkeypatch.setattr(runner_mod, "sandbox_executor",
+                        lambda repo_dir: contextlib.nullcontext(
+                            sandbox_calls.append(repo_dir)),
+                        raising=False)
+
+    ok = TestResult(1, 0, 0, 1, 0.1, [])
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: ok)
+    assert runner_mod._test_pass(_case(must_pass=["a.py", "b.py"]), "/repo") is True
+
+    failed = TestResult(1, 2, 0, 3, 0.1, [])
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: failed)
+    assert runner_mod._test_pass(_case(), "/repo") is False
+
+    errored = TestResult(0, 0, 1, 1, 0.1, [])
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: errored)
+    assert runner_mod._test_pass(_case(), "/repo") is False
+
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: "boom")
+    assert runner_mod._test_pass(_case(), "/repo") is False
+
+    assert sandbox_calls == ["/repo"] * 4
+
+
 def test_case_error_continues(tmp_path, monkeypatch):
     """单 case 异常 → status=error，其余继续。"""
     calls = []
