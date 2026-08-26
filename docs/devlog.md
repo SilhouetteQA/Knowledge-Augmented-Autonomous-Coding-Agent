@@ -1,4 +1,4 @@
-﻿# Devlog — 开发日志
+# Devlog — 开发日志
 
 本文件记录项目的开发过程、架构决策、关键指标与遗留问题。新会话进入前先读本文件与 `readme.md`、`docs/roadmap.md`。
 
@@ -381,3 +381,50 @@
   - 结论：0%→20% 的提升确认修复生效（test_pass 从恒 False 变为真实判定）；剩余 case 的 test=False 主因容器依赖缺失，**不是 Agent 能力结论**（Judge 等价性已确认修复正确）。
   - **改进建议（记录，不阻塞）**：① 沙箱镜像预装 pytz（schedule 依赖）或 case 级 must_pass 前置 pip install；② 评测先跑原仓库基线测试确认环境完整再判定；③ test_pass=False 时报告补失败摘要（当前只记 bool）。
 - Langfuse 落库持续验证（本轮 run 的 trace 同前 events_core 通道）。
+
+## W7 Observability 实施与收尾（2026-08-26）
+
+### 规格/计划
+
+- `docs/specs/2026-08-25-w7-observability.md`（用户批准）+ `docs/plans/2026-08-25-w7-observability.md`（6 任务 TDD：节点埋点 / 工具测试埋点 / retry 指标 / 导出报告 / CLI / 真实验收）。
+
+### 完成内容（Task 1-5 已实施并审查通过）
+
+- **Task 1 graph 七节点埋点**（`agent/graph.py`）：`graph.plan`(span) / `graph.decide`(generation) / `graph.execute`(span) / `graph.verify`(span) / `graph.reflect`(generation) / `graph.finalize`(span) + 边路径 `graph.finalize_limited`；graph 模式工具调用包 `tool.execute`(span，含工具名/耗时 metadata)。
+- **Task 2 工具/测试埋点**（`tools/shell_tools.py` / `agent/loop.py`）：`test.run`(span，metadata：passed/failed/error/total/duration) + loop 模式 `tool.execute`(span)。
+- **Task 3 retry 指标**（`agent/issue.py`）：`issue.run`(agent) 根 span metadata 记录 `verify_rounds` / `retry_count`；重试语义 = retry 观测本身计 1 次 + 根 span retry_count 累加（汇总报告统一入 retries 字段）。
+- **Task 4-5 trace 导出**（`tools/report_trace.py` + `main.py`）：`--trace-report <trace_id> --trace-out output/trace` 独立模式；数据源优先 SDK 读口，**events_only 部署下经典读接口不可用 → 回退 ClickHouse 直查 `events_core`（按 trace_id 过滤、usage/cost/metadata 并行数组解包、is_app_root 取 task 名）**；产出 report.json（TraceSummary 全字段）+ report.md（步骤表/测试结果/错误）；exit 前统一 flush。
+
+### 真实验收（Task 6，本会话）
+
+- **导出链路（真实 W6 trace）**：`python main.py --trace-report 4d889e965df2f4ec1ad7be0f6d790b6c --trace-out output/trace_w6` —— report.json + report.md 产出；**耗时 5021.2s、tokens 21077140/180602、steps 257 条 = benchmark.run ×1 + issue.run ×5 + llm.chat ×251**（与 ClickHouse 计数逐项一致；老 trace 无 W7 节点属预期，W6 数据只有 llm.chat/issue.run/benchmark.run）。SDK 未注入三键 → 自动回退 ClickHouse 路径，回退链路实测生效。
+- **新节点链路（纯 SDK 冒烟）**：三键运行时映射注入（兄弟项目 .env 的 LANGFUSE_INIT_PROJECT_PUBLIC_KEY/SECRET_KEY → LANGFUSE_PUBLIC_KEY/SECRET_KEY + BASE_URL=http://localhost:3000），KA_TRACING 未禁；用 `tools.tracing.traced` 复刻层级跑冒烟 → 新 trace **`ec5b575f36b48b083e11f02fda7ba0c5`**（8 事件）全部门控 span 落库：
+
+| span | type | parent | 关键 metadata |
+|------|------|--------|---------------|
+| issue.run | AGENT | - | verify_rounds=2 / retry_count=1 |
+| graph.plan | SPAN | issue.run | - |
+| graph.decide | GENERATION | issue.run | model=gpt-4o-mini |
+| graph.execute | SPAN | issue.run | - |
+| tool.execute | SPAN | graph.execute | tool=run_command / duration_s=0.02 |
+| test.run | SPAN | graph.execute | passed=5 / failed=0 / error=1 / total=6 |
+| graph.reflect | GENERATION | graph.execute | model=gpt-4o-mini |
+| graph.finalize | SPAN | graph.execute | - |
+
+  - decide/reflect 的 usage（input 120/200、output 60/90）与 total_cost（0.0002/0.0003 USD）落库。
+  - 该新 trace 再跑 `--trace-report` → 报告 steps 含全部 8 节点 + Tool Calls: 1 + Retries: 1 + 测试结果 5 passed/0 failed/1 error —— **全链路 Trace 与成本报告导出验收达成**。
+- **OTLP 证据（验收标准 3）**：上述新 trace 每事件 metadata 均含 `resourceAttributes.telemetry.sdk.name=opentelemetry`、`telemetry.sdk.version=1.44.0`、`scope.name=langfuse-sdk`、`scope.version=4.14.4` —— Langfuse SDK 4.14.4 观测经 OTel 上报，ClickHouse events_core / UI 可见即 OTLP 链路贯通证明；未引入新包。
+- **全量回归**：`pytest tests/ -q` = **227 passed / 4 skipped / 1 failed in 177.78s**；唯一失败 `test_docker_integration::test_clone_repo_when_empty`（控制器预声明的已知环境性项：容器内 github.com TLS 握手被拒 GnuTLS -110；docker 集成 3 项跳过）—— 非 W7 变更导致。
+
+### 关键决策
+
+- **数据真实层 = events_core 直查**：v4 events_only 下经典读接口不可用（W6 已证），`--trace-report` 以 ClickHouse events_core 为回退源并作为实测主路径；SDK 读口保留为先尝试项（若部署升级即可用）。
+- **凭据零落盘**：ClickHouse 口令与 SDK 三键均运行时环境注入（CLICKHOUSE_PASSWORD / 兄弟项目 .env 映射），不写入任何文件；评测/导出产物（output/）gitignore。
+- **导出与埋点分离验证**：老 trace 验证导出链路本身、新 SDK 冒烟验证 W7 节点 span 名落库——两件事分开，避免"老数据无新节点"误判。
+
+### 遗留（不阻塞）
+
+- `benchmark/runner.py` 单价表 `MODEL_PRICE_USD_PER_1K` 仍为空（成本列恒 0；本验证中 generation cost 来自注入的计算值，真实 run 成本待单价填表）。
+- Langfuse v4 面板 UI 层级复核仍待人工（数据层 events_core 已证明；http://localhost:3000 可查 trace `ec5b575f…` / `4d889e…`）。
+- 容器内 github TLS（test_clone_repo_when_empty）为镜像/网络环境项，如后续要跑 clone 型 docker 集成需在镜像或网络层处理。
+- 合并由控制器执行（本会话不 push / 不建 PR），分支 `feature/w7-observability` commits 见会话任务报告。

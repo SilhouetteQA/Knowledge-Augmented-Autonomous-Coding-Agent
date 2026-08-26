@@ -11,10 +11,11 @@ import subprocess
 import sys
 import time
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Protocol
 
 from tools.file_tools import ToolError, resolve_workspace_path
+from tools.tracing import traced
 
 # 单次命令输出上限（防止大输出撑爆 LLM 上下文）
 MAX_COMMAND_OUTPUT = 100 * 1024
@@ -251,6 +252,13 @@ class TestResult:
     failures: list[TestFailure]
 
 
+def _test_metadata(args, kwargs, result) -> dict:
+    """test.run span metadata：TestResult 摘要（asdict）或错误信息。"""
+    if isinstance(result, TestResult):
+        return asdict(result)
+    return {"error": str(result)}
+
+
 def _parse_pytest_output(out: str) -> TestResult:
     """解析 `pytest -q --tb=no` 输出：计数行 + FAILED 摘要行。"""
     passed = failed = error = 0
@@ -278,6 +286,7 @@ def _parse_pytest_output(out: str) -> TestResult:
     )
 
 
+@traced("test.run", as_type="span", metadata_fn=_test_metadata)
 def run_tests(path: str | None = None, workspace_root: str | None = None) -> TestResult | ToolError:
     """在 workspace 根运行 pytest；path 可指定子路径（相对 workspace 根）。"""
     executor = get_executor()

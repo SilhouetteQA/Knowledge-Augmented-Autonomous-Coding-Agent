@@ -153,3 +153,36 @@ def test_compare_flag_parses():
     parser = main_mod.build_parser()
     args = parser.parse_args(["--compare", "a,b"])
     assert args.compare == "a,b"
+
+
+def test_trace_report_cli_reads_args(monkeypatch):
+    """--trace-report 模式解析并调用 fetch_trace/save_trace_report（Fake）。"""
+    import main as main_mod
+    captured = {}
+    class FakeSummary:
+        trace_id = "abc123"
+        task = "修复 bug"
+        total_latency_s = 10.0
+        tool_calls = 3
+        tokens_prompt = 100
+        tokens_completion = 50
+        cost_usd = 0.0
+        errors = []
+        retries = 0
+        test_results = []
+        steps = []
+    monkeypatch.setattr(main_mod, "fetch_trace",
+                        lambda tid, **kw: captured.update(tid=tid) or FakeSummary())
+    monkeypatch.setattr(main_mod, "save_trace_report",
+                        lambda s, out: captured.update(out=out) or "out/report.md")
+    rc = main_mod._run_trace_report_mode(
+        type("A", (), {"trace_report": "abc123", "trace_out": "output/trace"})())
+    assert rc == 0
+    assert captured["tid"] == "abc123"
+
+
+def test_trace_report_flag_parses():
+    import main as main_mod
+    parser = main_mod.build_parser()
+    args = parser.parse_args(["--trace-report", "abc123", "--trace-out", "x"])
+    assert args.trace_report == "abc123" and args.trace_out == "x"
