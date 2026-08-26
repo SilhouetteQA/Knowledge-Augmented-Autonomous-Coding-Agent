@@ -231,3 +231,40 @@ def test_review_fail_retry_sets_retry_count_one(tmp_path, monkeypatch):
                      workspace_root=_make_workdir(tmp_path))
     result = run_issue_agent(task, MockLLMClient(script))
     assert result.retry_count == 1        # 首轮 FAIL 即发生一次重试
+
+
+# --- W7 Task 4: review 环节埋点（_review_diff generation span + 结论首行 metadata） ---
+
+
+def test_review_diff_traced_registered_as_generation(monkeypatch):
+    """_review_diff 模块级注册 traced("review") generation span，且 metadata_fn 已接线。"""
+    registry = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        registry.append((name, as_type, metadata_fn))
+        return lambda f: f
+
+    _probe_issue_module(monkeypatch, fake_traced)
+    assert any(n == "review" and t == "generation" and m is not None
+               for n, t, m in registry)
+
+
+def test_review_metadata_records_first_line():
+    """_review_metadata 记录结论首行（PASS/FAIL），空文本首行为空串。"""
+    from agent.issue import _review_metadata
+
+    class FakeResult:
+        """模拟 review 返回文本（str(result) 即结论）。"""
+
+        def __init__(self, text):
+            self.text = text
+
+        def __str__(self):
+            return self.text
+
+    assert _review_metadata((), {}, FakeResult("PASS 修复点一致。")) == \
+        {"first_line": "PASS 修复点一致。"}
+    assert _review_metadata((), {}, FakeResult("")) == {"first_line": ""}
+    # 首行截断 80 字符（metadata 限长）
+    long_line = "PASS " + "x" * 100
+    assert _review_metadata((), {}, long_line) == {"first_line": ("PASS " + "x" * 75)[:80]}

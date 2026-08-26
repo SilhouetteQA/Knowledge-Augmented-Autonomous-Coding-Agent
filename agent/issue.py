@@ -64,6 +64,14 @@ def _repo_dir_name(repository: str) -> str:
     return repository.replace("/", "__")
 
 
+def _review_metadata(args, kwargs, result) -> dict:
+    """review span metadata：记录结论首行（PASS/FAIL）。"""
+    text = str(result or "").strip()
+    first = (text.splitlines() or [""])[0]
+    return {"first_line": first[:80]}
+
+
+@traced("review", as_type="generation", metadata_fn=_review_metadata)
 def _review_diff(llm: LLMClient, diff: str, issue_text: str) -> str:
     """LLM 审查 diff，返回结论文本（首行 PASS/FAIL + 中文要点）。"""
     if not diff.strip():
