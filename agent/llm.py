@@ -7,6 +7,12 @@
 - deepseek：deepseek_api（Key）、DEEPSEEK_BASE_URL（端点，默认
   https://api.deepseek.com）、DEEPSEEK_MODEL（模型，默认 deepseek-v4-flash，
   端点实测模型列表：deepseek-v4-flash / deepseek-v4-flash-vision-exp / deepseek-v4-pro）。
+
+请求超时与重试（P1-4，优先 SDK 原生参数，不自造重试循环）：
+- KA_LLM_TIMEOUT_S：请求超时秒数（float，非法值回退 120.0；未设则不传，
+  使用 SDK 默认超时）；
+- KA_LLM_MAX_RETRIES：最多重试次数（int，非法值回退 2；未设则不传，
+  使用 SDK 默认重试次数）。
 """
 import json
 import os
@@ -34,6 +40,28 @@ LLM_PROVIDERS: dict[str, dict[str, str]] = {
         "model_default": "deepseek-v4-flash",
     },
 }
+
+
+def _env_timeout() -> float | None:
+    """读取 KA_LLM_TIMEOUT_S：float 解析，非法值回退 120.0，未设返回 None。"""
+    raw = os.environ.get("KA_LLM_TIMEOUT_S")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _env_max_retries() -> int | None:
+    """读取 KA_LLM_MAX_RETRIES：int 解析，非法值回退 2，未设返回 None。"""
+    raw = os.environ.get("KA_LLM_MAX_RETRIES")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 2
 
 
 @dataclass
@@ -68,10 +96,18 @@ class LLMClient(Protocol):
 
 
 class OpenAICompatClient:
-    """OpenAI 兼容实现（按 KA_LLM_PROVIDER 选择供应商与模型）。"""
+    """OpenAI 兼容实现（按 KA_LLM_PROVIDER 选择供应商与模型）。
+
+    timeout / max_retries 传入 openai.OpenAI 构造（SDK 原生超时与重试，
+    不在此自造重试循环）。两者为 None 时分别从 KA_LLM_TIMEOUT_S /
+    KA_LLM_MAX_RETRIES 读取；仍未设则不在构造中传该参数（SDK 默认）。
+    注意：openai SDK 不接受 max_retries=None（会抛 TypeError），
+    因此未解析到值时必须省略该参数而非传 None。
+    """
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None,
-                 model: str | None = None):
+                 model: str | None = None, timeout: float | None = None,
+                 max_retries: int | None = None):
         provider = os.environ.get("KA_LLM_PROVIDER", "opencode_go")
         conf = LLM_PROVIDERS.get(provider)
         if conf is None:
@@ -86,7 +122,16 @@ class OpenAICompatClient:
             raise ValueError(
                 f"缺少 API Key：请设置环境变量 {conf['key_env']}"
                 f"（供应商 {provider}）")
-        self._client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
+        if timeout is None:
+            timeout = _env_timeout()
+        if max_retries is None:
+            max_retries = _env_max_retries()
+        client_kwargs: dict = {"api_key": self.api_key, "base_url": self.base_url}
+        if timeout is not None:
+            client_kwargs["timeout"] = timeout
+        if max_retries is not None:
+            client_kwargs["max_retries"] = max_retries
+        self._client = openai.OpenAI(**client_kwargs)
         self.tokens_total: dict[str, int] = {"prompt": 0, "completion": 0}
 
     @traced("llm.chat", as_type="generation")

@@ -143,3 +143,89 @@ def test_mock_tokens_total_zero():
     from agent.llm import MockLLMClient
     m = MockLLMClient([])
     assert m.tokens_total == {"prompt": 0, "completion": 0}
+
+
+# ---- E5: timeout / max_retries 构造参数透传（P1-4） ----
+
+@pytest.fixture
+def capture_openai_kwargs(monkeypatch):
+    """替身 openai.OpenAI，捕获构造 kwargs（seam 与 test_tokens_total_accumulates 一致）。"""
+    captured: dict = {}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeClient)
+    return captured
+
+
+def _clear_timeout_env(monkeypatch):
+    monkeypatch.delenv("KA_LLM_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("KA_LLM_MAX_RETRIES", raising=False)
+
+
+def test_timeout_env_parsed_and_passed(monkeypatch, capture_openai_kwargs):
+    """KA_LLM_TIMEOUT_S 为合法浮点时解析并透传给 openai.OpenAI。"""
+    _clear_timeout_env(monkeypatch)
+    monkeypatch.setenv("KA_LLM_TIMEOUT_S", "45.5")
+    OpenAICompatClient(api_key="k")
+    assert capture_openai_kwargs["timeout"] == 45.5
+
+
+def test_timeout_invalid_env_falls_back_to_120(monkeypatch, capture_openai_kwargs):
+    """KA_LLM_TIMEOUT_S 非法时回退默认 120.0。"""
+    _clear_timeout_env(monkeypatch)
+    monkeypatch.setenv("KA_LLM_TIMEOUT_S", "abc")
+    OpenAICompatClient(api_key="k")
+    assert capture_openai_kwargs["timeout"] == 120.0
+
+
+def test_timeout_unset_env_omitted(monkeypatch, capture_openai_kwargs):
+    """未设 KA_LLM_TIMEOUT_S 时不传 timeout（交给 SDK 默认）。"""
+    _clear_timeout_env(monkeypatch)
+    OpenAICompatClient(api_key="k")
+    assert "timeout" not in capture_openai_kwargs
+
+
+def test_max_retries_env_parsed_and_passed(monkeypatch, capture_openai_kwargs):
+    """KA_LLM_MAX_RETRIES 为合法整数时解析并透传。"""
+    _clear_timeout_env(monkeypatch)
+    monkeypatch.setenv("KA_LLM_MAX_RETRIES", "5")
+    OpenAICompatClient(api_key="k")
+    assert capture_openai_kwargs["max_retries"] == 5
+
+
+def test_max_retries_invalid_env_falls_back_to_2(monkeypatch, capture_openai_kwargs):
+    """KA_LLM_MAX_RETRIES 非法时回退默认 2。"""
+    _clear_timeout_env(monkeypatch)
+    monkeypatch.setenv("KA_LLM_MAX_RETRIES", "xyz")
+    OpenAICompatClient(api_key="k")
+    assert capture_openai_kwargs["max_retries"] == 2
+
+
+def test_max_retries_unset_env_omitted(monkeypatch, capture_openai_kwargs):
+    """未设 KA_LLM_MAX_RETRIES 时不传 max_retries（交给 SDK 默认）。"""
+    _clear_timeout_env(monkeypatch)
+    OpenAICompatClient(api_key="k")
+    assert "max_retries" not in capture_openai_kwargs
+
+
+def test_explicit_timeout_max_retries_override_env(monkeypatch, capture_openai_kwargs):
+    """显式传入 timeout/max_retries 优先于环境变量。"""
+    _clear_timeout_env(monkeypatch)
+    monkeypatch.setenv("KA_LLM_TIMEOUT_S", "10")
+    monkeypatch.setenv("KA_LLM_MAX_RETRIES", "1")
+    OpenAICompatClient(api_key="k", timeout=30.0, max_retries=3)
+    assert capture_openai_kwargs["timeout"] == 30.0
+    assert capture_openai_kwargs["max_retries"] == 3
+
+
+def test_no_env_keeps_previous_construction_kwargs(monkeypatch, capture_openai_kwargs):
+    """无 KA_LLM_TIMEOUT_S/KA_LLM_MAX_RETRIES 时构造 kwargs 与旧行为完全等价。"""
+    _clear_timeout_env(monkeypatch)
+    OpenAICompatClient(api_key="k", base_url="http://localhost:1")
+    assert capture_openai_kwargs == {
+        "api_key": "k",
+        "base_url": "http://localhost:1",
+    }
