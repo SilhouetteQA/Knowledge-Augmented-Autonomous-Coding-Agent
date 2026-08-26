@@ -275,3 +275,72 @@ def test_graph_nodes_are_traced(monkeypatch):
     types = dict(wrapped)
     assert types["graph.decide"] == "generation"
     assert types["graph.reflect"] == "generation"
+
+
+# --- W7 Task 2: 图内工具调用 span 埋点（tool.execute） ---
+
+
+def _load_probe(name, rel_path, fake_traced, monkeypatch):
+    """以独立模块名重放源码顶层，捕获模块级 traced 装饰注册（避免 reload 副作用）。"""
+    import importlib.util
+    import pathlib
+    import sys
+    import tools.tracing as tracing
+    monkeypatch.setattr(tracing, "traced", fake_traced)
+    src = pathlib.Path(__file__).resolve().parent.parent / rel_path
+    spec = importlib.util.spec_from_file_location(name, src)
+    mod = importlib.util.module_from_spec(spec)
+    # dataclass 解析字符串注解需要模块在 sys.modules 中可见，执行期间注册、完毕移除
+    sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return mod
+
+
+def test_graph_dispatch_traced_registered(monkeypatch):
+    """_graph_dispatch 模块级注册 traced("tool.execute") span，且 metadata_fn 已接线。"""
+    registry = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        registry.append((name, as_type, metadata_fn))
+        return lambda f: f
+
+    _load_probe("agent.graph_probe", "agent/graph.py", fake_traced, monkeypatch)
+    assert any(n == "tool.execute" and t == "span" and m is not None
+               for n, t, m in registry)
+
+
+def test_graph_tool_metadata_records_name_and_args():
+    """_graph_tool_metadata 记录工具名与参数摘要。"""
+    from agent.graph import _graph_tool_metadata
+    meta = _graph_tool_metadata(
+        ("run_command", {"command": "echo hi"}, None), {}, None)
+    assert meta == {"tool": "run_command", "args": "{'command': 'echo hi'}"}
+    assert _graph_tool_metadata((), {}, None) == {"tool": "", "args": ""}
+
+
+def test_graph_tool_metadata_truncates_long_args():
+    """_graph_tool_metadata 参数摘要截断 500 字符。"""
+    from agent.graph import _graph_tool_metadata
+    long = "x" * 600
+    meta = _graph_tool_metadata(("run_command", {"command": long}, None), {}, None)
+    assert meta["tool"] == "run_command"
+    assert len(meta["args"]) == 500
+    assert meta["args"].startswith("{'command': '")
+    assert meta["args"].endswith("x")
+
+
+def test_graph_dispatch_disabled_passthrough(tmp_path):
+    """关闭态直通：_graph_dispatch 行为不变（回退 W1 文件工具路径）。"""
+    from agent.graph import _graph_dispatch
+    from tools.file_tools import FileContent, ToolError
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
+    ok = _graph_dispatch("read_file", {"path": "a.py"}, str(ws))
+    assert isinstance(ok, FileContent)
+    assert ok.path == "a.py"
+    err = _graph_dispatch("no_such_tool", {}, str(ws))
+    assert isinstance(err, ToolError)

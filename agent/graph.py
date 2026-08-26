@@ -135,6 +135,14 @@ def _graph_tools() -> list[ToolSpec]:
     ]
 
 
+def _graph_tool_metadata(args, kwargs, result) -> dict:
+    """图内工具 span metadata：记录工具名与参数摘要（截断 500 字符）。"""
+    tool = args[0] if args else ""
+    summary = str(args[1])[:500] if len(args) > 1 else ""
+    return {"tool": tool, "args": summary}
+
+
+@traced("tool.execute", as_type="span", metadata_fn=_graph_tool_metadata)
 def _graph_dispatch(name: str, args: dict, workspace_root: str | None,
                     code_graph: CodeGraph | None = None,
                     knowledge_client: KnowledgeClient | None = None) -> object:

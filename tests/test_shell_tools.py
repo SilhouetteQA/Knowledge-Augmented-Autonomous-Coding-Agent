@@ -204,3 +204,70 @@ def test_run_command_oom_field_default(tmp_path):
     r = run_command("python -c \"print('hi')\"", workspace_root=str(ws))
     assert not isinstance(r, ToolError)
     assert r.oom is False
+
+
+# --- W7 Task 2: 测试运行 span 埋点（test.run） ---
+
+
+def _load_probe(name, rel_path, fake_traced, monkeypatch):
+    """以独立模块名重放源码顶层，捕获模块级 traced 装饰注册（避免 reload 副作用）。"""
+    import importlib.util
+    import pathlib
+    import sys
+    import tools.tracing as tracing
+    monkeypatch.setattr(tracing, "traced", fake_traced)
+    src = pathlib.Path(__file__).resolve().parent.parent / rel_path
+    spec = importlib.util.spec_from_file_location(name, src)
+    mod = importlib.util.module_from_spec(spec)
+    # dataclass 解析字符串注解需要模块在 sys.modules 中可见，执行期间注册、完毕移除
+    sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return mod
+
+
+def test_run_tests_traced_registered(monkeypatch):
+    """run_tests 模块级注册 traced("test.run") span，且 metadata_fn 已接线。"""
+    registry = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        registry.append((name, as_type, metadata_fn))
+        return lambda f: f
+
+    _load_probe("tools.shell_tools_probe", "tools/shell_tools.py",
+                fake_traced, monkeypatch)
+    assert any(n == "test.run" and t == "span" and m is not None
+               for n, t, m in registry)
+
+
+def test_test_metadata_summarizes_result():
+    """_test_metadata 对 TestResult 返回 asdict 摘要（含 passed/failed/duration）。"""
+    from tools.shell_tools import TestFailure, TestResult, _test_metadata
+    tr = TestResult(passed=2, failed=1, error=0, total=3, duration=0.42,
+                    failures=[TestFailure(test="t.py::test_bad",
+                                          message="assert 1 == 2")])
+    meta = _test_metadata((None, "ws"), {}, tr)
+    assert meta == {
+        "passed": 2, "failed": 1, "error": 0, "total": 3, "duration": 0.42,
+        "failures": [{"test": "t.py::test_bad", "message": "assert 1 == 2"}],
+    }
+
+
+def test_test_metadata_error_branch():
+    """_test_metadata 非 TestResult（ToolError）摘要为 error 信息。"""
+    from tools.shell_tools import _test_metadata
+    err = ToolError("pytest 执行失败: boom")
+    meta = _test_metadata((None, "ws"), {}, err)
+    assert meta == {"error": "pytest 执行失败: boom"}
+
+
+def test_run_tests_disabled_passthrough(tmp_path):
+    """关闭态直通：run_tests 行为不变。"""
+    ws = _write_project(tmp_path, {
+        "test_ok.py": "def test_a():\n    assert 1 == 1\n",
+    })
+    r = run_tests(workspace_root=str(ws))
+    assert not isinstance(r, ToolError)
+    assert r.passed == 1

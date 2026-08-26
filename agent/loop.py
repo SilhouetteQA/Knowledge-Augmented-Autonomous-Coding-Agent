@@ -13,6 +13,7 @@ from tools.file_tools import (
     search_code,
     write_file,
 )
+from tools.tracing import traced
 
 # 系统提示词：约束工具使用范围与行为
 SYSTEM_PROMPT = (
@@ -111,6 +112,12 @@ def _build_tools() -> list[ToolSpec]:
     ]
 
 
+def _tool_metadata(args, kwargs, result) -> dict:
+    """工具 span metadata：记录工具名（W1 循环路径参数摘要可选，本处仅工具名）。"""
+    return {"tool": args[0] if args else ""}
+
+
+@traced("tool.execute", as_type="span", metadata_fn=_tool_metadata)
 def _dispatch(name: str, args: dict, workspace_root: str | None) -> object:
     """工具调用分发：返回成功数据或 ToolError。"""
     if name == "list_files":

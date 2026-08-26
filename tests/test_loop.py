@@ -66,3 +66,59 @@ def test_agent_stops_at_iteration_limit(tmp_path):
     assert result.stopped_by_limit is True
     assert result.iteration_count == 3
     assert len(result.steps) == 3
+
+
+# --- W7 Task 2: 工具调用 span 埋点（tool.execute） ---
+
+
+def _load_probe(name, rel_path, fake_traced, monkeypatch):
+    """以独立模块名重放源码顶层，捕获模块级 traced 装饰注册（避免 reload 副作用）。"""
+    import importlib.util
+    import pathlib
+    import sys
+    import tools.tracing as tracing
+    monkeypatch.setattr(tracing, "traced", fake_traced)
+    src = pathlib.Path(__file__).resolve().parent.parent / rel_path
+    spec = importlib.util.spec_from_file_location(name, src)
+    mod = importlib.util.module_from_spec(spec)
+    # dataclass 解析字符串注解需要模块在 sys.modules 中可见，执行期间注册、完毕移除
+    sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return mod
+
+
+def test_dispatch_traced_registered(monkeypatch):
+    """_dispatch 模块级注册 traced("tool.execute") span，且 metadata_fn 已接线。"""
+    registry = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        registry.append((name, as_type, metadata_fn))
+        return lambda f: f
+
+    _load_probe("agent.loop_probe", "agent/loop.py", fake_traced, monkeypatch)
+    assert any(n == "tool.execute" and t == "span" and m is not None
+               for n, t, m in registry)
+
+
+def test_tool_metadata_records_tool_name():
+    """_tool_metadata 以 args[0] 记录工具名；空 args 回退空串。"""
+    from agent.loop import _tool_metadata
+    assert _tool_metadata(("read_file", {"path": "a.py"}, None), {}, "ok") == {
+        "tool": "read_file"}
+    assert _tool_metadata((), {}, None) == {"tool": ""}
+
+
+def test_dispatch_disabled_passthrough(tmp_path):
+    """关闭态直通：_dispatch 行为不变（正常结果与 ToolError 均原样返回）。"""
+    from agent.loop import _dispatch
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
+    ok = _dispatch("read_file", {"path": "a.py"}, str(ws))
+    assert isinstance(ok, FileContent)
+    assert ok.path == "a.py"
+    err = _dispatch("no_such_tool", {}, str(ws))
+    assert isinstance(err, ToolError)
