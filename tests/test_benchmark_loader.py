@@ -80,6 +80,40 @@ def test_labels_as_string_raises(tmp_path):
         load_cases(str(tmp_path))
 
 
+def test_setup_commands_default_empty(tmp_path):
+    """无 setup_commands 字段 → 默认空列表。"""
+    _write_case(tmp_path, "bug", "schedule-646")
+    c = load_cases(str(tmp_path))[0]
+    assert c.setup_commands == []
+
+
+def test_setup_commands_loaded(tmp_path):
+    """合法字符串列表正常载入。"""
+    cmds = ["pip install -r requirements.txt", "python -m compileall ."]
+    _write_case(tmp_path, "bug", "schedule-646", setup_commands=cmds)
+    c = load_cases(str(tmp_path))[0]
+    assert c.setup_commands == cmds
+
+
+@pytest.mark.parametrize("bad", [
+    {"setup_commands": "pip install pytz"},   # 非列表
+    {"setup_commands": [None]},               # 元素非 str
+    {"setup_commands": ["ok", 42]},           # 部分元素非 str
+])
+def test_invalid_setup_commands_raises(tmp_path, bad):
+    _write_case(tmp_path, "bug", "x", **bad)
+    with pytest.raises(CaseError, match="setup_commands"):
+        load_cases(str(tmp_path))
+
+
+def test_invalid_setup_command_element_reports_index(tmp_path):
+    """非 str 元素报错须含下标，便于定位。"""
+    _write_case(tmp_path, "bug", "schedule-646",
+                setup_commands=["pip install pytz", 42])
+    with pytest.raises(CaseError, match=r"setup_commands\[1\]"):
+        load_cases(str(tmp_path))
+
+
 def test_real_cases_loaded():
     """真实基准案例库可全量加载（纯本地文件校验）。"""
     cases = load_cases("benchmark/cases")

@@ -10,7 +10,7 @@ from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
                               current_metadata, save_json, save_markdown)
 from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import ToolError
-from tools.shell_tools import TestResult, run_tests
+from tools.shell_tools import TestResult, run_command, run_tests
 from tools.tracing import traced
 
 # 模型单价表（每 1K token 的美元成本）；未知模型或空单价表 → cost_usd=0；CLI 摘要提示单价未知
@@ -63,6 +63,28 @@ def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
             else:
                 return False
     return True
+
+
+def _run_setup_commands(case: BenchmarkCase, repo_dir: str) -> None:
+    """逐条执行 case.setup_commands（Agent 产出 patch 已应用、must_pass 判定之前）。
+
+    评测语义（P0-1b）：环境依赖先装好再测，避免沙箱镜像缺库导致 test_pass 恒
+    False 的环境误伤。命令在 repo_dir（克隆目录）执行，与 run_tests 同层工具
+    （run_command）且包在 sandbox_executor 上下文内（docker 执行器下一任务一
+    沙箱，与 _test_pass 一致）；任一命令失败抛 RuntimeError（含命令与输出），
+    由 run_benchmark_cases 收敛为该 case 的 error 结果并中止剩余 setup。
+    """
+    if not case.setup_commands:
+        return
+    with sandbox_executor(repo_dir):
+        for cmd in case.setup_commands:
+            res = run_command(cmd, cwd=repo_dir, workspace_root=repo_dir)
+            if isinstance(res, ToolError):
+                raise RuntimeError(f"setup 命令失败: {cmd} -> {res}")
+            if res.exit_code != 0:
+                detail = (res.stderr or res.stdout or "").strip()
+                raise RuntimeError(
+                    f"setup 命令失败: {cmd}（exit={res.exit_code}）: {detail}")
 
 
 def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
@@ -120,6 +142,7 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
                           max_iterations=case.max_iterations,
                           issue_snapshot=case.issue),
                 llm)
+            _run_setup_commands(case, repo_dir)
             results.append(_case_result(
                 case, llm, case_dir, repo_dir, prompt_before, completion_before,
                 start, time.monotonic(), run))

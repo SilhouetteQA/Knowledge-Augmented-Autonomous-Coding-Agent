@@ -10,7 +10,7 @@ from agent.llm import LLMMessage, MockLLMClient
 from benchmark.loader import BenchmarkCase
 from benchmark.report import BenchmarkReport
 from tools.github_tools import GitHubIssue
-from tools.shell_tools import TestResult
+from tools.shell_tools import CommandResult, TestResult
 
 
 def _case(case_id="schedule-646", must_pass=None):
@@ -206,4 +206,68 @@ def test_case_error_continues(tmp_path, monkeypatch):
     assert len(report.results) == 2
     by_id = {r.case_id: r for r in report.results}
     assert by_id["c1"].status == "error" and "clone 失败" in by_id["c1"].errors
+    assert by_id["c2"].status == "resolved"
+
+
+def test_setup_commands_run_in_repo_dir_in_order_before_tests(tmp_path, monkeypatch):
+    """setup 命令逐条在 repo_dir 执行（patch 已应用、must_pass 测试之前），顺序保持。"""
+    events: list[tuple[str, str, str]] = []
+
+    def fake_run_command(command, cwd=None, timeout=60, workspace_root=None):
+        events.append(("setup", command, cwd))
+        return CommandResult(timeout=False, stdout="", stderr="",
+                             exit_code=0, duration=0.1)
+
+    def fake_run_tests(path, workspace_root):
+        events.append(("test", path, workspace_root))
+        return TestResult(1, 0, 0, 1, 0.1, [])
+
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff())
+    monkeypatch.setattr(runner_mod, "run_command", fake_run_command)
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    case = _case()
+    case.setup_commands = ["pip install pytz==2024.1", "python -m compileall ."]
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [case], _make_gold(tmp_path), "", "local", tmp_path)
+    assert report.results[0].status == "resolved"
+    repo_dir = os.path.join(str(tmp_path), "dbader__schedule")
+    assert events == [
+        ("setup", "pip install pytz==2024.1", repo_dir),
+        ("setup", "python -m compileall .", repo_dir),
+        ("test", os.path.join(repo_dir, "test_ok.py"), repo_dir),
+    ]
+
+
+def test_setup_failure_marks_case_error_and_skips_must_pass(tmp_path, monkeypatch):
+    """setup 任一命令失败 → status=error（errors 含命令与输出），该 case 不跑 must_pass，其余继续。"""
+    test_calls: list[str] = []
+
+    def fake_run_command(command, cwd=None, timeout=60, workspace_root=None):
+        if command == "pip install pytz==2024.1":
+            return CommandResult(timeout=False, stdout="", stderr="pip 安装失败: 超时",
+                                 exit_code=1, duration=1.0)
+        raise AssertionError("setup 失败后不应执行剩余命令")
+
+    def fake_run_tests(path, workspace_root):
+        test_calls.append(path)
+        return TestResult(1, 0, 0, 1, 0.1, [])
+
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff())
+    monkeypatch.setattr(runner_mod, "run_command", fake_run_command)
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    case = _case("c1")
+    case.setup_commands = ["pip install pytz==2024.1", "python -m compileall ."]
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。"),
+                         LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [case, _case("c2")], _make_gold(tmp_path, "c2"), "", "local", tmp_path)
+    by_id = {r.case_id: r for r in report.results}
+    r1 = by_id["c1"]
+    assert r1.status == "error" and r1.test_pass is False and r1.resolution is False
+    assert any("pip install pytz==2024.1" in e and "pip 安装失败" in e
+               for e in r1.errors)
+    assert len(test_calls) == 1          # 仅 c2 跑了 must_pass，c1 被跳过
     assert by_id["c2"].status == "resolved"

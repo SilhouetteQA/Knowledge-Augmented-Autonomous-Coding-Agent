@@ -28,6 +28,7 @@ class BenchmarkCase:
     must_pass: list[str]
     max_iterations: int = 30
     notes: str = ""
+    setup_commands: list[str] = field(default_factory=list)
 
 
 def _validate(data: dict, path: Path) -> BenchmarkCase:
@@ -69,6 +70,12 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
     max_iter = data.get("max_iterations", 30)
     if not isinstance(max_iter, int) or max_iter <= 0:
         raise CaseError(f"{path.name}: max_iterations 须为正整数")
+    setup = data.get("setup_commands", [])
+    if not isinstance(setup, list):
+        raise CaseError(f"{path.name}: setup_commands 须为列表")
+    for i, cmd in enumerate(setup):
+        if not isinstance(cmd, str):
+            raise CaseError(f"{path.name}: setup_commands[{i}] 须为字符串（got {cmd!r}）")
     return BenchmarkCase(
         id=case_id, category=category, repository=repo,
         issue=GitHubIssue(number=issue["number"], title=issue["title"],
@@ -76,6 +83,7 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
                           state=issue["state"]),
         gold_patch=str(gold), must_pass=list(must_pass),
         max_iterations=max_iter, notes=data.get("notes", ""),
+        setup_commands=list(setup),
     )
 
 
