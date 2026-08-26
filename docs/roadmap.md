@@ -216,6 +216,8 @@ coding-agent/
 
 ## W8：Human-in-the-loop（阶段 8：审批门禁）
 
+**入口备注（下会话）**：worktree `.worktrees/w8-human-in-the-loop` / 分支 `feature/w8-human-in-the-loop`（从 main@79aa431 创建）；先 brainstorming（Reviewer Agent 独立角色 / diff 展示与人工审批界面形态 / 审批门禁后 act 范围）→ spec → 用户批准 → plan → TDD；评估问题清单（P0/P1/P2）见 `docs/sessions/2026-08-26-w6w7-close-session.md` 第三节，W8 完成后按序处理；知识纠错第二阶段（W5 冻结）随 W8 门禁就绪可解冻。
+
 **目标**：自动 PR 前的人工确认环节，之后考虑完全自动化。
 
 **任务清单**：

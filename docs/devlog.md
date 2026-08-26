@@ -1,4 +1,4 @@
-# Devlog — 开发日志
+﻿# Devlog — 开发日志
 
 本文件记录项目的开发过程、架构决策、关键指标与遗留问题。新会话进入前先读本文件与 `readme.md`、`docs/roadmap.md`。
 
@@ -428,3 +428,10 @@
 - Langfuse v4 面板 UI 层级复核仍待人工（数据层 events_core 已证明；http://localhost:3000 可查 trace `ec5b575f…` / `4d889e…`）。
 - 容器内 github TLS（test_clone_repo_when_empty）为镜像/网络环境项，如后续要跑 clone 型 docker 集成需在镜像或网络层处理。
 - 合并由控制器执行（本会话不 push / 不建 PR），分支 `feature/w7-observability` commits 见会话任务报告。
+
+
+## W6+W7 会话收尾与下会话入口（2026-08-26）
+
+- **本会话完成**：W6 Evaluation（合并 76cae48，真实评测 Resolution Rate 20%，schedule-608 resolved）+ W7 Observability（合并 4035ce8，全链路 Trace + --trace-report + OTLP 贯通验证）；全量回归 229 passed / 4 skipped / 1 环境性失败（容器内 github TLS）。readme 状态行 W0-W7。
+- **会话归档**：docs/sessions/2026-08-26-w6w7-close-session.md（中心入口：能力画像、评估问题清单 P0/P1/P2、下会话顺序、环境备忘）+ 2026-08-26-w6-close-session.md / 2026-08-26-w7-close-session.md（窗口级细节）。
+- **下会话执行顺序（用户指定）**：① 先做 W8 Human-in-the-loop（worktree eature/w8-human-in-the-loop，brainstorming → spec → 用户批准 → plan → TDD；验收=Agent 停等审批、审批后自动 PR、完整闭环演示；知识纠错第二阶段可随之解冻排期）② 再处理评估问题（P0：沙箱依赖预装 + 基线预检；P1：test_pass 失败摘要 + LLM 重试；P2：单价表/分母口径/开放型任务收敛/case span 等，详见归档第三节）。
