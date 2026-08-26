@@ -1,5 +1,5 @@
 # main.py
-"""CLI 入口：python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10] [--executor local|docker] [--graph]；Issue 模式：python main.py "<owner/name>#<issue_number>" --issue [--push]；知识抽查：python main.py --correct [--wiki-dir <兄弟项目>]"""
+"""CLI 入口：python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10] [--executor local|docker] [--graph]；Issue 模式：python main.py "<owner/name>#<issue_number>" --issue；审批模式：python main.py --approve <审批单路径> --decision approve|reject；知识抽查：python main.py --correct [--wiki-dir <兄弟项目>]"""
 import argparse
 import os
 import sys
@@ -8,13 +8,15 @@ from dotenv import load_dotenv
 
 from agent.correct import print_audit_summary, run_audit
 from agent.graph import run_agent_graph
-from agent.issue import run_issue_agent
+from agent.issue import repo_dir_name, run_issue_agent
 from agent.llm import OpenAICompatClient
 from agent.loop import run_agent
 from benchmark.loader import load_cases
 from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
                               compare_reports)
 from benchmark.runner import MODEL_PRICE_USD_PER_1K, run_benchmark
+from tools.approval import (ApprovalError, approve_request,
+                            load_approval, save_approval)
 from tools.code_graph import build_code_graph
 from tools.file_tools import ToolError
 from tools.knowledge_client import get_knowledge_client
@@ -38,8 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="使用 LangGraph 编排（完整工具集，含 run_command/run_tests/git；默认使用 W1 最小循环）")
     parser.add_argument("--issue", action="store_true",
                         help="GitHub Issue 模式：任务参数格式 <owner/name>#<issue_number>，例如 test/arc-wiki#123")
-    parser.add_argument("--push", action="store_true",
-                        help="Issue 模式：通过审查后 push 并创建 PR（默认 dry-run 停在 review）")
+    parser.add_argument("--approve", default=None, metavar="审批单路径",
+                        help="审批模式：审批 W8 审批单（配合 --decision approve|reject，approve 才推送并建 PR）")
+    parser.add_argument("--decision", choices=["approve", "reject"], default=None,
+                        help="审批决定：approve（commit+push+创建 PR）或 reject（拒绝，零远端副作用）")
+    parser.add_argument("--comment", default=None,
+                        help="审批意见（reject 建议填写原因，将写入审批单 decision_comment）")
     parser.add_argument("--correct", action="store_true",
                         help="知识抽查模式：对兄弟项目三次提取产物做 2% 分层抽查（dry-run，零写回）")
     parser.add_argument("--wiki-dir", default="",
@@ -112,6 +118,7 @@ def _run_issue_mode(args: argparse.Namespace, llm) -> int:
     task = IssueTask(
         repository=repo, issue_number=int(num),
         workspace_root=args.workspace,
+        approval_dir=os.environ.get("KA_APPROVAL_DIR", "output/approvals"),
         max_iterations=args.max_iterations,
     )
     result = run_issue_agent(task, llm)
@@ -125,8 +132,38 @@ def _run_issue_mode(args: argparse.Namespace, llm) -> int:
     print(f"Diff:\n{result.diff[:2000]}")
     if result.pr_url:
         print(f"PR: {result.pr_url}")
+    elif result.approval_path:
+        print(f"审批单已生成: {result.approval_path}")
+        print("等待人工审批：审阅差异与审查报告后执行 "
+              f"--approve {result.approval_path} --decision approve|reject")
     else:
-        print("（dry-run：未推送远端；通过 --push 开启推送与 PR）")
+        print("（无审批单：approval_dir 未配置）")
+    return 0
+
+
+def _run_approve_mode(args: argparse.Namespace) -> int:
+    """审批模式：加载审批单 → 人工决定 → 执行（approve 才产生远端副作用）。"""
+    path = args.approve
+    if not os.path.isfile(path):
+        print(f"审批单不存在: {path}")
+        return 1
+    if args.decision is None:
+        print("缺少审批决定：--decision approve|reject")
+        return 1
+    try:
+        approval = load_approval(path)
+        repo_dir = os.path.join(args.workspace,
+                                repo_dir_name(approval.repository))
+        approval = approve_request(approval, args.decision, args.comment, repo_dir)
+        saved = save_approval(approval, os.path.dirname(path))
+    except ApprovalError as e:
+        print(f"审批失败: {e}")
+        return 1
+    if approval.status == "approved":
+        print(f"已批准并推送: {approval.pr_url}")
+    else:
+        print("已拒绝（零远端副作用）")
+    print(f"审批单已更新: {saved}")
     return 0
 
 
@@ -185,6 +222,9 @@ def _main_inner(argv: list[str] | None = None) -> int:
         return _run_trace_report_mode(args)
     if args.correct:
         return _run_correct_mode(args)
+    if args.approve:
+        # 审批模式无需 LLM：直接执行人工决定的推送/拒绝（唯一远端写入口）
+        return _run_approve_mode(args)
     if args.executor:
         os.environ["KA_EXECUTOR"] = args.executor
     if args.benchmark:
