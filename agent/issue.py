@@ -56,6 +56,7 @@ class IssueAgentResult:
     stopped_by_limit: bool
     iteration_count: int
     verify_rounds: int
+    retry_count: int = 0        # 新增：FAIL 重试发生次数（0/1）
 
 
 def _repo_dir_name(repository: str) -> str:
@@ -75,7 +76,15 @@ def _review_diff(llm: LLMClient, diff: str, issue_text: str) -> str:
     return (msg.content or "FAIL 审查无输出").strip()
 
 
-@traced("issue.run", as_type="agent")
+def _issue_run_metadata(args, kwargs, result) -> dict:
+    """issue.run span metadata：记录验证轮数与重试次数。"""
+    return {
+        "verify_rounds": getattr(result, "verify_rounds", 0),
+        "retry_count": getattr(result, "retry_count", 0),
+    }
+
+
+@traced("issue.run", as_type="agent", metadata_fn=_issue_run_metadata)
 def run_issue_agent(task: IssueTask, llm: LLMClient,
                     code_graph=None, knowledge_client=None) -> IssueAgentResult:
     """执行 Issue 全链路；push=False 时停在 review（不产生远端副作用）。"""
@@ -116,8 +125,11 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         raise ToolError(f"读取 diff 失败: {diff.message}")
     review = _review_diff(llm, diff, prompt)
 
-    # Review 未通过：以审查意见为任务重跑一轮（上限 1 次）
-    if review.startswith("FAIL"):
+    # Review 未通过：以审查意见为任务重跑一轮（上限 1 次）。
+    # retried 在首轮判定时捕获（review 后续会被重试后的结论覆盖），
+    # 保证 "FAIL→后一轮 PASS" 场景下 retry_count 仍正确记为 1。
+    retried = review.startswith("FAIL")
+    if retried:
         retry_prompt = f"{prompt}\n\n审查意见（请修复后重新工作）:\n{review}"
         result = run_agent_graph(retry_prompt, llm, max_iterations=task.max_iterations,
                                  workspace_root=repo_dir, code_graph=code_graph,
@@ -150,4 +162,5 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         stopped_by_limit=result.stopped_by_limit,
         iteration_count=result.iteration_count,
         verify_rounds=result.verify_rounds,
+        retry_count=1 if retried else 0,
     )

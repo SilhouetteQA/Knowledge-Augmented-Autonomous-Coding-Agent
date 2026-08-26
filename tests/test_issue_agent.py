@@ -65,6 +65,7 @@ def test_dry_run_full_pipeline(tmp_path, monkeypatch):
     assert result.review.startswith("PASS")
     assert result.pr_url is None
     assert commits == []
+    assert result.retry_count == 0        # 无 Review FAIL 重试
 
 
 def test_issue_read_failure_raises(tmp_path, monkeypatch):
@@ -171,3 +172,62 @@ def test_push_mode_review_fail_aborts(tmp_path, monkeypatch):
     result = run_issue_agent(task, MockLLMClient(script))
     assert result.pr_url is None
     assert calls["commit"] == []
+
+
+# --- W7 Task 3: issue.run span metadata（verify_rounds / retry_count） ---
+
+
+def _probe_issue_module(monkeypatch, fake_traced):
+    """以独立模块名重放 agent/issue.py 顶层，捕获模块级 traced 装饰注册。"""
+    import importlib.util
+    import pathlib
+    import sys
+    import tools.tracing as tracing
+    monkeypatch.setattr(tracing, "traced", fake_traced)
+    src = pathlib.Path(__file__).resolve().parent.parent / "agent" / "issue.py"
+    spec = importlib.util.spec_from_file_location("agent.issue_probe", src)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+
+def test_issue_run_traced_registered_with_metadata_fn(monkeypatch):
+    """run_issue_agent 模块级注册 traced("issue.run") agent span，且 metadata_fn 已接线。"""
+    registry = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        registry.append((name, as_type, metadata_fn))
+        return lambda f: f
+
+    _probe_issue_module(monkeypatch, fake_traced)
+    assert any(n == "issue.run" and t == "agent" and m is not None
+               for n, t, m in registry)
+
+
+def test_issue_run_metadata_returns_verify_rounds_and_retry_count():
+    """_issue_run_metadata 汇总 verify_rounds 与 retry_count 到 span metadata。"""
+    from agent.issue import _issue_run_metadata
+
+    class FakeResult:
+        verify_rounds = 2
+        retry_count = 1
+
+    meta = _issue_run_metadata((), {}, FakeResult())
+    assert meta == {"verify_rounds": 2, "retry_count": 1}
+    # 结果对象缺字段时回退 0（旧对象直通不报错）
+    assert _issue_run_metadata((), {}, object()) == {"verify_rounds": 0, "retry_count": 0}
+
+
+def test_review_fail_retry_sets_retry_count_one(tmp_path, monkeypatch):
+    """Review FAIL 触发重试后，retry_count 记为 1（即使重试后结论非 PASS）。"""
+    _patch_github(monkeypatch)
+    script = _graph_script() + [
+        LLMMessage(role="assistant", content="FAIL 缺少边界测试"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path))
+    result = run_issue_agent(task, MockLLMClient(script))
+    assert result.retry_count == 1        # 首轮 FAIL 即发生一次重试
