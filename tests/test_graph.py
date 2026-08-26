@@ -252,3 +252,26 @@ def test_graph_search_knowledge_without_client(tmp_path):
     from tools.file_tools import ToolError
     assert isinstance(result.steps[0].result, ToolError)
     assert "域知识未启用" in result.steps[0].result.message
+
+
+def test_graph_nodes_are_traced(monkeypatch):
+    """7 个图节点函数均被 traced 包装（name 前缀 graph.，decide/reflect 为 generation）。"""
+    import agent.graph as graph_mod
+    wrapped: list[tuple[str, str]] = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        def deco(func):
+            wrapped.append((name, as_type))
+            return func
+        return deco
+
+    monkeypatch.setattr(graph_mod, "traced", fake_traced)
+    graph_mod.build_graph(MockLLMClient([LLMMessage(role="assistant", content="[]")]))
+    names = [n for n, _ in wrapped]
+    assert "graph.plan" in names
+    assert "graph.decide" in names and "graph.execute" in names
+    assert "graph.verify" in names and "graph.reflect" in names
+    assert "graph.finalize" in names and "graph.finalize_limited" in names
+    types = dict(wrapped)
+    assert types["graph.decide"] == "generation"
+    assert types["graph.reflect"] == "generation"

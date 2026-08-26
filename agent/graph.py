@@ -26,6 +26,7 @@ from tools.shell_tools import (
     run_command,
     run_tests,
 )
+from tools.tracing import traced
 
 # 计划节点提示词：只输出 JSON 数组
 PLAN_PROMPT = (
@@ -215,6 +216,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
                 knowledge_client: KnowledgeClient | None = None) -> object:
     """构建 LangGraph 图（闭包捕获 llm、上限参数与 W4 注入的双知识源）。"""
 
+    @traced("graph.plan", as_type="span")
     def plan_node(state: AgentState) -> dict:
         msg = llm.chat(
             [{"role": "system", "content": PLAN_PROMPT},
@@ -223,6 +225,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
         )
         return {"plan": _parse_plan(msg.content or "")}
 
+    @traced("graph.decide", as_type="generation")
     def decide_node(state: AgentState) -> dict:
         system = _decide_system(state["plan"], state["verify_rounds"], max_verify_rounds)
         messages = [{"role": "system", "content": system}] + state["messages"]
@@ -242,6 +245,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
             "iteration": state["iteration"] + 1,
         }
 
+    @traced("graph.execute", as_type="span")
     def execute_node(state: AgentState) -> dict:
         steps = list(state["steps"])
         messages = list(state["messages"])
@@ -256,6 +260,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
             })
         return {"steps": steps, "messages": messages, "pending_tool_calls": None}
 
+    @traced("graph.verify", as_type="span")
     def verify_node(state: AgentState) -> dict:
         tr = run_tests(workspace_root=workspace_root)
         return {
@@ -264,6 +269,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
             "test_results": state["test_results"] + [tr],
         }
 
+    @traced("graph.reflect", as_type="generation")
     def reflect_node(state: AgentState) -> dict:
         tr = state["test_result"]
         if isinstance(tr, TestResult):
@@ -279,10 +285,12 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
         return {"messages": state["messages"] + [
             {"role": "assistant", "content": f"[失败分析] {msg.content}"}]}
 
+    @traced("graph.finalize", as_type="span")
     def finalize_node(state: AgentState) -> dict:
         content = state["messages"][-1].get("content") if state["messages"] else ""
         return {"final_answer": content or "任务完成", "status": "done"}
 
+    @traced("graph.finalize_limited", as_type="span")
     def finalize_limited_node(state: AgentState) -> dict:
         return {"final_answer": "已达到上限，任务未完成", "status": "limit"}
 
