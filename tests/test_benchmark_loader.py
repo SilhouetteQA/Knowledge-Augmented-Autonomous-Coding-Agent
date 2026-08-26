@@ -121,3 +121,76 @@ def test_real_cases_loaded():
     cats = {c.category for c in cases}
     assert {"bug", "feature", "test", "refactor"} <= cats
     assert all(c.gold_patch.endswith(".diff") for c in cases)
+
+
+# --- E7（P2-7）：task_type 校验与按任务类型的默认迭代上限 ---
+
+
+def _write_case_without_max_iterations(cases_dir, category, case_id, **overrides):
+    """先落盘显式 max_iterations 的 case，再移除该键（模拟未配置）。"""
+    _write_case(cases_dir, category, case_id, **overrides)
+    p = cases_dir / category / (case_id + ".json")
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data.pop("max_iterations", None)
+    p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def test_task_type_defaults_to_category(tmp_path):
+    """未配置 task_type → 缺省取 category。"""
+    _write_case(tmp_path, "bug", "schedule-646")
+    c = load_cases(str(tmp_path))[0]
+    assert c.task_type == "bug"
+
+
+def test_task_type_explicit(tmp_path):
+    """显式 task_type 独立于 category 载入。"""
+    _write_case(tmp_path, "feature", "x", task_type="test")
+    c = load_cases(str(tmp_path))[0]
+    assert c.task_type == "test"
+    assert c.category == "feature"
+
+
+def test_task_type_invalid_raises(tmp_path):
+    """非法 task_type → CaseError（报错含取值与允许集）。"""
+    _write_case(tmp_path, "bug", "x", task_type="unknown")
+    with pytest.raises(CaseError, match="task_type 'unknown' 非法.*bug"):
+        load_cases(str(tmp_path))
+
+
+@pytest.mark.parametrize("cat,expected", [
+    ("bug", 30),              # 修复类：默认 30
+    ("feature", 30),          # 功能类：默认 30
+    ("test", 20),             # 开放型：默认 20
+    ("refactor", 20),         # 开放型：默认 20
+    ("domain", 20),           # 开放型：默认 20
+])
+def test_default_max_iterations_by_task_type(tmp_path, cat, expected):
+    """无 max_iterations 时按 task_type 补默认（bug/feature=30，test/refactor/domain=20）。"""
+    _write_case_without_max_iterations(tmp_path, cat, "c-" + cat)
+    c = load_cases(str(tmp_path))[0]
+    assert c.max_iterations == expected
+    assert c.task_type == cat
+    assert c.category == cat
+
+
+def test_default_max_iterations_from_task_type_not_category(tmp_path):
+    """默认值取 task_type 而非目录 category：category=bug + task_type=test → 20。"""
+    _write_case_without_max_iterations(tmp_path, "bug", "x", task_type="test")
+    c = load_cases(str(tmp_path))[0]
+    assert c.max_iterations == 20
+    assert c.task_type == "test"
+
+
+def test_explicit_max_iterations_wins_over_task_type_default(tmp_path):
+    """显式 max_iterations 永远优先，不被 task_type 默认覆盖。"""
+    _write_case(tmp_path, "test", "x", task_type="test", max_iterations=15)
+    c = load_cases(str(tmp_path))[0]
+    assert c.max_iterations == 15
+    assert c.task_type == "test"
+
+
+def test_real_cases_explicit_max_iterations_unaffected():
+    """既有 5 个 case 均显式配 max_iterations → 不受新默认值影响；无 task_type → 取 category。"""
+    cases = load_cases("benchmark/cases")
+    assert all(c.max_iterations == 30 for c in cases)
+    assert all(c.task_type == c.category for c in cases)

@@ -2,7 +2,7 @@
 """LangGraph 编排测试：成功路径 / 失败修复路径 / 双上限"""
 import json
 
-from agent.graph import run_agent_graph
+from agent.graph import _decide_system, run_agent_graph
 from agent.llm import LLMMessage, MockLLMClient, ToolCall
 
 
@@ -344,3 +344,14 @@ def test_graph_dispatch_disabled_passthrough(tmp_path):
     assert ok.path == "a.py"
     err = _graph_dispatch("no_such_tool", {}, str(ws))
     assert isinstance(err, ToolError)
+
+
+# --- E7（P2-7）：decide 提示词收敛引导 ---
+
+
+def test_decide_system_contains_convergence_guidance():
+    """_decide_system 输出含收敛引导句（优先最小变更、小步验证迭代）。"""
+    system = _decide_system(["步骤1"], verify_rounds=0, max_verify_rounds=5)
+    assert "优先最小变更并尽快验证" in system
+    assert "小步验证" in system
+    assert "开放型任务" in system
