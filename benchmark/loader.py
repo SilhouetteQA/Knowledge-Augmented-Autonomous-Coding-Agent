@@ -17,6 +17,9 @@ CATEGORIES = ("bug", "feature", "test", "refactor", "domain")
 DEFAULT_MAX_ITERATIONS = {"bug": 30, "feature": 30,
                           "test": 20, "refactor": 20, "domain": 20}
 
+# E9：case 可选 domain_check 的允许取值（域案例判定器，替代 LLM Judge 功能等价模型）
+DOMAIN_CHECKS = ("deletions", "bridge")
+
 
 class CaseError(Exception):
     """案例 schema 非法时抛出（含文件名与原因）。"""
@@ -35,6 +38,7 @@ class BenchmarkCase:
     task_type: str = ""
     notes: str = ""
     setup_commands: list[str] = field(default_factory=list)
+    domain_check: str = ""
 
 
 def _validate(data: dict, path: Path) -> BenchmarkCase:
@@ -92,6 +96,13 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
     for i, cmd in enumerate(setup):
         if not isinstance(cmd, str):
             raise CaseError(f"{path.name}: setup_commands[{i}] 须为字符串（got {cmd!r}）")
+    # E9：domain_check 可选，取值 deletions/bridge 之一；缺省无（空串），显式空串与缺省同义。
+    # 非字符串或（非空且非允许取值）→ CaseError（含取值与允许集）。
+    domain_check = data.get("domain_check", "")
+    if (not isinstance(domain_check, str)
+            or (domain_check and domain_check not in DOMAIN_CHECKS)):
+        raise CaseError(f"{path.name}: domain_check '{domain_check}' 非法"
+                        f"（应为 {DOMAIN_CHECKS}）")
     return BenchmarkCase(
         id=case_id, category=category, repository=repo,
         issue=GitHubIssue(number=issue["number"], title=issue["title"],
@@ -99,7 +110,7 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
                           state=issue["state"]),
         gold_patch=str(gold), must_pass=list(must_pass),
         max_iterations=max_iter, task_type=task_type, notes=data.get("notes", ""),
-        setup_commands=list(setup),
+        setup_commands=list(setup), domain_check=domain_check,
     )
 
 

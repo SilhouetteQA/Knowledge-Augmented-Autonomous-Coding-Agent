@@ -194,3 +194,30 @@ def test_real_cases_explicit_max_iterations_unaffected():
     cases = load_cases("benchmark/cases")
     assert all(c.max_iterations == 30 for c in cases)
     assert all(c.task_type == c.category for c in cases)
+
+
+# --- E9：domain_check 域判定配置（deletions / bridge，缺省无） ---
+
+
+def test_domain_check_default_empty(tmp_path):
+    """未配置 domain_check → 缺省空串（不触发域判定）。"""
+    _write_case(tmp_path, "domain", "c-1")
+    c = load_cases(str(tmp_path))[0]
+    assert c.domain_check == ""
+
+
+def test_domain_check_valid_values(tmp_path):
+    """合法 domain_check（deletions/bridge）正常载入且与类别独立。"""
+    _write_case(tmp_path, "domain", "c-del", domain_check="deletions")
+    _write_case(tmp_path, "domain", "c-bridge", domain_check="bridge")
+    cases = {c.id: c for c in load_cases(str(tmp_path))}
+    assert cases["c-del"].domain_check == "deletions"
+    assert cases["c-bridge"].domain_check == "bridge"
+
+
+@pytest.mark.parametrize("bad", ["unknown", 42, None, ["deletions"]])
+def test_domain_check_invalid_raises(tmp_path, bad):
+    """非法 domain_check → CaseError（报错含取值与允许集）；显式空串与缺省同义不报错。"""
+    _write_case(tmp_path, "domain", "x", domain_check=bad)
+    with pytest.raises(CaseError, match=r"domain_check '.*' 非法.*deletions"):
+        load_cases(str(tmp_path))

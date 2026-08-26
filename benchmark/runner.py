@@ -5,6 +5,7 @@ import time
 
 from agent.issue import IssueTask, run_issue_agent
 from agent.llm import LLMClient
+from benchmark.domain_checks import DOMAIN_PASS, check_bridge, check_deletions
 from benchmark.judge import judge_patch
 from benchmark.loader import BenchmarkCase
 from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
@@ -190,8 +191,19 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
             gold_text = f.read()
     except OSError as e:
         errors.append(f"gold patch 读取失败: {e}")
-    judge = judge_patch(llm, diff, gold_text, case.issue)
-    resolution = test_pass and judge.verdict == "PASS"
+    if case.domain_check:
+        # E9：域案例判定——规则检查器（deletions/bridge）替代 LLM Judge。域知识任务
+        # （删除/bridge）无 gold 可比，「功能等价」模型不匹配；判定证据进 judge_reason，
+        # 不追加 errors；DOMAIN_SKIP 记录 SKIP 且 resolution=False（与 Judge SKIP 语义一致）。
+        checker = {"deletions": check_deletions, "bridge": check_bridge}[case.domain_check]
+        dc = checker(diff, repo_dir)
+        judge_verdict, judge_reason = dc.verdict, dc.reason
+        patch_acceptance = judge_verdict == DOMAIN_PASS
+    else:
+        judge = judge_patch(llm, diff, gold_text, case.issue)
+        judge_verdict, judge_reason = judge.verdict, judge.reason
+        patch_acceptance = judge.verdict == "PASS"
+    resolution = test_pass and patch_acceptance
     prompt, completion = (llm.tokens_total["prompt"] - prompt_before,
                           llm.tokens_total["completion"] - completion_before)
     model = getattr(llm, "model", "unknown")
@@ -200,8 +212,8 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
         case_id=case.id, category=case.category,
         status="resolved" if resolution else "not_resolved",
         resolution=resolution, test_pass=test_pass,
-        patch_acceptance=judge.verdict == "PASS",
-        judge_verdict=judge.verdict, judge_reason=judge.reason,
+        patch_acceptance=patch_acceptance,
+        judge_verdict=judge_verdict, judge_reason=judge_reason,
         tool_success_rate=tool_success,
         iteration_count=getattr(run, "iteration_count", 0),
         latency_s=end - start,

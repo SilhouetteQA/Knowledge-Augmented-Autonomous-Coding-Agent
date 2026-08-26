@@ -559,3 +559,123 @@ def test_run_one_case_under_span_wrapper_still_runs(tmp_path, monkeypatch):
     assert calls == ["evaluation.case"]
     assert metas == [{"case_id": "schedule-646", "category": "bug",
                       "status": "resolved"}]
+
+
+# --- E9：域案例判定模型——runner 经 domain_check 走规则检查器（替代 LLM Judge） ---
+
+DELETION_DIFF = (
+    "diff --git a/data/extractions/v3_wiki/concepts/死概念.md "
+    "b/data/extractions/v3_wiki/concepts/死概念.md\n"
+    "deleted file mode 100644\n"
+    "--- a/data/extractions/v3_wiki/concepts/死概念.md\n"
+    "+++ /dev/null\n"
+    "@@ -1,2 +0,0 @@\n-# 死概念\n-定义无。\n"
+)
+
+
+def _domain_case(domain_check="deletions"):
+    """构造配了 domain_check 的 case（kind 仍为 bug，仅测接线）。"""
+    return _case("schedule-646").__class__(
+        id="schedule-646", category="domain", repository="dbader/schedule",
+        issue=GitHubIssue(number=646, title="guard self.unit against None",
+                          body="crash when unit is None", labels=[], state="open"),
+        gold_patch="gold/schedule-646.diff", must_pass=["test_ok.py"],
+        max_iterations=20, notes="", domain_check=domain_check)
+
+
+def test_domain_check_calls_checker_and_writes_result(tmp_path, monkeypatch):
+    """配 domain_check=deletions → 判定链路调用检查器，judge_verdict/reason 入 CaseResult，
+    errors 不追加；LLM Judge（judge_patch）不再调用。"""
+    from benchmark.domain_checks import DOMAIN_PASS
+
+    calls = []
+
+    def fake_checker(diff, data_dir):
+        calls.append((diff, data_dir))
+        return type("R", (), {"verdict": DOMAIN_PASS, "reason": "PASS 全部删除条目合规"})()
+
+    monkeypatch.setattr(runner_mod, "check_deletions", fake_checker)
+    monkeypatch.setattr(runner_mod, "judge_patch",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("域判定 case 不应调用 LLM Judge")))
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff(diff=DELETION_DIFF))
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([])     # 无消息：若误走 judge_patch 将失败
+    report = runner_mod.run_benchmark_cases(
+        llm, [_domain_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    r = report.results[0]
+    assert r.status == "resolved" and r.resolution is True
+    assert r.judge_verdict == "DOMAIN_PASS"
+    assert r.judge_reason == "PASS 全部删除条目合规"
+    assert r.patch_acceptance is True
+    assert r.errors == []                       # 判定结果只进 judge_reason
+    repo_dir = os.path.join(str(tmp_path), "dbader__schedule")
+    assert calls == [(DELETION_DIFF, repo_dir)]  # 传 Agent diff 与 repo_dir
+
+
+def test_domain_check_fail_not_resolved(tmp_path, monkeypatch):
+    """域判定 FAIL（删除违规）→ resolution=False、patch_acceptance=False，证据入 reason。"""
+    from benchmark.domain_checks import DOMAIN_FAIL
+
+    def fake_checker(diff, data_dir):
+        return type("R", (), {"verdict": DOMAIN_FAIL,
+                              "reason": "FAIL 删除违规：死概念——结构化引用：入度 1"})()
+
+    monkeypatch.setattr(runner_mod, "check_deletions", fake_checker)
+    monkeypatch.setattr(runner_mod, "judge_patch",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("域判定 case 不应调用 LLM Judge")))
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff(diff=DELETION_DIFF))
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_domain_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    r = report.results[0]
+    assert r.status == "not_resolved" and r.resolution is False
+    assert r.patch_acceptance is False
+    assert r.judge_verdict == "DOMAIN_FAIL"
+    assert "入度 1" in r.judge_reason
+    assert r.test_pass is True                  # 测试通过但域判定 FAIL → 不解决
+
+
+def test_domain_check_skip_records_skip_not_resolved(tmp_path, monkeypatch):
+    """域判定 SKIP（无法判定）→ 记录 SKIP 且 resolution=False（与 Judge SKIP 语义一致）。"""
+    from benchmark.domain_checks import DOMAIN_SKIP
+
+    def fake_checker(diff, data_dir):
+        return type("R", (), {"verdict": DOMAIN_SKIP, "reason": "SKIP 无删除文件"})()
+
+    monkeypatch.setattr(runner_mod, "check_deletions", fake_checker)
+    monkeypatch.setattr(runner_mod, "judge_patch",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("域判定 case 不应调用 LLM Judge")))
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff(diff=DELETION_DIFF))
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_domain_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    r = report.results[0]
+    assert r.patch_acceptance is False and r.resolution is False
+    assert r.judge_verdict == "DOMAIN_SKIP"
+
+
+def test_no_domain_check_does_not_call_checker(tmp_path, monkeypatch):
+    """未配 domain_check → 检查器不调用，仍走 LLM Judge（既有链路不变）。"""
+    def boom_checker(diff, data_dir):
+        raise AssertionError("未配 domain_check 不应调用域检查器")
+
+    monkeypatch.setattr(runner_mod, "check_deletions", boom_checker)
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff())
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    assert report.results[0].judge_verdict == "PASS"   # LLM Judge 正常生效
