@@ -6,8 +6,14 @@
 import hashlib
 import json
 import os
+import subprocess
 import time
 from dataclasses import asdict, dataclass
+
+from tools.file_tools import ToolError
+from tools.github_tools import (
+    commit_changes, create_pull_request, git_diff_since, push_branch,
+)
 
 # 已知动作类型（扩展点：知识纠错 --apply 解冻后注册并实现执行逻辑）
 KNOWN_ACTIONS = {"pr_push"}
@@ -104,3 +110,60 @@ def load_approval(path: str) -> ApprovalRequest:
     # 仅取 dataclass 已知字段（前向兼容：忽略未来新增字段）
     known = set(ApprovalRequest.__dataclass_fields__)
     return ApprovalRequest(**{k: v for k, v in data.items() if k in known})
+
+
+def _branch_exists(repo_dir: str, branch: str) -> bool:
+    """本地 refs/heads/<branch> 是否存在（git rev-parse --verify）。"""
+    probe = subprocess.run(
+        ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
+        cwd=repo_dir, capture_output=True)
+    return probe.returncode == 0
+
+
+def _check_drift(approval: ApprovalRequest, repo_dir: str) -> None:
+    """执行前漂移检查：分支存在 + 当前 diff 与审批时指纹一致。"""
+    if not _branch_exists(repo_dir, approval.branch):
+        raise ApprovalError(
+            f"分支不存在: {approval.branch}（仓库状态变化，请重新运行 --issue 生成新审批单）")
+    current = git_diff_since(repo_dir, approval.base_branch)
+    if isinstance(current, ToolError):
+        raise ApprovalError(f"读取当前 diff 失败: {current.message}")
+    if _sha256(current) != approval.diff_sha256:
+        raise ApprovalError(
+            "仓库状态与审批时不一致（diff 已变化），请重新运行 --issue 生成新审批单")
+
+
+def approve_request(approval: ApprovalRequest, decision: str,
+                    comment: str | None, repo_dir: str) -> ApprovalRequest:
+    """执行人工审批：approve → 漂移检查 → commit → push → PR；reject → 仅记录。
+
+    返回更新后的审批单（status/decided_at/decision_comment/pr_url），由调用方 save。
+    """
+    if approval.status != "pending":
+        raise ApprovalError(f"审批单已处理（{approval.status}），拒绝重复审批")
+    if decision not in ("approve", "reject"):
+        raise ApprovalError(f"非法审批决定: {decision}（仅 approve/reject）")
+    now = time.strftime("%Y-%m-%dT%H:%M:%S")
+    if decision == "reject":
+        approval.decided_at = now
+        approval.decision_comment = comment
+        approval.status = "rejected"
+        return approval
+    _check_drift(approval, repo_dir)
+    err = commit_changes(repo_dir, approval.commit_message)
+    if err is not None:
+        raise ApprovalError(f"提交失败: {err.message}")
+    err = push_branch(repo_dir, approval.branch)
+    if err is not None:
+        raise ApprovalError(f"推送失败: {err.message}（已在本机提交，可手工 git push 后处理）")
+    pr_body = (f"Closes #{approval.issue_number}\n\n{approval.commit_message}\n\n"
+               f"---\n验证轮数: {approval.verify_rounds}\n审查结论:\n{approval.review}")
+    pr_url = create_pull_request(approval.repository, approval.branch,
+                                 approval.base_branch, approval.commit_message,
+                                 pr_body)
+    if isinstance(pr_url, ToolError):
+        raise ApprovalError(f"创建 PR 失败: {pr_url.message}（分支已推送）")
+    approval.decided_at = now
+    approval.pr_url = pr_url
+    approval.status = "approved"
+    return approval
