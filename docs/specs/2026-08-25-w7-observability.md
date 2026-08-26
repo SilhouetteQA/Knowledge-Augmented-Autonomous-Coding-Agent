@@ -87,13 +87,16 @@ class TraceSummary:
     test_results: list[dict]        # {test: path, passed/failed/error/total, duration}
     steps: list[dict]               # 节点名 → 子 trace 摘要
 
-def fetch_trace(client, trace_id: str) -> TraceSummary: ...   # Langfuse API（client.trace.get / observe 查询）
+def fetch_trace(trace_id: str) -> TraceSummary: ...   # 数据源见下
 def save_trace_report(summary: TraceSummary, out_dir: str) -> str:  # JSON + Markdown
 def trace_report_md(summary: TraceSummary) -> str: ...
 ```
 
-- Langfuse SDK 提供 trace 查询（`langfuse.client.trace.get(id)` / `client.trace.list`），按 trace_id 取 `observations` 汇总；
-- 输出：`output/trace/<trace_id>/` 下 report.json + report.md（与 W6 风格一致）；含时间/commit metadata（可选复用 W6 `RunMetadata` 思路，独立简化版）；
+- **数据源（W6 实测更新）**：本机 Langfuse 部署为 **v4 events_only 模式**（W6 发现：经典读接口 `/api/public/traces` GET 404，SDK 4.14.4 走事件通道落 `events_core` 表）。因此 W7 的 trace 导出**不能依赖经典读 API**，二选一：
+  - **A（首推）ClickHouse 直查**：经 `127.0.0.1:8123` 查 `events_core`（按 trace_id 过滤 observations/events，W6 已验证数据落库）——复用兄弟项目 `trace_cost_summary` 模式（clickhouse-connect，凭据读 `docker/langfuse/.env`），不依赖 Langfuse 读 API；
+  - **B 备选**：Langfuse SDK `get_trace(id)` 若在 events_only 部署可用则用之（W6 未验证，实施时冒烟确认）。
+- **实现优先级**：先冒烟验证 B（SDK 读 API），失败则用 A（ClickHouse 直查）——两者接口同为 `fetch_trace(trace_id) -> TraceSummary`，抽象后内部实现可换；
+- 输出：`output/trace/<trace_id>/` 下 report.json + report.md（风格对齐 W6 `benchmark/report.py`：头部 metadata + 汇总指标 + 明细）；
 - CLI：`python main.py --trace-report <trace_id> [--trace-out output/trace]`；
 - 关闭态/无 trace_id → 明确报错退出（不静默）。
 
@@ -107,7 +110,7 @@ def trace_report_md(summary: TraceSummary) -> str: ...
 1. **埋点开启/关闭行为**：延续 W6 tracing 测试模式——关闭态节点行为与现状一致（直通、无副作用）；开启态 mock observe 断言包装发生；
 2. **graph 节点埋点**：Mock LLM 跑 graph，断言节点函数被 traced 包装（monkeypatch tracing.is_enabled=True + FakeObserve 记录调用名单：plan/decide/execute/verify/reflect/finalize 均在列）；
 3. **tool/test 埋点**：dispatch 测试断言 span metadata（工具名/参数摘要/TestResult 字段）；
-4. **report_trace**：Fake Langfuse client（固定 observations 数据）→ fetch_trace 汇总正确（latency/tokens/cost/errors/retries/test results）；save_trace_report 产出 JSON/Markdown 结构与字段断言；
+4. **report_trace**：Fake 数据源（固定 trace 观测数据，mock ClickHouse/SDK）→ fetch_trace 汇总正确（latency/tokens/cost/errors/retries/test results）；save_trace_report 产出 JSON/Markdown 结构与字段断言；
 5. **真实验收**：W6 基准评测（或单 issue 任务）运行中开启 tracing → 在 Langfuse UI 按 trace 检查完整链路；`--trace-report` 导出报告人工核对；
 6. 全量回归：关闭态下 `pytest tests/` 全绿（不触网）。
 
@@ -152,12 +155,16 @@ python main.py --trace-report <trace_id> [--trace-out output/trace]
 
 ## 10. 依赖
 
-- 新增 Python 依赖：无（langfuse>=4.0 已由 W6 extra `[eval]` 引入；如需查询 API 已在包内）
-- 外部：Docker（Langfuse 后端）、LLM API（opencode_go）。
+- 新增 Python 依赖：无强制（langfuse>=4.0 已由 W6 extra `[eval]` 引入）；若数据源选型走 ClickHouse 直查则需 `clickhouse-connect`（同兄弟项目，断网环境从基础解释器复制，W1 经验）
+- 外部：Docker（Langfuse 后端 + ClickHouse 8123）、LLM API（opencode_go）。
 
-## 11. 待 W6 合并后完善项
+## 11. 待 W6 合并后完善项（已核对 W6 实际交付，2026-08-26）
 
-- [ ] 核对 W6 实际交付的 `tools/tracing.py` 接口（traced 签名/metadata_fn 行为）与本 spec §4.1 埋点清单的匹配；
-- [ ] 补充 `agent/graph.py` 节点函数名与行号（W6 后代码基线）；
-- [ ] 确认 `main.py` CLI 参名称与 W6 风格一致；
-- [ ] 与 W6 benchmark 报告的联动（可选：W6 runner span 增补 tool/test 子级后，评测报告可直接引用 trace）。
+- [x] **核对 W6 实际交付的 `tools/tracing.py` 接口**（W7 §4.1 埋点清单的匹配）：
+  - `is_enabled()` / `get_client()`（懒加载）/ `flush()` / `traced(name=None, as_type="span", metadata_fn=None)`（开启态用 `start_as_current_observation` 上下文管理器，仅同步函数）/ `record_usage(model, tokens_in, tokens_out, cost_usd, extra=None)`
+  - 已埋点：`llm.chat`（generation + usage）、`issue.run`（agent 顶层）、`benchmark.run`（span）；`flush()` 未在 main 接线（W7 补）
+- [x] **补充 `agent/graph.py` 节点函数名**（§4.1 埋点清单的 traced 目标）：
+  - `plan_node` / `decide_node` / `execute_node` / `verify_node` / `reflect_node` / `finalize_node` / `finalize_limited_node`（均同步，符合 traced 同步限定）
+  - 工具级埋点位置：`agent/loop.py` 的 `_dispatch(name, args, workspace_root)`（ReAct 循环与 graph execute 共用）；`run_tests` 在 `tools/shell_tools.py`
+- [x] **确认 `main.py` CLI 命名风格**：与 W6 一致（`--xxx` 短横线），W7 新增 `--trace-report <trace_id>` / `--trace-out` 沿用
+- [x] **与 W6 benchmark 报告的联动**：W7 的 `tools/report_trace.py` 输出风格对齐 W6 `benchmark/report.py`（run_id 目录 + report.json/md）；Langfuse v4 events_only 部署的读接口不可用（W6 发现），W7 的 trace 导出需以 **events 数据源**（ClickHouse 直查或 SDK 查询 API 验证）实现——**此为本 spec 相对 W6 草稿的重大更新（§4.3 的数据源）**
