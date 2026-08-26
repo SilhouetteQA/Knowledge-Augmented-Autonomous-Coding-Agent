@@ -36,6 +36,7 @@ class CaseResult:
     cost_usd: float
     diff: str
     errors: list[str] = field(default_factory=list)
+    test_error_summary: str = ""   # must_pass 失败摘要（判定阶段；无失败为空）
 
 
 @dataclass
@@ -46,6 +47,11 @@ class BenchmarkReport:
     resolved: int
     resolution_rate: float
     results: list[CaseResult]
+
+
+def _truncate(text: str, limit: int) -> str:
+    """明细表格文本截断：超长保留前 limit 字符并追加省略号。"""
+    return text if len(text) <= limit else text[:limit] + "..."
 
 
 def _git(args: list[str]) -> str:
@@ -116,15 +122,15 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
         env = sum(1 for r in rs if r.status == "environment_error")
         lines.append(f"| {cat} | {n} | {ok} | {ok / n if n else 0:.0%} | {env} |")
     lines += ["", "## 明细", "",
-              "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) |",
-              "|---------|------|------|------|------|-------|------|---------|---------|"]
+              "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) | 失败摘要 |",
+              "|---------|------|------|------|------|-------|------|---------|---------|----------|"]
     for r in report.results:
         lines.append(
             f"| {r.case_id} | {r.category} | {r.status} | "
             f"{'PASS' if r.test_pass else 'FAIL'} | "
             f"{'PASS' if r.patch_acceptance else 'FAIL'} | "
             f"{r.judge_verdict} | {r.iteration_count} | {r.latency_s:.1f} | "
-            f"{r.cost_usd:.4f} |")
+            f"{r.cost_usd:.4f} | {_truncate(r.test_error_summary, 80).replace('|', '\\|')} |")
     lines += ["", "## Judge 理由", ""]
     for r in report.results:
         lines.append(f"### {r.case_id} ({r.judge_verdict})")

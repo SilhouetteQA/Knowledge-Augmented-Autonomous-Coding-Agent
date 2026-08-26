@@ -54,8 +54,10 @@ def _test_summary(case: BenchmarkCase, repo_dir: str) -> tuple[bool, str]:
     基线与判定阶段共用，运行方式与原 _test_pass 一致：判定阶段的测试运行包在
     sandbox_executor 上下文内（docker 执行器下一个 case 一个沙箱）；must_pass
     为相对路径时拼接 repo_dir 为绝对路径，保证两种执行器的路径解析一致
-    （DockerExecutor 以宿主 CWD 为基准解析相对路径）。失败摘要含测试路径与
-    pytest 计数，作为 environment_error case 的 reason（errors 首条）。
+    （DockerExecutor 以宿主 CWD 为基准解析相对路径）。失败摘要含测试路径、
+    pytest 计数与失败明细（前 3 条 test - message + 总失败数），作为
+    environment_error case 的 reason（errors 首条）与判定阶段的
+    test_error_summary 来源。
     """
     with sandbox_executor(repo_dir):
         for p in case.must_pass:
@@ -63,12 +65,22 @@ def _test_summary(case: BenchmarkCase, repo_dir: str) -> tuple[bool, str]:
             res = run_tests(path=test_path, workspace_root=repo_dir)
             if isinstance(res, TestResult):
                 if res.failed != 0 or res.error != 0 or res.total <= 0:
+                    detail = _failure_detail(res)
                     return (False, f"{p}: failed={res.failed} error={res.error} "
-                                   f"total={res.total}")
+                                   f"total={res.total}" + detail)
             else:
                 detail = getattr(res, "message", repr(res))
                 return False, f"{p}: 测试执行异常（{detail}）"
     return True, ""
+
+
+def _failure_detail(res: TestResult) -> str:
+    """失败明细摘要：前 3 条 test - message + 总失败数；无 failed 时为空串。"""
+    if not res.failures:
+        return ""
+    head = " | ".join(f"{f.test} - {f.message}" for f in res.failures[:3])
+    total = f"（共 {len(res.failures)} 个失败）" if len(res.failures) > 3 else ""
+    return "；" + head + total
 
 
 def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
@@ -170,7 +182,7 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     """单 case 结果组装（含双判定与指标采集）。"""
     errors: list[str] = []
     diff = getattr(run, "diff", "") or ""
-    test_pass = _test_pass(case, repo_dir)
+    test_pass, test_summary = _test_summary(case, repo_dir)
     gold_text = ""
     gold_path = os.path.join(case_dir, case.gold_patch)
     try:
@@ -196,6 +208,7 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
         tokens_prompt=prompt, tokens_completion=completion,
         cost_usd=_cost_usd(model, prompt, completion),
         diff=diff, errors=errors,
+        test_error_summary=test_summary[:600],
     )
 
 

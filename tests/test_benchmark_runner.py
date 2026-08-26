@@ -10,7 +10,7 @@ from agent.llm import LLMMessage, MockLLMClient
 from benchmark.loader import BenchmarkCase
 from benchmark.report import BenchmarkReport
 from tools.github_tools import GitHubIssue
-from tools.shell_tools import CommandResult, TestResult
+from tools.shell_tools import CommandResult, TestFailure, TestResult
 
 
 def _case(case_id="schedule-646", must_pass=None):
@@ -60,6 +60,7 @@ def test_resolved_case(tmp_path, monkeypatch):
     assert r.status == "resolved" and r.resolution is True
     assert r.test_pass is True and r.patch_acceptance is True
     assert r.judge_verdict == "PASS"
+    assert r.test_error_summary == ""          # 全绿无失败摘要
     assert out["task"].approval_dir is None      # 评估模式不产审批单（approval_dir 未配置）
     assert out["task"].issue_snapshot is not None
 
@@ -109,6 +110,34 @@ def test_test_failure_not_resolved(tmp_path, monkeypatch):
     assert report.resolved == 0
     r = report.results[0]
     assert r.status == "not_resolved" and r.test_pass is False
+
+
+def test_judge_failure_summary_carried(tmp_path, monkeypatch):
+    """判定阶段 must_pass 失败 → test_error_summary 非空且含失败测试名（P1-3）。"""
+    state = {"baseline": True}
+
+    def fake_run_tests(path, workspace_root):
+        # 第一轮是基线预检（须通过），之后是判定阶段的 must_pass（带 failures 明细）
+        if state["baseline"]:
+            state["baseline"] = False
+            return TestResult(1, 0, 0, 1, 0.1, [])
+        return TestResult(1, 1, 0, 2, 0.1, [
+            TestFailure(test="tests/test_schedule.py::test_guard_unit_against_none",
+                        message="AssertionError: unit is None"),
+            TestFailure(test="tests/test_schedule.py::test_guard_negative",
+                        message="AssertionError: -1")])
+
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff())
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    r = report.results[0]
+    assert r.test_pass is False
+    assert r.test_error_summary != ""
+    assert "test_guard_unit_against_none" in r.test_error_summary
+    assert "test_guard_negative" in r.test_error_summary
 
 
 def test_judge_skip_when_diff_empty(tmp_path, monkeypatch):

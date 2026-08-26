@@ -54,6 +54,17 @@ def test_save_json(tmp_path):
     assert data["results"][0]["case_id"] == "schedule-646"
 
 
+def test_json_includes_test_error_summary(tmp_path):
+    """JSON 经 asdict 自动携带 test_error_summary 字段（P1-3，无需显式处理）。"""
+    r = _result(False, "FAIL")
+    r.test_error_summary = "test_schedule.py: failed=2 error=0 total=3 | 失败明细"
+    report = BenchmarkReport(metadata=_meta(), total=1, resolved=0,
+                             resolution_rate=0.0, results=[r])
+    data = json.loads(Path(save_json(report, str(tmp_path))).read_text(
+        encoding="utf-8"))
+    assert data["results"][0]["test_error_summary"] == r.test_error_summary
+
+
 def test_save_markdown_contains_sections(tmp_path):
     report = BenchmarkReport(metadata=_meta(), total=1, resolved=1,
                              resolution_rate=1.0, results=[_result()])
@@ -63,6 +74,20 @@ def test_save_markdown_contains_sections(tmp_path):
     assert "Resolution Rate" in text
     assert "schedule-646" in text
     assert "bug" in text
+
+
+def test_markdown_failure_summary_column_truncated(tmp_path):
+    """明细表含失败摘要列，超 80 字符截断为前 80 字符 + 省略号。"""
+    long_summary = ("tests/test_schedule.py::test_guard_unit - "
+                    "AssertionError: unit is None; " * 5)
+    r = _result(False, "FAIL")
+    r.test_error_summary = long_summary
+    report = BenchmarkReport(metadata=_meta(), total=1, resolved=0,
+                             resolution_rate=0.0, results=[r])
+    text = Path(save_markdown(report, str(tmp_path))).read_text(encoding="utf-8")
+    assert "失败摘要" in text
+    assert long_summary[:80] + "..." in text
+    assert long_summary not in text
 
 
 def test_compare_reports():
