@@ -1,8 +1,11 @@
 # agent/llm.py
 """LLM 客户端：可插拔协议 + OpenAI 兼容实现 + Mock 实现。
 
-真实配置从环境变量读取：opencode_go_api（Key）、OPENCODE_GO_BASE_URL（端点，
-默认 https://opencode.ai/zen/go/v1）、OPENCODE_GO_MODEL（模型，默认 mimo-v2.5）。
+真实配置按供应商（KA_LLM_PROVIDER，默认 opencode_go）从环境变量读取：
+- opencode_go：opencode_go_api（Key）、OPENCODE_GO_BASE_URL（端点，
+  默认 https://opencode.ai/zen/go/v1）、OPENCODE_GO_MODEL（模型，默认 mimo-v2.5）；
+- deepseek：deepseek_api（Key）、DEEPSEEK_BASE_URL（端点，默认
+  https://api.deepseek.com）、DEEPSEEK_MODEL（模型，默认 deepseek-4-flash）。
 """
 import json
 import os
@@ -12,6 +15,24 @@ from typing import Protocol
 import openai
 
 from tools.tracing import record_usage, traced
+
+# 供应商配置表（扩展新供应商时在此注册）
+LLM_PROVIDERS: dict[str, dict[str, str]] = {
+    "opencode_go": {
+        "key_env": "opencode_go_api",
+        "base_url_env": "OPENCODE_GO_BASE_URL",
+        "base_url_default": "https://opencode.ai/zen/go/v1",
+        "model_env": "OPENCODE_GO_MODEL",
+        "model_default": "mimo-v2.5",
+    },
+    "deepseek": {
+        "key_env": "deepseek_api",
+        "base_url_env": "DEEPSEEK_BASE_URL",
+        "base_url_default": "https://api.deepseek.com",
+        "model_env": "DEEPSEEK_MODEL",
+        "model_default": "deepseek-4-flash",
+    },
+}
 
 
 @dataclass
@@ -46,16 +67,24 @@ class LLMClient(Protocol):
 
 
 class OpenAICompatClient:
-    """OpenAI 兼容实现（opencode go 服务的 mimo-v2.5）。"""
+    """OpenAI 兼容实现（按 KA_LLM_PROVIDER 选择供应商与模型）。"""
 
     def __init__(self, api_key: str | None = None, base_url: str | None = None,
                  model: str | None = None):
-        self.api_key = api_key or os.environ.get("opencode_go_api", "")
+        provider = os.environ.get("KA_LLM_PROVIDER", "opencode_go")
+        conf = LLM_PROVIDERS.get(provider)
+        if conf is None:
+            raise ValueError(
+                f"未知供应商: {provider}（已知: {sorted(LLM_PROVIDERS)}，"
+                f"通过 KA_LLM_PROVIDER 选择）")
+        self.api_key = api_key or os.environ.get(conf["key_env"], "")
         self.base_url = base_url or os.environ.get(
-            "OPENCODE_GO_BASE_URL", "https://opencode.ai/zen/go/v1")
-        self.model = model or os.environ.get("OPENCODE_GO_MODEL", "mimo-v2.5")
+            conf["base_url_env"], conf["base_url_default"])
+        self.model = model or os.environ.get(conf["model_env"], conf["model_default"])
         if not self.api_key:
-            raise ValueError("缺少 API Key：请设置环境变量 opencode_go_api")
+            raise ValueError(
+                f"缺少 API Key：请设置环境变量 {conf['key_env']}"
+                f"（供应商 {provider}）")
         self._client = openai.OpenAI(api_key=self.api_key, base_url=self.base_url)
         self.tokens_total: dict[str, int] = {"prompt": 0, "completion": 0}
 
