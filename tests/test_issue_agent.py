@@ -336,3 +336,11 @@ def test_review_metadata_records_manual_flag():
         "first_line": "PASS 修复一致。", "has_manual_flag": True}
     assert _review_metadata((), {}, FakeResult("PASS ok")) == {
         "first_line": "PASS ok", "has_manual_flag": False}
+
+
+def test_review_prompt_contains_domain_audit_point():
+    """REVIEW_PROMPT 含域审查要点：删除条目三条件证据可核、元数据/日志无关改动指出。"""
+    from agent.issue import REVIEW_PROMPT
+    assert "三条件" in REVIEW_PROMPT
+    assert "来源锚点" in REVIEW_PROMPT
+    assert "元数据" in REVIEW_PROMPT

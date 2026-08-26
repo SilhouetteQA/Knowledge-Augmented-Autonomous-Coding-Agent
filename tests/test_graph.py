@@ -403,3 +403,13 @@ def test_decide_system_contains_convergence_guidance():
     assert "优先最小变更并尽快验证" in system
     assert "小步验证" in system
     assert "开放型任务" in system
+
+
+def test_decide_system_contains_domain_operation_rules():
+    """_decide_system 输出含域操作规则段：删除三条件 + 无关元数据红线 + 变更清单验证。"""
+    system = _decide_system(["步骤1"], verify_rounds=0, max_verify_rounds=5)
+    assert "域操作规则" in system
+    assert "三条件" in system
+    assert "来源锚点" in system
+    assert "元数据" in system
+    assert "变更清单" in system
