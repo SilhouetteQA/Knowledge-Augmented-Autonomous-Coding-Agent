@@ -18,6 +18,7 @@ from benchmark.runner import MODEL_PRICE_USD_PER_1K, run_benchmark
 from tools.code_graph import build_code_graph
 from tools.file_tools import ToolError
 from tools.knowledge_client import get_knowledge_client
+from tools.report_trace import TraceError, fetch_trace, save_trace_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,6 +57,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="评测报告输出目录（默认 output/benchmark）")
     parser.add_argument("--compare", default=None,
                         help="对比多轮报告：run_id1,run_id2（读取 output/benchmark/<run_id>/report.json）")
+    parser.add_argument("--trace-report", default=None,
+                        help="trace 导出模式：按 trace_id 拉取并生成汇总报告（独立模式，无需任务描述）")
+    parser.add_argument("--trace-out", default="output/trace",
+                        help="trace 报告输出目录（默认 output/trace）")
     return parser
 
 
@@ -75,6 +80,25 @@ def _run_correct_mode(args: argparse.Namespace) -> int:
         print(f"抽查失败: {e}")
         return 1
     print_audit_summary(report)
+    return 0
+
+
+def _run_trace_report_mode(args: argparse.Namespace) -> int:
+    """trace 导出模式：fetch → 报告 → 打印摘要（独立模式，无需任务描述/LLM key）。"""
+    try:
+        summary = fetch_trace(
+            args.trace_report,
+            clickhouse_env=os.path.join(
+                os.path.dirname(os.path.abspath(__file__)),
+                "docker", "langfuse", ".env"))
+    except TraceError as e:
+        print(f"trace 获取失败: {e}")
+        return 1
+    report_path = save_trace_report(summary, args.trace_out)
+    print(f"trace: {summary.trace_id} | 任务: {summary.task}")
+    print(f"耗时: {summary.total_latency_s:.1f}s | 工具调用: {summary.tool_calls} | "
+          f"tokens: {summary.tokens_prompt}/{summary.tokens_completion}")
+    print(f"报告: {report_path}")
     return 0
 
 
@@ -140,7 +164,16 @@ def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """运行一次 Agent 任务并打印过程。"""
+    """CLI 入口：执行主体后在退出前统一 flush 未导出的 trace。"""
+    rc = _main_inner(argv)
+    # 短生命周期进程结束前冲刷 trace（tracing 关闭态为 no-op）
+    from tools.tracing import flush as tracing_flush
+    tracing_flush()
+    return rc
+
+
+def _main_inner(argv: list[str] | None = None) -> int:
+    """运行一次 Agent 任务并打印过程（原 main 主体，不含退出前 flush）。"""
     # Windows 控制台/重定向默认 GBK 编码，LLM 输出可能含 emoji 等 GBK 无法表示的字符，
     # 直接 print 会 UnicodeEncodeError 崩溃；统一以 UTF-8 + replace 输出（字符健壮性修复）。
     if hasattr(sys.stdout, "reconfigure"):
@@ -148,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     load_dotenv()
     args = build_parser().parse_args(argv)
+    if args.trace_report:
+        # trace 导出独立模式：无需任务描述与 LLM key，最先处理
+        return _run_trace_report_mode(args)
     if args.correct:
         return _run_correct_mode(args)
     if args.executor:

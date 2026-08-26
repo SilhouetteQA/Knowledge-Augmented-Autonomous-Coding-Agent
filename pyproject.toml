@@ -20,6 +20,7 @@ dev = [
 ]
 eval = [
     "langfuse>=4.0",
+    "clickhouse-connect>=1.7",
 ]
 
 [tool.pytest.ini_options]
