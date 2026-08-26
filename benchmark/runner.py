@@ -261,10 +261,17 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
                 cost_usd=0.0, diff="", errors=[str(e)]))
     total = len(results)
     resolved = sum(1 for r in results if r.resolution)
+    # P2-6 双口径：raw 分母为全部案例（兼容既有报告）；adjusted 分母排除 error 与
+    # environment_error（未实际运行 Agent 的案例），分母为 0 时记 0.0
+    errors = sum(1 for r in results if r.status == "error")
+    env_errors = sum(1 for r in results if r.status == "environment_error")
+    adj_denom = total - errors - env_errors
     metadata = current_metadata(getattr(llm, "model", "unknown"), executor)
     report = BenchmarkReport(metadata=metadata, total=total, resolved=resolved,
                              resolution_rate=(resolved / total) if total else 0.0,
-                             results=results)
+                             results=results,
+                             resolution_rate_adjusted=(
+                                 resolved / adj_denom) if adj_denom else 0.0)
     if out_dir:
         run_out = os.path.join(out_dir, metadata.run_id)
         save_json(report, run_out)

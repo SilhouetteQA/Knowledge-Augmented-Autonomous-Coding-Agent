@@ -402,3 +402,72 @@ def test_baseline_runs_before_agent(tmp_path, monkeypatch):
         llm, [case], _make_gold(tmp_path), "", "local", tmp_path)
     assert events == ["ensure", "setup", "test", "agent", "test"]
     assert report.results[0].status == "resolved"
+
+
+def _mk_case(case_id, number, repository):
+    """构造指定 repo 的 case（issue number 用于区分 Agent 是否抛异常）。"""
+    return _case(case_id).__class__(
+        id=case_id, category="bug", repository=repository,
+        issue=GitHubIssue(number=number, title="t", body="b", labels=[], state="open"),
+        gold_patch="gold/%s.diff" % case_id, must_pass=["test_ok.py"],
+        max_iterations=30, notes="")
+
+
+def test_report_computes_both_resolution_rates(tmp_path, monkeypatch):
+    """汇总两口径：raw=resolved/total（含 error/env），adjusted 分母排除 error 与 environment_error。"""
+    baseline_calls: dict[str, int] = {}
+
+    def fake_run_tests(path, workspace_root):
+        p = os.path.normpath(path)
+        if "r__b" in p:                        # c2：基线失败 → environment_error
+            return TestResult(1, 1, 0, 1, 0.1, [])
+        n = baseline_calls.get(p, 0)
+        baseline_calls[p] = n + 1
+        if n == 0:                             # 第一轮为基线预检，须通过
+            return TestResult(1, 0, 0, 1, 0.1, [])
+        if "r__d" in p:                        # c4：判定阶段失败 → not_resolved
+            return TestResult(1, 1, 0, 1, 0.1, [])
+        return TestResult(1, 0, 0, 1, 0.1, []) # c1/c3：判定通过
+
+    def fake_run(task, llm, **kw):
+        if task.issue_number == 1:             # c1：Agent 抛异常 → error
+            raise RuntimeError("clone 失败")
+        return _result_diff()
+
+    g = tmp_path / "gold"
+    g.mkdir(parents=True, exist_ok=True)
+    for cid in ("c1", "c2", "c3", "c4"):
+        (g / ("%s.diff" % cid)).write_text("+guard", encoding="utf-8")
+    monkeypatch.setattr(runner_mod, "run_issue_agent", fake_run)
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。"),
+                         LLMMessage(role="assistant", content="PASS 一致。")])
+    cases = [_mk_case("c1", 1, "r/a"), _mk_case("c2", 2, "r/b"),
+             _mk_case("c3", 3, "r/c"), _mk_case("c4", 4, "r/d")]
+    report = runner_mod.run_benchmark_cases(
+        llm, cases, str(tmp_path), "", "local", tmp_path)
+    by_id = {r.case_id: r for r in report.results}
+    assert by_id["c1"].status == "error"
+    assert by_id["c2"].status == "environment_error"
+    assert by_id["c3"].status == "resolved"
+    assert by_id["c4"].status == "not_resolved"
+    assert report.total == 4 and report.resolved == 1
+    # raw = 1/4（分母含 error/env）；adjusted = 1/(4-1-1) = 1/2
+    assert report.resolution_rate == pytest.approx(0.25)
+    assert report.resolution_rate_adjusted == pytest.approx(0.5)
+
+
+def test_adjusted_rate_zero_denominator(tmp_path, monkeypatch):
+    """全部 case 为 error（分母为 0）→ adjusted=0.0，不崩溃。"""
+    def boom(task, llm, **kw):
+        raise RuntimeError("全挂")
+
+    monkeypatch.setattr(runner_mod, "run_issue_agent", boom)
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case("c1"), _case("c2")], _make_gold(tmp_path), "", "local", tmp_path)
+    assert report.total == 2 and report.resolved == 0
+    assert report.resolution_rate == 0.0
+    assert report.resolution_rate_adjusted == 0.0

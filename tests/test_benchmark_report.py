@@ -35,6 +35,17 @@ def _env_error_result(case_id="schedule-647"):
         errors=["基线测试失败: test_schedule.py: failed=1 error=0 total=1"])
 
 
+def _error_result(case_id="schedule-648"):
+    """执行异常 case（error，Agent 未完成任务）。"""
+    return CaseResult(
+        case_id=case_id, category="bug", status="error",
+        resolution=False, test_pass=False, patch_acceptance=False,
+        judge_verdict="SKIP", judge_reason="SKIP 执行异常",
+        tool_success_rate=0.0, iteration_count=0, latency_s=0.5,
+        tokens_prompt=0, tokens_completion=0, cost_usd=0.0, diff="",
+        errors=["clone 失败"])
+
+
 def test_current_metadata():
     m = current_metadata("mimo-v2.5", "docker", max_iterations=30)
     assert m.model == "mimo-v2.5"
@@ -110,3 +121,27 @@ def test_markdown_marks_environment_error(tmp_path):
     assert "environment_error" in text          # 明细状态列标注
     assert "**环境错误: 1**" in text             # 核心指标计数标注
     assert "| bug | 2 | 0 | 0% | 1 |" in text   # 分类统计含环境错误列
+
+
+def test_json_carries_adjusted_rate(tmp_path):
+    """JSON 经 asdict 自动携带 resolution_rate_adjusted（P2-6，无需显式处理）。"""
+    results = [_result(), _result(False, "FAIL"), _error_result(), _env_error_result()]
+    report = BenchmarkReport(metadata=_meta(), total=4, resolved=1,
+                             resolution_rate=0.25, resolution_rate_adjusted=0.5,
+                             results=results)
+    data = json.loads(Path(save_json(report, str(tmp_path))).read_text(
+        encoding="utf-8"))
+    assert data["resolution_rate"] == 0.25
+    assert data["resolution_rate_adjusted"] == 0.5
+
+
+def test_markdown_shows_both_rates_with_comment(tmp_path):
+    """核心指标同时展示 raw 与 adjusted 两口径，并附中文口径说明（P2-6）。"""
+    results = [_result(), _result(False, "FAIL"), _error_result(), _env_error_result()]
+    report = BenchmarkReport(metadata=_meta(), total=4, resolved=1,
+                             resolution_rate=0.25, resolution_rate_adjusted=0.5,
+                             results=results)
+    text = Path(save_markdown(report, str(tmp_path))).read_text(encoding="utf-8")
+    assert "**Issue Resolution Rate: 25%** (1/4)" in text
+    assert "**Adjusted Resolution Rate: 50%** (1/2)" in text
+    assert "口径说明" in text

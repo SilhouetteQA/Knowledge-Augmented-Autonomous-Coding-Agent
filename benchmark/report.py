@@ -47,6 +47,10 @@ class BenchmarkReport:
     resolved: int
     resolution_rate: float
     results: list[CaseResult]
+    # 双口径（P2-6）：resolution_rate 分母为全部案例（raw，兼容既有报告/对比）；
+    # resolution_rate_adjusted 分母排除 error 与 environment_error，由 runner 汇总计算，
+    # 分母为 0 时记 0.0；缺省 0.0 仅为兼容直接构造报告的既有调用
+    resolution_rate_adjusted: float = 0.0
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -104,7 +108,21 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
         f"**Issue Resolution Rate: {report.resolution_rate:.0%}** "
         f"({report.resolved}/{report.total})",
         "",
-        f"**环境错误: {sum(1 for r in report.results if r.status == 'environment_error')}**"
+    ]
+    err_n = sum(1 for r in report.results if r.status == "error")
+    env_n = sum(1 for r in report.results if r.status == "environment_error")
+    adj_denom = report.total - err_n - env_n
+    adj_note = "（分母为 0，Adjusted 记 0.0）" if adj_denom == 0 else ""
+    lines += [
+        f"**Adjusted Resolution Rate: {report.resolution_rate_adjusted:.0%}** "
+        f"({report.resolved}/{adj_denom})" + adj_note,
+        "",
+        "> 口径说明：Resolution Rate 分母为全部案例（raw，含 error / environment_error）；"
+        "Adjusted Resolution Rate 分母排除执行异常（error）与基线环境错误"
+        "（environment_error），仅统计实际运行 Agent 的案例，代表被测能力口径；"
+        "分母为 0 时 Adjusted 记 0.0。",
+        "",
+        f"**环境错误: {env_n}**"
         "（基线测试失败，未运行 Agent）",
         "",
     ]
