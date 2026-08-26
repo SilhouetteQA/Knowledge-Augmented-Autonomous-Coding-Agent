@@ -2,7 +2,8 @@
 """LangGraph 显式阶段编排：plan → decide ⇄ execute → (verify) → reflect → finalize。
 
 Task 5 版本：plan → decide ⇄ execute → verify → reflect ⇄ decide → finalize；
-decide 无工具调用进入强制验证（verify/reflect 闭环），verify_rounds 上限 3、迭代上限 20。
+decide 无工具调用进入强制验证（verify/reflect 闭环），verify_rounds 上限 3、迭代上限 20；
+迭代触顶（finalize_iter_limited）收尾前强制执行一次测试验证，为 Reviewer/审批人补充测试证据。
 """
 import json
 import os
@@ -219,6 +220,15 @@ def _parse_plan(content: str) -> list[str]:
     return ["（计划生成失败，直接执行）"]
 
 
+def _execute_verify_tests(workspace_root: str | None) -> object:
+    """执行一次仓库测试验证：verify 节点与迭代触顶强制验证共用同一执行代码。
+
+    在 graph 节点运行期调用（位于 run_agent_graph 的 sandbox_executor 上下文内），
+    与 verify 节点同执行器语义（KA_EXECUTOR / 沙箱容器）。
+    """
+    return run_tests(workspace_root=workspace_root)
+
+
 def build_graph(llm: LLMClient, max_iterations: int = 20,
                 max_verify_rounds: int = 3,
                 workspace_root: str | None = None,
@@ -272,7 +282,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
 
     @traced("graph.verify", as_type="span")
     def verify_node(state: AgentState) -> dict:
-        tr = run_tests(workspace_root=workspace_root)
+        tr = _execute_verify_tests(workspace_root)
         return {
             "test_result": tr,
             "verify_rounds": state["verify_rounds"] + 1,
@@ -304,9 +314,22 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     def finalize_limited_node(state: AgentState) -> dict:
         return {"final_answer": "已达到上限，任务未完成", "status": "limit"}
 
+    @traced("graph.finalize_iter_limited", as_type="span")
+    def finalize_iter_limited_node(state: AgentState) -> dict:
+        # 迭代触顶：收尾前强制执行一次测试验证，为 Reviewer/审批人补充测试证据；
+        # 结果仅记入 verify_rounds/test_results，不改变触顶语义（final_answer/status）。
+        tr = _execute_verify_tests(workspace_root)
+        return {
+            "final_answer": "已达到上限，任务未完成",
+            "status": "limit",
+            "test_result": tr,
+            "verify_rounds": state["verify_rounds"] + 1,
+            "test_results": state["test_results"] + [tr],
+        }
+
     def route_after_decide(state: AgentState) -> str:
         if state["pending_tool_calls"]:
-            return "execute" if state["iteration"] <= max_iterations else "finalize_limited"
+            return "execute" if state["iteration"] <= max_iterations else "finalize_iter_limited"
         return "verify"
 
     def route_after_verify(state: AgentState) -> str:
@@ -326,11 +349,12 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     g.add_node("reflect", reflect_node)
     g.add_node("finalize", finalize_node)
     g.add_node("finalize_limited", finalize_limited_node)
+    g.add_node("finalize_iter_limited", finalize_iter_limited_node)
     g.set_entry_point("plan")
     g.add_edge("plan", "decide")
     g.add_conditional_edges("decide", route_after_decide,
                             {"execute": "execute", "verify": "verify",
-                             "finalize_limited": "finalize_limited"})
+                             "finalize_iter_limited": "finalize_iter_limited"})
     g.add_edge("execute", "decide")
     g.add_conditional_edges("verify", route_after_verify,
                             {"finalize": "finalize", "finalize_limited": "finalize_limited",
@@ -338,6 +362,7 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     g.add_edge("reflect", "decide")
     g.add_edge("finalize", END)
     g.add_edge("finalize_limited", END)
+    g.add_edge("finalize_iter_limited", END)
     return g.compile()
 
 

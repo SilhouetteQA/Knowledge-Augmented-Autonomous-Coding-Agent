@@ -109,6 +109,54 @@ def test_graph_iteration_limit(tmp_path):
     assert result.iteration_count == 21
 
 
+def test_graph_iteration_limit_forced_verify(tmp_path):
+    """迭代触顶路径（脚本耗尽仍未声称完成）强制补一次测试验证：verify_rounds >= 1 且 test_results 非空。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "test_ok.py").write_text(
+        "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    script = [_plan_msg(["循环"])] + [
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id=f"c{i}", name="list_files", arguments={})])
+        for i in range(25)
+    ]
+    result = run_agent_graph("任务", MockLLMClient(script),
+                             max_iterations=20, workspace_root=str(ws))
+    # 语义不变量：触顶收尾与 final_answer 保持不变
+    assert result.stopped_by_limit is True
+    assert result.final_answer == "已达到上限，任务未完成"
+    # 强制验证证据：真实执行仓库测试，结果记入结果集（与 verify 路径字段语义一致）
+    assert result.verify_rounds >= 1
+    assert len(result.test_results) >= 1
+    tr = result.test_results[0]
+    assert tr.passed >= 1 and tr.failed == 0
+
+
+def test_graph_iteration_limit_forced_verify_reuses_verify_executor(monkeypatch, tmp_path):
+    """触顶强制验证复用 verify 节点的测试执行函数（同源执行代码，而非新实现）。"""
+    import agent.graph as graph_mod
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "test_ok.py").write_text(
+        "def test_a():\n    assert 1 == 1\n", encoding="utf-8")
+    script = [_plan_msg(["循环"])] + [
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id=f"c{i}", name="list_files", arguments={})])
+        for i in range(25)
+    ]
+    calls: list[str | None] = []
+    real = graph_mod._execute_verify_tests
+
+    def spy(workspace_root=None):
+        calls.append(workspace_root)
+        return real(workspace_root)
+    monkeypatch.setattr(graph_mod, "_execute_verify_tests", spy)
+    run_agent_graph("任务", MockLLMClient(script),
+                    max_iterations=20, workspace_root=str(ws))
+    # 全程无 verify 节点触发（每轮都带工具调用），唯一调用来自触顶强制验证
+    assert calls == [str(ws)]
+
+
 def test_graph_decide_can_call_run_tests(tmp_path):
     """decide 可调用 run_tests 工具（回归 spec 工具集缺口）。"""
     ws = tmp_path / "ws"
