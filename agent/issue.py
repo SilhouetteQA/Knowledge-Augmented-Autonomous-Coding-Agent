@@ -4,6 +4,7 @@ Get Issue → Clone → Branch → Work（LangGraph 沙箱）→ Diff → Review
 推送唯一入口为 main.py --approve（人工审批门禁，W8）。
 凭据边界：gh/git 写操作在宿主与 --approve 阶段执行（沙箱容器内无凭据）。
 """
+import glob
 import os
 from dataclasses import dataclass
 
@@ -20,10 +21,13 @@ from tools.github_tools import (
     get_repository,
     git_diff_since,
     sync_repository,
+    _run,          # 宿主只读执行器（统一编码/超时/ToolError 语义，A3 复用）
 )
 from tools.tracing import traced
 
-# Review 提示词（独立审查角色）：审查输入 = Issue + diff + 验证轮数，不见工作过程。
+# Review 提示词（独立审查角色）：审查输入 = Issue + diff + 验证轮数 + 工作树事实，
+# 不见工作过程。工作树事实（_review_context 产物）为 Reviewer 的文本证据面：
+# 变更/删除/新增清单与关键路径存在性，防止"只看 diff 文本"产生的缺失幻觉。
 REVIEW_PROMPT = (
     "你是独立代码审查者（Reviewer Agent），独立于实施该变更的 Coder，审查以下变更：\n"
     "1. 变更是否解决 Issue 描述的问题；\n"
@@ -72,6 +76,78 @@ def repo_dir_name(repository: str) -> str:
     return repository.replace("/", "__")
 
 
+# 工作树关键路径探针（Reviewer 证据面：路径存在/缺失为正交事实，防只看 diff 的幻觉）
+REVIEW_CONTEXT_PROBES = [
+    "config/identity_map.json",
+    "data/entity_source_map.json",
+    "data/*.txt",
+]
+
+
+def _probe_review_context(repo_dir: str) -> list[str]:
+    """关键路径存在性探针：具体路径用 os.path.isfile，通配路径按存在文件数标计。"""
+    verdicts = []
+    for path in REVIEW_CONTEXT_PROBES:
+        abs_path = os.path.join(repo_dir, path)
+        if "*" in path:
+            found = glob.glob(abs_path)
+            verdicts.append(f"{path}: 存在（{len(found)} 个文件）" if found
+                            else f"{path}: 缺失")
+        else:
+            verdicts.append(f"{path}: 存在" if os.path.isfile(abs_path)
+                            else f"{path}: 缺失")
+    return verdicts
+
+
+def _review_context(repo_dir: str, base_branch: str) -> str:
+    """收集工作树事实摘要，供 Reviewer 核对论据（防只看 diff 文本的幻觉）。
+
+    事实 = 变更清单（git status --porcelain）+ 删除文件（git diff --name-status
+    相对 base）+ 新增文件（status 未跟踪 ?? 项）+ 关键路径存在性（文件系统探针）。
+    目录必须自身就是 git 工作树（含 .git，覆盖完整克隆与 linked worktree 的
+    .git 文件形式）：缺失时降级——否则 git 会向上回溯命中外围仓库，把外层仓库
+    的事实误报成 repo_dir 的事实（正是本函数要防的幻觉来源）。
+    全部为宿主只读命令；任一只读命令失败（非 git 仓库/命令错误）→ 降级为简短
+    提示而非抛错——审查输入缺失事实时明确告知 Reviewer 优于中断（架构决定的
+    降级语义：明确告知是正确行为，与"不写 fallback"不冲突）。
+    """
+    if not os.path.isdir(repo_dir):
+        return "（工作树事实不可用: 仓库目录不存在）"
+    if not os.path.exists(os.path.join(repo_dir, ".git")):
+        return "（工作树事实不可用: 目录不是 git 工作树）"
+    status_out = _run(["git", "status", "--porcelain"], cwd=repo_dir)
+    if isinstance(status_out, ToolError):
+        return f"（工作树事实不可用: {status_out.message.splitlines()[0]}）"
+    name_status = _run(["git", "diff", "--name-status", base_branch], cwd=repo_dir)
+    if isinstance(name_status, ToolError):
+        return f"（工作树事实不可用: {name_status.message.splitlines()[0]}）"
+
+    changed = [line for line in status_out.splitlines() if line.strip()]
+    untracked = [line[3:] for line in changed if line.startswith("??")]
+    deleted = [line.split("\t")[-1] for line in name_status.splitlines()
+               if line.startswith("D")]
+
+    out = []
+    if changed:
+        out.append(f"变更清单（{len(changed)} 项）:")
+        out += [f"  {line}" for line in changed]
+    else:
+        out.append("变更清单: （无变更）")
+    if deleted:
+        out.append("删除文件:")
+        out += [f"  {line}" for line in deleted]
+    else:
+        out.append("删除文件: （无）")
+    if untracked:
+        out.append("新增文件:")
+        out += [f"  {line}" for line in untracked]
+    else:
+        out.append("新增文件: （无）")
+    out.append("关键路径存在性:")
+    out += [f"  {line}" for line in _probe_review_context(repo_dir)]
+    return "\n".join(out)
+
+
 def _review_metadata(args, kwargs, result) -> dict:
     """review span metadata：记录结论首行（PASS/FAIL）与「人工关注」标记。"""
     text = str(result or "").strip()
@@ -84,14 +160,20 @@ def _review_metadata(args, kwargs, result) -> dict:
 
 @traced("review", as_type="generation", metadata_fn=_review_metadata)
 def _review_diff(llm: LLMClient, diff: str, issue_text: str,
-                 verify_rounds: int) -> str:
-    """独立 Reviewer 审查 diff，返回结论文本（首行 PASS/FAIL + 中文要点）。"""
+                 verify_rounds: int, context: str | None = None) -> str:
+    """独立 Reviewer 审查 diff，返回结论文本（首行 PASS/FAIL + 中文要点）。
+
+    context：工作树事实摘要（_review_context 产物），非 None 时插入
+    Issue/验证轮数之后、Diff 之前（Reviewer 的文本证据面）。
+    """
     if not diff.strip():
         return "FAIL 无代码变更"
+    context_section = f"\n\n工作树事实:\n{context}" if context else ""
     msg = llm.chat(
         [{"role": "system", "content": REVIEW_PROMPT},
          {"role": "user",
-          "content": f"Issue:\n{issue_text}\n\n验证轮数: {verify_rounds}\n\nDiff:\n{diff}"}],
+          "content": f"Issue:\n{issue_text}\n\n验证轮数: {verify_rounds}"
+                     f"{context_section}\n\nDiff:\n{diff}"}],
         [],
     )
     return (msg.content or "FAIL 审查无输出").strip()
@@ -144,7 +226,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
     diff = git_diff_since(repo_dir, repo_info.default_branch)
     if isinstance(diff, ToolError):
         raise ToolError(f"读取 diff 失败: {diff.message}")
-    review = _review_diff(llm, diff, prompt, result.verify_rounds)
+    review = _review_diff(llm, diff, prompt, result.verify_rounds,
+                          _review_context(repo_dir, repo_info.default_branch))
 
     # Review 未通过：以审查意见为任务重跑一轮（上限 1 次）。
     # retried 在首轮判定时捕获（review 后续会被重试后的结论覆盖），
@@ -158,7 +241,10 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         diff = git_diff_since(repo_dir, repo_info.default_branch)
         if isinstance(diff, ToolError):
             raise ToolError(f"读取 diff 失败: {diff.message}")
-        review = _review_diff(llm, diff, retry_prompt, result.verify_rounds)
+        # 重试轮同样携带工作树事实：diff 已在重试后重新计算，context 也取
+        # 重试后的新状态（工作树可能在重试中变化，首轮事实已过时）。
+        review = _review_diff(llm, diff, retry_prompt, result.verify_rounds,
+                              _review_context(repo_dir, repo_info.default_branch))
 
     approval_path = None
     if task.approval_dir:

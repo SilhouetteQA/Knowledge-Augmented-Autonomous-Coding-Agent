@@ -1,6 +1,7 @@
 """GitHub Issue Agent 编排测试：Mock LLM + Fake GitHub（不触网、不真推）。"""
 import json
 import os
+import subprocess
 
 import pytest
 
@@ -208,9 +209,9 @@ def test_review_diff_receives_verify_rounds(tmp_path, monkeypatch):
     seen = {}
     original = issue_mod._review_diff
 
-    def spy(llm, diff, issue_text, verify_rounds):
+    def spy(llm, diff, issue_text, verify_rounds, context=None):
         seen["verify_rounds"] = verify_rounds
-        return original(llm, diff, issue_text, verify_rounds)
+        return original(llm, diff, issue_text, verify_rounds, context)
 
     monkeypatch.setattr(issue_mod, "_review_diff", spy)
     script = _graph_script() + [
@@ -344,3 +345,122 @@ def test_review_prompt_contains_domain_audit_point():
     assert "三条件" in REVIEW_PROMPT
     assert "来源锚点" in REVIEW_PROMPT
     assert "元数据" in REVIEW_PROMPT
+
+
+# --- A3: Reviewer 证据面扩展（审查上下文携带工作树事实） ---
+
+
+def _git(cwd: str, *args: str) -> str:
+    """测试内真实 git 调用；失败即断言错误（前置准备失败 = 测试环境问题）。"""
+    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+    assert proc.returncode == 0, f"git {' '.join(args)} 失败: {proc.stderr}"
+    return proc.stdout.strip()
+
+
+def _make_worktree_repo(tmp_path) -> str:
+    """构造真实 git 仓库：基准提交后制造 修改+删除+新增 混合工作树状态。
+
+    基准含 config/identity_map.json（后修改）、config/archived.json（后删除）、
+    data/report.txt（报告类探针存在）；data/entity_source_map.json 从不创建
+    （探针缺失面）；data/new.txt 为未跟踪新增文件。
+    """
+    repo = tmp_path / "worktree-repo"
+    repo.mkdir()
+    (repo / "config").mkdir()
+    (repo / "data").mkdir()
+    (repo / "config" / "identity_map.json").write_text("{}", encoding="utf-8")
+    (repo / "config" / "archived.json").write_text("{}", encoding="utf-8")
+    (repo / "data" / "report.txt").write_text("report", encoding="utf-8")
+    _git(str(repo), "init")
+    _git(str(repo), "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(str(repo), "add", "-A")
+    _git(str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-m", "base")
+    # 工作树变更：修改 identity_map、删除 archived、新增未跟踪 new.txt
+    (repo / "config" / "identity_map.json").write_text(
+        '{"updated": true}', encoding="utf-8")
+    (repo / "config" / "archived.json").unlink()
+    (repo / "data" / "new.txt").write_text("new", encoding="utf-8")
+    return str(repo)
+
+
+def test_review_context_reports_worktree_facts(tmp_path):
+    """_review_context 输出含四类事实：变更清单/删除文件/新增文件/关键路径存在性。"""
+    out = issue_mod._review_context(_make_worktree_repo(tmp_path), "main")
+    # ① 变更清单（status porcelain 原样行）
+    assert "变更清单" in out
+    assert " M config/identity_map.json" in out
+    # ② 删除文件（diff --name-status 相对 base）
+    assert "删除文件" in out
+    assert "config/archived.json" in out
+    # ④ 新增文件（status 未跟踪 ?? 项）
+    assert "新增文件" in out
+    assert "data/new.txt" in out
+    # ③ 关键路径存在性：identity_map 存在 / entity_source_map 缺失 / 报告类存在
+    assert "关键路径存在性" in out
+    assert "config/identity_map.json: 存在" in out
+    assert "data/entity_source_map.json: 缺失" in out
+    assert "data/*.txt: 存在" in out
+
+
+def test_review_context_degrades_for_non_git_dir(tmp_path):
+    """非 git 目录：降级为简短提示而不是抛错（审查输入缺事实时明确告知）。"""
+    out = issue_mod._review_context(str(tmp_path / "not-a-repo"), "main")
+    assert out.startswith("（工作树事实不可用")
+    # 存在但自身非 git 工作树（无 .git）：不能放任 git 向上回溯命中外围仓库，
+    # 否则会把外层仓库的事实误报成 repo_dir 的事实。
+    plain_dir = tmp_path / "plain-dir"
+    plain_dir.mkdir()
+    out3 = issue_mod._review_context(str(plain_dir), "main")
+    assert out3 == "（工作树事实不可用: 目录不是 git 工作树）"
+    # 不存在目录同样降级
+    out2 = issue_mod._review_context(str(tmp_path / "no-such-dir"), "main")
+    assert out2.startswith("（工作树事实不可用")
+
+
+def test_review_diff_injects_worktree_context():
+    """传入 context 时 user 消息含「工作树事实」段，位于 Issue/验证轮数之后、Diff 之前。"""
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS ok")])
+    issue_mod._review_diff(mock, diff="+a\n-b\n", issue_text="issue-text",
+                           verify_rounds=1, context="变更清单:  x\n删除文件:  y")
+    user = mock.calls[0][0][1]["content"]
+    assert "工作树事实" in user
+    assert "变更清单:  x" in user
+    assert user.index("Issue:") < user.index("工作树事实") < user.index("Diff:")
+
+
+def test_review_diff_without_context_omits_section():
+    """不传 context（向后兼容）：user 消息不含「工作树事实」段。"""
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS ok")])
+    issue_mod._review_diff(mock, diff="+a\n-b\n", issue_text="issue-text",
+                           verify_rounds=1)
+    user = mock.calls[0][0][1]["content"]
+    assert "工作树事实" not in user
+
+
+def test_run_issue_agent_passes_review_context_both_rounds(tmp_path, monkeypatch):
+    """首轮与重试轮的 _review_diff 都收到工作树上下文（临时目录非 git → 降级提示）。"""
+    _patch_github(monkeypatch)
+    seen = {"contexts": []}
+    original = issue_mod._review_diff
+
+    def spy(llm, diff, issue_text, verify_rounds, context=None):
+        seen["contexts"].append(context)
+        return original(llm, diff, issue_text, verify_rounds, context)
+
+    monkeypatch.setattr(issue_mod, "_review_diff", spy)
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复"),
+        LLMMessage(role="assistant", content="FAIL 缺少边界测试"),
+        LLMMessage(role="assistant", content=json.dumps(["补测试"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已补测试"),
+        LLMMessage(role="assistant", content="PASS 测试已补齐。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path))
+    run_issue_agent(task, MockLLMClient(script))
+    assert len(seen["contexts"]) == 2
+    assert all(c is not None for c in seen["contexts"])          # 两次调用都传了 context
+    assert all("工作树事实不可用" in c for c in seen["contexts"])  # 非 git 目录 → 降级提示
