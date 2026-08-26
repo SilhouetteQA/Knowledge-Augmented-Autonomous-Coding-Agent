@@ -117,7 +117,6 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
                 IssueTask(repository=case.repository,
                           issue_number=case.issue.number,
                           workspace_root=repo_root,
-                          push=False,
                           max_iterations=case.max_iterations,
                           issue_snapshot=case.issue),
                 llm)

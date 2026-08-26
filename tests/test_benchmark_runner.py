@@ -53,7 +53,7 @@ def test_resolved_case(tmp_path, monkeypatch):
     assert r.status == "resolved" and r.resolution is True
     assert r.test_pass is True and r.patch_acceptance is True
     assert r.judge_verdict == "PASS"
-    assert out["task"].push is False
+    assert out["task"].approval_dir is None      # 评估模式不产审批单（approval_dir 未配置）
     assert out["task"].issue_snapshot is not None
 
 

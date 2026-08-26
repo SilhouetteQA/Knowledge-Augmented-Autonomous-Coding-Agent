@@ -112,7 +112,6 @@ def _run_issue_mode(args: argparse.Namespace, llm) -> int:
     task = IssueTask(
         repository=repo, issue_number=int(num),
         workspace_root=args.workspace,
-        push=args.push or os.environ.get("KA_ISSUE_PUSH") == "1",
         max_iterations=args.max_iterations,
     )
     result = run_issue_agent(task, llm)
