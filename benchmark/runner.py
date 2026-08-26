@@ -212,53 +212,81 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     )
 
 
+def _case_metadata(args, kwargs, result) -> dict:
+    """evaluation.case span metadata：case_id + category（+ status）。
+
+    _run_one_case(case, llm, case_dir, repo_root) 的 case 位于 args[0]；
+    result 为 CaseResult，status 缺省时仅返回 case_id/category。
+    """
+    case = args[0] if args else None
+    meta = {
+        "case_id": getattr(case, "id", "") or "",
+        "category": getattr(case, "category", "") or "",
+    }
+    status = getattr(result, "status", None)
+    if status:
+        meta["status"] = status
+    return meta
+
+
+@traced("evaluation.case", as_type="span", metadata_fn=_case_metadata)
+def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
+                  repo_root: str) -> CaseResult:
+    """执行单 case 全流程（repo 就绪 → setup → 基线预检 → Agent → 判定）并返回结果。
+
+    单独抽成函数以便 traced 装饰为 case 级 evaluation.case span（P2-8，spec
+    §4.6 遗留）：metadata 含 case_id/category/status；tracing 关闭态直通
+    零开销。任一环节异常收敛为该 case 的 error 结果，不中断其余 case。
+    """
+    start = time.monotonic()
+    prompt_before = llm.tokens_total["prompt"]
+    completion_before = llm.tokens_total["completion"]
+    repo_dir = os.path.join(repo_root, _repo_dir_name(case.repository))
+    try:
+        _ensure_repository(repo_root, repo_dir, case.repository)
+        _run_setup_commands(case, repo_dir)
+        baseline_ok, summary = _test_summary(case, repo_dir)
+        if not baseline_ok:
+            return _environment_error_result(
+                case, summary, llm, prompt_before, completion_before,
+                start, time.monotonic())
+        run = run_issue_agent(
+            IssueTask(repository=case.repository,
+                      issue_number=case.issue.number,
+                      workspace_root=repo_root,
+                      max_iterations=case.max_iterations,
+                      issue_snapshot=case.issue),
+            llm)
+        return _case_result(
+            case, llm, case_dir, repo_dir, prompt_before, completion_before,
+            start, time.monotonic(), run)
+    except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
+        return CaseResult(
+            case_id=case.id, category=case.category, status="error",
+            resolution=False, test_pass=False, patch_acceptance=False,
+            judge_verdict="SKIP", judge_reason="SKIP 执行异常",
+            tool_success_rate=0.0, iteration_count=0,
+            latency_s=time.monotonic() - start,
+            tokens_prompt=llm.tokens_total["prompt"] - prompt_before,
+            tokens_completion=llm.tokens_total["completion"] - completion_before,
+            cost_usd=0.0, diff="", errors=[str(e)])
+
+
 def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
                         case_dir: str,
                         out_dir: str, executor: str,
                         repo_root: str) -> BenchmarkReport:
     """执行一组案例并返回汇总报告（任一 case 异常不中断）。
 
-    每 case 顺序（P0-2）：repo 就绪 → setup_commands（依赖先装好）→ 基线预检
-    （未修改的原仓库跑 must_pass）→ 基线失败标 environment_error 并跳过
-    Agent → 基线通过则 Agent → 测试判定 → judge。基线失败 = 环境缺口而非用例
-    问题；Agent 内部 sync 会 clean 未跟踪缓存，依赖是环境级的不会丢，故判定
-    阶段不再重复 setup。
+    每 case 顺序（P0-2，见 _run_one_case）：repo 就绪 → setup_commands（依赖
+    先装好）→ 基线预检（未修改的原仓库跑 must_pass）→ 基线失败标
+    environment_error 并跳过 Agent → 基线通过则 Agent → 测试判定 → judge。基线
+    失败 = 环境缺口而非用例问题；Agent 内部 sync 会 clean 未跟踪缓存，依赖是
+    环境级的不会丢，故判定阶段不再重复 setup。
     """
     results: list[CaseResult] = []
     for case in cases:
-        start = time.monotonic()
-        prompt_before = llm.tokens_total["prompt"]
-        completion_before = llm.tokens_total["completion"]
-        repo_dir = os.path.join(repo_root, _repo_dir_name(case.repository))
-        try:
-            _ensure_repository(repo_root, repo_dir, case.repository)
-            _run_setup_commands(case, repo_dir)
-            baseline_ok, summary = _test_summary(case, repo_dir)
-            if not baseline_ok:
-                results.append(_environment_error_result(
-                    case, summary, llm, prompt_before, completion_before,
-                    start, time.monotonic()))
-                continue
-            run = run_issue_agent(
-                IssueTask(repository=case.repository,
-                          issue_number=case.issue.number,
-                          workspace_root=repo_root,
-                          max_iterations=case.max_iterations,
-                          issue_snapshot=case.issue),
-                llm)
-            results.append(_case_result(
-                case, llm, case_dir, repo_dir, prompt_before, completion_before,
-                start, time.monotonic(), run))
-        except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
-            results.append(CaseResult(
-                case_id=case.id, category=case.category, status="error",
-                resolution=False, test_pass=False, patch_acceptance=False,
-                judge_verdict="SKIP", judge_reason="SKIP 执行异常",
-                tool_success_rate=0.0, iteration_count=0,
-                latency_s=time.monotonic() - start,
-                tokens_prompt=llm.tokens_total["prompt"] - prompt_before,
-                tokens_completion=llm.tokens_total["completion"] - completion_before,
-                cost_usd=0.0, diff="", errors=[str(e)]))
+        results.append(_run_one_case(case, llm, case_dir, repo_root))
     total = len(results)
     resolved = sum(1 for r in results if r.resolution)
     # P2-6 双口径：raw 分母为全部案例（兼容既有报告）；adjusted 分母排除 error 与

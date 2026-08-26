@@ -471,3 +471,91 @@ def test_adjusted_rate_zero_denominator(tmp_path, monkeypatch):
     assert report.total == 2 and report.resolved == 0
     assert report.resolution_rate == 0.0
     assert report.resolution_rate_adjusted == 0.0
+
+
+# --- E8: case 级 evaluation.case span（case_id/category metadata，P2-8） ---
+
+
+def _probe_runner_module(monkeypatch, fake_traced):
+    """以独立模块名重放 benchmark/runner.py 顶层，捕获模块级 traced 装饰注册。
+
+    runner.py 的 _run_one_case 是模块级装饰（import 时已执行），无法在
+    runner_mod 上直接断言注册；重放源文件使 @traced 经 monkeypatch 的
+    tools.tracing.traced 执行（沿用 test_issue_agent.py 的 probe 模式）。
+    """
+    import importlib.util
+    import pathlib
+    import sys
+    import tools.tracing as tracing
+    monkeypatch.setattr(tracing, "traced", fake_traced)
+    src = pathlib.Path(__file__).resolve().parent.parent / "benchmark" / "runner.py"
+    spec = importlib.util.spec_from_file_location("benchmark.runner_probe", src)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return mod
+
+
+def test_run_one_case_traced_registered_with_case_span(monkeypatch):
+    """_run_one_case 模块级注册 traced("evaluation.case") span，且 metadata_fn 已接线。"""
+    registry = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        registry.append((name, as_type, metadata_fn))
+        return lambda f: f
+
+    mod = _probe_runner_module(monkeypatch, fake_traced)
+    assert mod._run_one_case is not None
+    regs = [(n, t, m) for n, t, m in registry if n == "evaluation.case"]
+    assert len(regs) == 1
+    _, as_type, metadata_fn = regs[0]
+    assert as_type == "span"
+    assert metadata_fn is not None
+
+
+def test_evaluation_case_metadata_extracts_case_id_category_status():
+    """_case_metadata 从 args/result 提取 case_id、category 与 status。"""
+    from benchmark.runner import _case_metadata
+    case = _case("schedule-646")
+    result = type("R", (), {"status": "resolved"})()
+    assert _case_metadata((case,), {}, result) == {
+        "case_id": "schedule-646", "category": "bug", "status": "resolved"}
+    # 结果无 status 属性时仅返回 case_id/category（旧对象直通不报错）
+    assert _case_metadata((case,), {}, object()) == {
+        "case_id": "schedule-646", "category": "bug"}
+
+
+def test_run_one_case_under_span_wrapper_still_runs(tmp_path, monkeypatch):
+    """evaluation.case span 包装（fake traced 开启态）下 _run_one_case 正常执行并返回。"""
+    calls: list[str] = []
+    metas: list[dict] = []
+
+    def fake_traced(name=None, as_type="span", metadata_fn=None):
+        def deco(func):
+            import functools
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                calls.append(name)
+                result = func(*args, **kwargs)
+                if metadata_fn is not None:
+                    metas.append(metadata_fn(args, kwargs, result))
+                return result
+            return wrapper
+        return deco
+
+    mod = _probe_runner_module(monkeypatch, fake_traced)
+    monkeypatch.setattr(mod, "_ensure_repository", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff())
+    monkeypatch.setattr(mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    result = mod._run_one_case(_case(), llm, _make_gold(tmp_path), str(tmp_path))
+    assert result.status == "resolved" and result.resolution is True
+    assert calls == ["evaluation.case"]
+    assert metas == [{"case_id": "schedule-646", "category": "bug",
+                      "status": "resolved"}]
