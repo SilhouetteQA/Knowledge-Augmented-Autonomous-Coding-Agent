@@ -14,7 +14,7 @@
 | W4 | Repository Intelligence | feature/w4-repo-intelligence | W1 | [x] 已完成 |
 | W5 | GitHub Issue Agent + 知识抽查 | feature/w5-github-issue | W3 | [x] 已完成 |
 | W6 | Evaluation | feature/w6-evaluation | W5 | [x] 已完成 |
-| W7 | Observability | feature/w7-observability | W5 | [ ] 待开始 |
+| W7 | Observability | feature/w7-observability | W5 | [x] 已完成 |
 | W8 | Human-in-the-loop | feature/w8-human-in-the-loop | W6, W7 | [ ] 待开始 |
 
 依赖链：W1 → W2 → W3 → W5 → W6/W7 → W8；W4 与 W5 可并行。
@@ -185,18 +185,32 @@ coding-agent/
 
 ---
 
-## W7：Observability（阶段 7：全链路 Trace）
+## W7：Observability（阶段 7：全链路 Trace）（已完成）
 
 **目标**：每个任务生成完整 Trace 并记录成本指标。
 
 **任务清单**：
 
-- [ ] Trace 采集：Issue → Planner → Tool Call → LLM → Test → Failure → Retry → Review → PR 全链路
-- [ ] 指标记录：Latency / Tokens / Cost / Tool Calls / Errors / Retries / Test Results
-- [ ] 集成 Langfuse + OpenTelemetry
-- [ ] TDD + Review + 合并回 main
+- [x] Trace 采集：Issue → Planner → Tool Call → LLM → Test → Failure → Retry → Review → PR 全链路
+- [x] 指标记录：Latency / Tokens / Cost / Tool Calls / Errors / Retries / Test Results
+- [x] 集成 Langfuse + OpenTelemetry
+- [x] TDD + Review + 合并回 main
 
 **验收标准**：一次 Agent 任务执行后可导出完整 Trace 与成本报告。
+
+**完成记录（2026-08-26，Task 1-6 全部完成并审查通过）**：
+
+- 实现（6 commits，详见 devlog「W7 Observability 收尾」条目）：
+  - Task 1 `agent/graph.py`：graph 七节点 traced 埋点（plan/decide/execute/verify/reflect/finalize + finalize_limited）
+  - Task 2 `tools/shell_tools.py` test.run + `agent/loop.py`/`agent/graph.py` tool.execute span（含工具名/耗时/test 结果的 metadata）
+  - Task 3 `agent/issue.py` issue.run span metadata 记录 verify_rounds / retry_count（retry 观测与计数语义：W6 的 loop 内部重试直接计为 retry 观测数 + root span retry_count）
+  - Task 4-5 `tools/report_trace.py`（SDK 优先 + ClickHouse events_core 直查回退的数据源、JSON+Markdown 报告）+ `main.py --trace-report/--trace-out` + 退出前 flush
+  - 测试：`tests/test_tracing.py` / `test_graph.py` / `test_report_trace.py` 新增用例（traced 开关态直通、graph span 涌现、tool/test metadata、导出摘要与回退、CLI 独立模式）
+- **真实验收（Task 6）**：
+  - **导出链路**：`python main.py --trace-report 4d889e…`（真实 W6 benchmark trace，257 事件）→ report.json + report.md 产出；steps 明细 = benchmark.run ×1 + issue.run ×5 + llm.chat ×251（与 ClickHouse 计数一致）；SDK 读口在 events_only 部署不可用 → **ClickHouse 直查回退路径实测生效**
+  - **新节点链路**：纯 SDK 冒烟（三键运行时注入）产出新 trace `ec5b575f…`（8 事件）——issue.run(AGENT) → graph.plan / graph.decide(GENERATION) / graph.execute → tool.execute / test.run / graph.reflect(GENERATION) / graph.finalize 全部落库，层级 parent_span_id 正确；decide/reflect 的 usage（input/output）与 cost 落库；issue.run metadata 含 verify_rounds=2 / retry_count=1
+  - **OTLP 证据**：新 trace 各事件 metadata 均含 `telemetry.sdk.name=opentelemetry`（SDK 4.14.4，scope langfuse-sdk）——SDK 观测经 OTel 上报、ClickHouse/UI 可见即 OTLP 链路贯通证明；`--trace-report` 对新 trace 导出 steps 含全部 W7 节点 + Tool Calls: 1 + Retries: 1
+- 回归：全量 pytest **227 passed / 4 skipped / 1 failed**（唯一失败 `test_docker_integration::test_clone_repo_when_empty`，预声明的已知环境性项：容器内 github.com TLS 握手被拒 GnuTLS -110，非本窗口变更导致；4 skipped = docker 集成条件跳过）。
 
 ---
 
