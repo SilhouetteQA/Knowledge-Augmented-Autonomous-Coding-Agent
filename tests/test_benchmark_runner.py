@@ -36,6 +36,13 @@ def _result_diff(diff="+guard", steps=None):
         "steps": steps or []})()
 
 
+@pytest.fixture(autouse=True)
+def _no_repo_network(monkeypatch):
+    """基线前 repo 就绪步骤打桩：单元测试不触发真实 gh/git 网络操作。"""
+    monkeypatch.setattr(runner_mod, "_ensure_repository",
+                        lambda *args, **kwargs: None)
+
+
 def test_resolved_case(tmp_path, monkeypatch):
     """测试全绿 + Judge PASS → resolved。"""
     out = {}
@@ -83,15 +90,25 @@ def test_resolved_case_tool_success_rate(tmp_path, monkeypatch):
 
 
 def test_test_failure_not_resolved(tmp_path, monkeypatch):
+    """基线预检通过、Agent 修复后 must_pass 仍失败 → not_resolved（用例问题而非环境问题）。"""
+    state = {"baseline": True}
+
+    def fake_run_tests(path, workspace_root):
+        # 第一轮是基线预检（须通过才进入 Agent），之后是判定阶段的 must_pass
+        if state["baseline"]:
+            state["baseline"] = False
+            return TestResult(1, 0, 0, 1, 0.1, [])
+        return TestResult(1, 1, 0, 2, 0.1, [])
+
     monkeypatch.setattr(runner_mod, "run_issue_agent",
                         lambda task, llm, **kw: _result_diff())
-    monkeypatch.setattr(runner_mod, "run_tests",
-                        lambda path, workspace_root: TestResult(1, 1, 0, 2, 0.1, []))
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
     llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
     report = runner_mod.run_benchmark_cases(
         llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
     assert report.resolved == 0
-    assert report.results[0].test_pass is False
+    r = report.results[0]
+    assert r.status == "not_resolved" and r.test_pass is False
 
 
 def test_judge_skip_when_diff_empty(tmp_path, monkeypatch):
@@ -209,8 +226,8 @@ def test_case_error_continues(tmp_path, monkeypatch):
     assert by_id["c2"].status == "resolved"
 
 
-def test_setup_commands_run_in_repo_dir_in_order_before_tests(tmp_path, monkeypatch):
-    """setup 命令逐条在 repo_dir 执行（patch 已应用、must_pass 测试之前），顺序保持。"""
+def test_setup_commands_run_before_baseline_in_order(tmp_path, monkeypatch):
+    """setup 命令逐条在 repo_dir 执行（基线预检之前），基线预检与判定阶段各跑一次 must_pass。"""
     events: list[tuple[str, str, str]] = []
 
     def fake_run_command(command, cwd=None, timeout=60, workspace_root=None):
@@ -237,11 +254,12 @@ def test_setup_commands_run_in_repo_dir_in_order_before_tests(tmp_path, monkeypa
         ("setup", "pip install pytz==2024.1", repo_dir),
         ("setup", "python -m compileall .", repo_dir),
         ("test", os.path.join(repo_dir, "test_ok.py"), repo_dir),
+        ("test", os.path.join(repo_dir, "test_ok.py"), repo_dir),
     ]
 
 
 def test_setup_failure_marks_case_error_and_skips_must_pass(tmp_path, monkeypatch):
-    """setup 任一命令失败 → status=error（errors 含命令与输出），该 case 不跑 must_pass，其余继续。"""
+    """setup 任一命令失败 → status=error（errors 含命令与输出），该 case 不跑基线预检与 Agent，其余继续。"""
     test_calls: list[str] = []
 
     def fake_run_command(command, cwd=None, timeout=60, workspace_root=None):
@@ -269,5 +287,89 @@ def test_setup_failure_marks_case_error_and_skips_must_pass(tmp_path, monkeypatc
     assert r1.status == "error" and r1.test_pass is False and r1.resolution is False
     assert any("pip install pytz==2024.1" in e and "pip 安装失败" in e
                for e in r1.errors)
-    assert len(test_calls) == 1          # 仅 c2 跑了 must_pass，c1 被跳过
+    assert len(test_calls) == 2          # 仅 c2 跑 must_pass：基线预检 + 判定阶段各一次
     assert by_id["c2"].status == "resolved"
+
+
+def test_baseline_failure_marks_environment_error_and_skips_agent(tmp_path, monkeypatch):
+    """基线预检失败 → status=environment_error、resolution=False、跳过 Agent 与判定。"""
+    agent_calls: list[int] = []
+    test_paths: list[str] = []
+
+    def fake_run_tests(path, workspace_root):
+        test_paths.append(path)
+        return TestResult(0, 0, 1, 1, 0.1, [])     # error=1 → 基线失败（环境缺口）
+
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: agent_calls.append(task.issue_number)
+                        or _result_diff())
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    llm = MockLLMClient([])     # 无消息：若走到判定（judge_patch 调 chat）将失败
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    assert agent_calls == []                       # run_issue_agent 未被调用
+    r = report.results[0]
+    assert r.status == "environment_error"
+    assert r.resolution is False and r.test_pass is False
+    assert r.patch_acceptance is False and r.judge_verdict == "SKIP"
+    assert r.diff == ""
+    assert len(test_paths) == 1                    # 仅基线预检一次，判定阶段未跑
+    assert any("基线测试失败" in e and "test_ok.py" in e for e in r.errors)
+
+
+def test_baseline_failure_continues_to_next_case(tmp_path, monkeypatch):
+    """基线失败的 case 不影响后续 case：环境错误单独标注，其余 case 正常执行。"""
+    agent_calls: list[int] = []
+
+    def fake_run_tests(path, workspace_root):
+        # r__a 的基线预检失败（错误）；dbader__schedule 基线通过
+        if os.path.join("r__a", "test_ok.py") in path:
+            return TestResult(0, 1, 0, 1, 0.1, [])     # failed=1 → 基线失败
+        return TestResult(1, 0, 0, 1, 0.1, [])
+
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: agent_calls.append(task.issue_number)
+                        or _result_diff())
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    c1 = _case("c1").__class__(
+        id="c1", category="bug", repository="r/a",
+        issue=GitHubIssue(number=1, title="t", body="b", labels=[], state="open"),
+        gold_patch="gold/c1.diff", must_pass=["test_ok.py"], max_iterations=30,
+        notes="")
+    report = runner_mod.run_benchmark_cases(
+        llm, [c1, _case("c2")], _make_gold(tmp_path, "c2"), "", "local", tmp_path)
+    assert agent_calls == [646]                      # 仅 c2 运行了 Agent（issue 646）
+    by_id = {r.case_id: r for r in report.results}
+    assert by_id["c1"].status == "environment_error" and by_id["c1"].resolution is False
+    assert by_id["c2"].status == "resolved"
+
+
+def test_baseline_runs_before_agent(tmp_path, monkeypatch):
+    """执行顺序：repo 就绪 → setup → 基线预检 → Agent → 判定（setup 前置重构）。"""
+    events: list[str] = []
+
+    def fake_ensure(repo_root, repo_dir, repository):
+        events.append("ensure")
+
+    def fake_run_command(command, cwd=None, timeout=60, workspace_root=None):
+        events.append("setup")
+        return CommandResult(timeout=False, stdout="", stderr="",
+                             exit_code=0, duration=0.1)
+
+    def fake_run_tests(path, workspace_root):
+        events.append("test")
+        return TestResult(1, 0, 0, 1, 0.1, [])
+
+    monkeypatch.setattr(runner_mod, "_ensure_repository", fake_ensure)
+    monkeypatch.setattr(runner_mod, "run_command", fake_run_command)
+    monkeypatch.setattr(runner_mod, "run_tests", fake_run_tests)
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: events.append("agent") or _result_diff())
+    case = _case()
+    case.setup_commands = ["pip install pytz==2024.1"]
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [case], _make_gold(tmp_path), "", "local", tmp_path)
+    assert events == ["ensure", "setup", "test", "agent", "test"]
+    assert report.results[0].status == "resolved"

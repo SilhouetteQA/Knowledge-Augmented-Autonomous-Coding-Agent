@@ -24,6 +24,17 @@ def _result(resolved=True, judge="PASS"):
         errors=[])
 
 
+def _env_error_result(case_id="schedule-647"):
+    """基线预检失败的 case（environment_error，未运行 Agent）。"""
+    return CaseResult(
+        case_id=case_id, category="bug", status="environment_error",
+        resolution=False, test_pass=False, patch_acceptance=False,
+        judge_verdict="SKIP", judge_reason="SKIP 基线测试失败（环境缺口，未运行 Agent）",
+        tool_success_rate=0.0, iteration_count=0, latency_s=1.0,
+        tokens_prompt=0, tokens_completion=0, cost_usd=0.0, diff="",
+        errors=["基线测试失败: test_schedule.py: failed=1 error=0 total=1"])
+
+
 def test_current_metadata():
     m = current_metadata("mimo-v2.5", "docker", max_iterations=30)
     assert m.model == "mimo-v2.5"
@@ -63,3 +74,14 @@ def test_compare_reports():
     out = compare_reports([r1, r2])
     assert "run-001" in out and "run-002" in out
     assert "Resolution Rate" in out and "0.50" in out and "1.00" in out
+
+
+def test_markdown_marks_environment_error(tmp_path):
+    """environment_error 需在核心指标计数、分类统计与明细状态列可见。"""
+    report = BenchmarkReport(metadata=_meta(), total=2, resolved=0,
+                             resolution_rate=0.0,
+                             results=[_env_error_result(), _result(False, "FAIL")])
+    text = Path(save_markdown(report, str(tmp_path))).read_text(encoding="utf-8")
+    assert "environment_error" in text          # 明细状态列标注
+    assert "**环境错误: 1**" in text             # 核心指标计数标注
+    assert "| bug | 2 | 0 | 0% | 1 |" in text   # 分类统计含环境错误列

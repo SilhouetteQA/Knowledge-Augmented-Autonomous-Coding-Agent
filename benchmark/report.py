@@ -22,7 +22,7 @@ class CaseResult:
     """单个基准任务结果。"""
     case_id: str
     category: str
-    status: str                 # resolved / not_resolved / error
+    status: str                 # resolved / not_resolved / error / environment_error
     resolution: bool
     test_pass: bool
     patch_acceptance: bool
@@ -98,19 +98,23 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
         f"**Issue Resolution Rate: {report.resolution_rate:.0%}** "
         f"({report.resolved}/{report.total})",
         "",
+        f"**环境错误: {sum(1 for r in report.results if r.status == 'environment_error')}**"
+        "（基线测试失败，未运行 Agent）",
+        "",
     ]
     cats = {}
     for r in report.results:
         cats.setdefault(r.category, []).append(r)
     lines.append("## 分类统计")
     lines.append("")
-    lines.append("| 类别 | 任务数 | 解决 | 解决率 |")
-    lines.append("|------|--------|------|--------|")
+    lines.append("| 类别 | 任务数 | 解决 | 解决率 | 环境错误 |")
+    lines.append("|------|--------|------|--------|----------|")
     for cat in sorted(cats):
         rs = cats[cat]
         n = len(rs)
         ok = sum(1 for r in rs if r.resolution)
-        lines.append(f"| {cat} | {n} | {ok} | {ok / n if n else 0:.0%} |")
+        env = sum(1 for r in rs if r.status == "environment_error")
+        lines.append(f"| {cat} | {n} | {ok} | {ok / n if n else 0:.0%} | {env} |")
     lines += ["", "## 明细", "",
               "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) |",
               "|---------|------|------|------|------|-------|------|---------|---------|"]

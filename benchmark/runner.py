@@ -1,5 +1,6 @@
-"""评测运行器：遍历基准案例 → 执行 Issue Agent → 双判定 → 汇总报告。"""
+"""评测运行器：遍历基准案例 → 基线预检 → 执行 Issue Agent → 双判定 → 汇总报告。"""
 import os
+import subprocess
 import time
 
 from agent.issue import IssueTask, run_issue_agent
@@ -10,6 +11,8 @@ from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
                               current_metadata, save_json, save_markdown)
 from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import ToolError
+from tools.github_tools import (GitHubIssue, clone_repository, get_repository,
+                                sync_repository)
 from tools.shell_tools import TestResult, run_command, run_tests
 from tools.tracing import traced
 
@@ -45,13 +48,14 @@ def _tool_success_rate(steps: list) -> float:
     return (len(steps) - failed) / len(steps)
 
 
-def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
-    """must_pass 全部通过（failed==0 且 error==0 且 total>0）才 True。
+def _test_summary(case: BenchmarkCase, repo_dir: str) -> tuple[bool, str]:
+    """must_pass 全部通过 → (True, "")；否则 (False, 失败摘要)。
 
-    判定阶段的测试运行包在 sandbox_executor 上下文内：docker 执行器下
-    一个 case 一个沙箱（Agent 工作沙箱已销毁，判定阶段独立沙箱）。
-    must_pass 为相对路径时拼接 repo_dir 为绝对路径，保证两种执行器的
-    路径解析一致（DockerExecutor 以宿主 CWD 为基准解析相对路径）。
+    基线与判定阶段共用，运行方式与原 _test_pass 一致：判定阶段的测试运行包在
+    sandbox_executor 上下文内（docker 执行器下一个 case 一个沙箱）；must_pass
+    为相对路径时拼接 repo_dir 为绝对路径，保证两种执行器的路径解析一致
+    （DockerExecutor 以宿主 CWD 为基准解析相对路径）。失败摘要含测试路径与
+    pytest 计数，作为 environment_error case 的 reason（errors 首条）。
     """
     with sandbox_executor(repo_dir):
         for p in case.must_pass:
@@ -59,20 +63,29 @@ def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
             res = run_tests(path=test_path, workspace_root=repo_dir)
             if isinstance(res, TestResult):
                 if res.failed != 0 or res.error != 0 or res.total <= 0:
-                    return False
+                    return (False, f"{p}: failed={res.failed} error={res.error} "
+                                   f"total={res.total}")
             else:
-                return False
-    return True
+                detail = getattr(res, "message", repr(res))
+                return False, f"{p}: 测试执行异常（{detail}）"
+    return True, ""
+
+
+def _test_pass(case: BenchmarkCase, repo_dir: str) -> bool:
+    """must_pass 全部通过（failed==0 且 error==0 且 total>0）才 True（判定阶段）。"""
+    return _test_summary(case, repo_dir)[0]
 
 
 def _run_setup_commands(case: BenchmarkCase, repo_dir: str) -> None:
-    """逐条执行 case.setup_commands（Agent 产出 patch 已应用、must_pass 判定之前）。
+    """逐条执行 case.setup_commands（基线预检之前、未修改的 base 工作树上）。
 
-    评测语义（P0-1b）：环境依赖先装好再测，避免沙箱镜像缺库导致 test_pass 恒
-    False 的环境误伤。命令在 repo_dir（克隆目录）执行，与 run_tests 同层工具
-    （run_command）且包在 sandbox_executor 上下文内（docker 执行器下一任务一
-    沙箱，与 _test_pass 一致）；任一命令失败抛 RuntimeError（含命令与输出），
-    由 run_benchmark_cases 收敛为该 case 的 error 结果并中止剩余 setup。
+    评测语义（P0-1b + P0-2 前置重构）：环境依赖先装好基线测试才有意义——
+    基线失败 = 环境缺口而非用例问题。命令在 repo_dir（克隆目录）执行，与
+    run_tests 同层工具（run_command）且包在 sandbox_executor 上下文内（docker
+    执行器下一任务一沙箱，与 _test_pass 一致）；任一命令失败抛 RuntimeError
+    （含命令与输出），由 run_benchmark_cases 收敛为该 case 的 error 结果并
+    中止剩余 setup。依赖为环境级安装，Agent 内部 sync 的 clean 不会清掉，
+    判定阶段不再重复执行。
     """
     if not case.setup_commands:
         return
@@ -85,6 +98,69 @@ def _run_setup_commands(case: BenchmarkCase, repo_dir: str) -> None:
                 detail = (res.stderr or res.stdout or "").strip()
                 raise RuntimeError(
                     f"setup 命令失败: {cmd}（exit={res.exit_code}）: {detail}")
+
+
+def _git_checkout(repo_dir: str, base: str) -> str | None:
+    """检出 base 分支（宿主执行）；成功返回 None，失败返回错误信息。"""
+    try:
+        proc = subprocess.run(
+            ["git", "checkout", base], cwd=repo_dir, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=120)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return f"git checkout 失败: {e}"
+    if proc.returncode != 0:
+        return (proc.stderr or proc.stdout or "").strip() or "git checkout 失败"
+    return None
+
+
+def _ensure_repository(repo_root: str, repo_dir: str, repository: str) -> None:
+    """基线阶段确保仓库就绪：克隆/同步到 base 分支（未修改的原仓库）。
+
+    顺序（P0-2）：创建 workspace_root → 目录无 .git 则 clone_repository，
+    否则 sync_repository，再 git checkout <base>；base 取
+    get_repository(repository).default_branch（与 run_issue_agent 内部一致）。
+    run_issue_agent 内部也会 clone/sync，runner 提前执行一遍是为了基线测试
+    跑在干净 base 工作树上。任一 git 操作失败抛 ToolError（克隆/同步失败视为
+    执行异常，由外层收敛为该 case 的 error 结果）。
+    """
+    os.makedirs(repo_root, exist_ok=True)
+    repo = get_repository(repository)
+    if isinstance(repo, ToolError):
+        raise ToolError(f"读取仓库元信息失败: {repo.message}")
+    base = repo.default_branch
+    if not os.path.isdir(os.path.join(repo_dir, ".git")):
+        err = clone_repository(repo_dir, repository)
+        if err is not None:
+            raise ToolError(f"克隆仓库失败: {err.message}")
+    else:
+        err = sync_repository(repo_dir, base)
+        if err is not None:
+            raise ToolError(f"同步仓库失败: {err.message}")
+    err = _git_checkout(repo_dir, base)
+    if err is not None:
+        raise ToolError(f"检出 base 分支失败: {err}")
+
+
+def _environment_error_result(case: BenchmarkCase, summary: str,
+                              llm: LLMClient, prompt_before: int,
+                              completion_before: int, start: float,
+                              end: float) -> CaseResult:
+    """基线预检失败的 case 结果：environment_error，跳过 Agent 与判定。
+
+    summary 为 _test_summary 的失败摘要（测试路径 + pytest 计数），写入
+    errors 首条作为 reason；resolution=False，Agent 未运行故无 diff/tokens。
+    """
+    return CaseResult(
+        case_id=case.id, category=case.category, status="environment_error",
+        resolution=False, test_pass=False, patch_acceptance=False,
+        judge_verdict="SKIP",
+        judge_reason="SKIP 基线测试失败（环境缺口，未运行 Agent）",
+        tool_success_rate=0.0, iteration_count=0,
+        latency_s=end - start,
+        tokens_prompt=llm.tokens_total["prompt"] - prompt_before,
+        tokens_completion=llm.tokens_total["completion"] - completion_before,
+        cost_usd=0.0, diff="",
+        errors=[f"基线测试失败: {summary}"])
 
 
 def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
@@ -127,7 +203,14 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
                         case_dir: str,
                         out_dir: str, executor: str,
                         repo_root: str) -> BenchmarkReport:
-    """执行一组案例并返回汇总报告（任一 case 异常不中断）。"""
+    """执行一组案例并返回汇总报告（任一 case 异常不中断）。
+
+    每 case 顺序（P0-2）：repo 就绪 → setup_commands（依赖先装好）→ 基线预检
+    （未修改的原仓库跑 must_pass）→ 基线失败标 environment_error 并跳过
+    Agent → 基线通过则 Agent → 测试判定 → judge。基线失败 = 环境缺口而非用例
+    问题；Agent 内部 sync 会 clean 未跟踪缓存，依赖是环境级的不会丢，故判定
+    阶段不再重复 setup。
+    """
     results: list[CaseResult] = []
     for case in cases:
         start = time.monotonic()
@@ -135,6 +218,14 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
         completion_before = llm.tokens_total["completion"]
         repo_dir = os.path.join(repo_root, _repo_dir_name(case.repository))
         try:
+            _ensure_repository(repo_root, repo_dir, case.repository)
+            _run_setup_commands(case, repo_dir)
+            baseline_ok, summary = _test_summary(case, repo_dir)
+            if not baseline_ok:
+                results.append(_environment_error_result(
+                    case, summary, llm, prompt_before, completion_before,
+                    start, time.monotonic()))
+                continue
             run = run_issue_agent(
                 IssueTask(repository=case.repository,
                           issue_number=case.issue.number,
@@ -142,7 +233,6 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
                           max_iterations=case.max_iterations,
                           issue_snapshot=case.issue),
                 llm)
-            _run_setup_commands(case, repo_dir)
             results.append(_case_result(
                 case, llm, case_dir, repo_dir, prompt_before, completion_before,
                 start, time.monotonic(), run))
