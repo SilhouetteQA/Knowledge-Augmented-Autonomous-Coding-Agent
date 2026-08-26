@@ -55,6 +55,21 @@
 - `main.py --trace-report`：fetch_trace 无数据（steps 空）→ 打印「无数据」并 return 1（现 rc=0）。
 - 测试：span 注册 metadata 正确（沿用 test_issue_agent 的 probe 模式）；report_trace 空摘要 → main rc=1。
 
+### E9: 域案例判定模型（用户 2026-08-26 追加）
+- 背景：兄弟项目 #1 真实演示暴露域知识任务（删除/bridge）无 gold 可比，LLM Judge「功能等价」模型不匹配。
+- `benchmark/loader.py`：case schema 可选 `domain_check: str`（`"deletions"` / `"bridge"`，缺省无）；校验：非法值报错。
+- `benchmark/runner.py` + 新 `benchmark/domain_checks.py`：
+  - `deletions` 检查器：解析 agent diff 的删除文件集 → 对每个删除条目核验数据三字段（source_records/锚点 空 ∧ 事件参与 空 ∧ 结构化引用 0——实现为读 data 文件/索引的规则函数，判据常量集中）→ 全部满足 = PASS，任一不满足 = FAIL（附条目与字段证据）；diff 无删除 = SKIP。
+  - `bridge` 检查器：先统计受影响规范名的引用入度（改前/改后，从工作树数据重建索引或读固定索引文件）→ 入度从 0 变 >0 = PASS；无变化 = FAIL（附证据）。
+  - 判定结果并入 CaseResult（judge_verdict 用 DOMAIN_PASS/DOMAIN_FAIL/DOMAIN_SKIP，reason 含证据）；resolution = test_pass ∧ domain 判定 PASS。
+- 测试：loader 校验；deletions 检查器（构造含违规删除的 fake diff → FAIL；合规 → PASS）；bridge 检查器（fake 入度变化 → PASS/FAIL）。
+
+### E10: 交付一致性核查（用户 2026-08-26 追加）
+- 背景：#1 演示 fix_report 声称删除 17 条而实际 5 条（deliverable 与 diff 不符）。
+- `benchmark/loader.py`：case 可选 `expected_actions: dict`（如 `{"deletions": 5}`，缺省 {}）；校验类型。
+- `benchmark/runner.py`：run 后按 expected_actions 核对 diff 实际删除文件数；相符 → 记录 consistency=True；不符 → False + 差异详情入 CaseResult.errors/新字段 `consistency_note`，resolution 不受影响但在报告标注「交付报告与 diff 不一致风险」。
+- 测试：相符/不符两分支 + loader 校验。
+
 ## 收尾
 
 - 全量回归：240 passed 基线 + 新用例；双轴审查；合并 main（在 W8 合并之后）；roadmap W8 遗留节 & devlog 更新；删除 worktree。
