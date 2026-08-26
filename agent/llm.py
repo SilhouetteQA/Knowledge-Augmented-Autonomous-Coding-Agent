@@ -5,7 +5,8 @@
 - opencode_go：opencode_go_api（Key）、OPENCODE_GO_BASE_URL（端点，
   默认 https://opencode.ai/zen/go/v1）、OPENCODE_GO_MODEL（模型，默认 mimo-v2.5）；
 - deepseek：deepseek_api（Key）、DEEPSEEK_BASE_URL（端点，默认
-  https://api.deepseek.com）、DEEPSEEK_MODEL（模型，默认 deepseek-4-flash）。
+  https://api.deepseek.com）、DEEPSEEK_MODEL（模型，默认 deepseek-v4-flash，
+  端点实测模型列表：deepseek-v4-flash / deepseek-v4-flash-vision-exp / deepseek-v4-pro）。
 """
 import json
 import os
@@ -30,7 +31,7 @@ LLM_PROVIDERS: dict[str, dict[str, str]] = {
         "base_url_env": "DEEPSEEK_BASE_URL",
         "base_url_default": "https://api.deepseek.com",
         "model_env": "DEEPSEEK_MODEL",
-        "model_default": "deepseek-4-flash",
+        "model_default": "deepseek-v4-flash",
     },
 }
 

@@ -46,7 +46,7 @@ def test_deepseek_provider_uses_its_own_env(monkeypatch):
     monkeypatch.setenv("deepseek_api", "dk")
     client = OpenAICompatClient()
     assert client.base_url == "https://api.deepseek.com"
-    assert client.model == "deepseek-4-flash"
+    assert client.model == "deepseek-v4-flash"
     # 环境变量可覆盖端点与模型
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://ds.example.com/v1")
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-chat")
