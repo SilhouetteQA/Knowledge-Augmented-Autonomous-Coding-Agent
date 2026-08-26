@@ -145,3 +145,34 @@ def test_markdown_shows_both_rates_with_comment(tmp_path):
     assert "**Issue Resolution Rate: 25%** (1/4)" in text
     assert "**Adjusted Resolution Rate: 50%** (1/2)" in text
     assert "口径说明" in text
+
+
+# --- E10：交付一致性核查——明细表「交付一致」列与 JSON 字段 ---
+
+
+def test_markdown_consistency_column(tmp_path):
+    """明细表新增「交付一致」列：consistency=True → ✓、False → ✗（备注省略）。"""
+    match = _result()
+    mismatch = _result(False, "FAIL")
+    mismatch.consistency = False
+    mismatch.consistency_note = "预期删除 5 个文件，实际删除 3 个文件（实际：old_a.py 等）"
+    report = BenchmarkReport(metadata=_meta(), total=2, resolved=1,
+                             resolution_rate=0.5, results=[match, mismatch])
+    text = Path(save_markdown(report, str(tmp_path))).read_text(encoding="utf-8")
+    assert "交付一致" in text                       # 列头
+    assert text.count("✓") == 1                     # 相符行
+    assert text.count("✗") == 1                     # 不符行
+    assert mismatch.consistency_note not in text    # 备注省略（不展开细节）
+
+
+def test_json_carries_consistency_fields(tmp_path):
+    """JSON 经 asdict 自动携带 consistency / consistency_note（E10，无需显式处理）。"""
+    r = _result(False, "FAIL")
+    r.consistency = False
+    r.consistency_note = "预期删除 5 个文件，实际删除 3 个文件"
+    report = BenchmarkReport(metadata=_meta(), total=1, resolved=0,
+                             resolution_rate=0.0, results=[r])
+    data = json.loads(Path(save_json(report, str(tmp_path))).read_text(
+        encoding="utf-8"))
+    assert data["results"][0]["consistency"] is False
+    assert data["results"][0]["consistency_note"] == r.consistency_note

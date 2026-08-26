@@ -39,6 +39,8 @@ class BenchmarkCase:
     notes: str = ""
     setup_commands: list[str] = field(default_factory=list)
     domain_check: str = ""
+    # E10：交付一致性核查配置——期望动作（如 {"deletions": 5}），缺省空 dict 不核查
+    expected_actions: dict = field(default_factory=dict)
 
 
 def _validate(data: dict, path: Path) -> BenchmarkCase:
@@ -103,6 +105,17 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
             or (domain_check and domain_check not in DOMAIN_CHECKS)):
         raise CaseError(f"{path.name}: domain_check '{domain_check}' 非法"
                         f"（应为 {DOMAIN_CHECKS}）")
+    # E10：expected_actions 可选 dict（如 {"deletions": 5}），缺省 {}；非 dict →
+    # CaseError；键 deletions 存在时值须为非负 int（bool 为 int 子类，一并拒绝）。
+    expected_actions = data.get("expected_actions", {})
+    if not isinstance(expected_actions, dict):
+        raise CaseError(f"{path.name}: expected_actions 须为对象"
+                        f"（got {expected_actions!r}）")
+    if "deletions" in expected_actions:
+        del_n = expected_actions["deletions"]
+        if not isinstance(del_n, int) or isinstance(del_n, bool) or del_n < 0:
+            raise CaseError(f"{path.name}: expected_actions.deletions 须为非负整数"
+                            f"（got {del_n!r}）")
     return BenchmarkCase(
         id=case_id, category=category, repository=repo,
         issue=GitHubIssue(number=issue["number"], title=issue["title"],
@@ -111,6 +124,7 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
         gold_patch=str(gold), must_pass=list(must_pass),
         max_iterations=max_iter, task_type=task_type, notes=data.get("notes", ""),
         setup_commands=list(setup), domain_check=domain_check,
+        expected_actions=dict(expected_actions),
     )
 
 

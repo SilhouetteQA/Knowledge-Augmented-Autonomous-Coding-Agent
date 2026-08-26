@@ -221,3 +221,37 @@ def test_domain_check_invalid_raises(tmp_path, bad):
     _write_case(tmp_path, "domain", "x", domain_check=bad)
     with pytest.raises(CaseError, match=r"domain_check '.*' 非法.*deletions"):
         load_cases(str(tmp_path))
+
+
+# --- E10：expected_actions 交付一致性核查配置（可选 dict，键 deletions 非负 int） ---
+
+
+def test_expected_actions_default_empty(tmp_path):
+    """未配置 expected_actions → 缺省空 dict（不触发一致性核查）。"""
+    _write_case(tmp_path, "bug", "schedule-646")
+    c = load_cases(str(tmp_path))[0]
+    assert c.expected_actions == {}
+
+
+def test_expected_actions_valid(tmp_path):
+    """合法 expected_actions（键 deletions 非负 int；空 dict 亦合法）正常载入。"""
+    _write_case(tmp_path, "bug", "c-1", expected_actions={"deletions": 5})
+    _write_case(tmp_path, "bug", "c-2", expected_actions={})
+    cases = {c.id: c for c in load_cases(str(tmp_path))}
+    assert cases["c-1"].expected_actions == {"deletions": 5}
+    assert cases["c-2"].expected_actions == {}
+
+
+@pytest.mark.parametrize("bad", [
+    ["deletions"],          # 非 dict（列表）
+    "deletions=5",          # 非 dict（字符串）
+    {"deletions": -1},      # deletions 为负
+    {"deletions": "5"},     # deletions 非 int（字符串）
+    {"deletions": 5.0},     # deletions 非 int（float）
+    {"deletions": True},    # deletions 为 bool（int 子类，须拒绝）
+])
+def test_expected_actions_invalid_raises(tmp_path, bad):
+    """非法 expected_actions → CaseError（非 dict 或 deletions 非非负 int）。"""
+    _write_case(tmp_path, "bug", "x", expected_actions=bad)
+    with pytest.raises(CaseError, match="expected_actions"):
+        load_cases(str(tmp_path))

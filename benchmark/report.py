@@ -37,6 +37,11 @@ class CaseResult:
     diff: str
     errors: list[str] = field(default_factory=list)
     test_error_summary: str = ""   # must_pass 失败摘要（判定阶段；无失败为空）
+    # E10：交付一致性核查——diff 实际删除数 与 expected_actions 核对；相符/未配 →
+    # True 且 note 空，不符 → False + 差异详情（预期/实际 + 实际删除文件前几条）。
+    # 仅标注风险，不改变 resolution 语义（控制器裁决）。
+    consistency: bool = True
+    consistency_note: str = ""
 
 
 @dataclass
@@ -140,15 +145,16 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
         env = sum(1 for r in rs if r.status == "environment_error")
         lines.append(f"| {cat} | {n} | {ok} | {ok / n if n else 0:.0%} | {env} |")
     lines += ["", "## 明细", "",
-              "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) | 失败摘要 |",
-              "|---------|------|------|------|------|-------|------|---------|---------|----------|"]
+              "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) | 失败摘要 | 交付一致 |",
+              "|---------|------|------|------|------|-------|------|---------|---------|----------|---------|"]
     for r in report.results:
         lines.append(
             f"| {r.case_id} | {r.category} | {r.status} | "
             f"{'PASS' if r.test_pass else 'FAIL'} | "
             f"{'PASS' if r.patch_acceptance else 'FAIL'} | "
             f"{r.judge_verdict} | {r.iteration_count} | {r.latency_s:.1f} | "
-            f"{r.cost_usd:.4f} | {_truncate(r.test_error_summary, 80).replace('|', '\\|')} |")
+            f"{r.cost_usd:.4f} | {_truncate(r.test_error_summary, 80).replace('|', '\\|')} | "
+            f"{'✓' if r.consistency else '✗'} |")
     lines += ["", "## Judge 理由", ""]
     for r in report.results:
         lines.append(f"### {r.case_id} ({r.judge_verdict})")

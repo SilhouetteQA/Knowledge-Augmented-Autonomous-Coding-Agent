@@ -5,7 +5,8 @@ import time
 
 from agent.issue import IssueTask, run_issue_agent
 from agent.llm import LLMClient
-from benchmark.domain_checks import DOMAIN_PASS, check_bridge, check_deletions
+from benchmark.domain_checks import (DOMAIN_PASS, _parse_deleted_paths,
+                                     check_bridge, check_deletions)
 from benchmark.judge import judge_patch
 from benchmark.loader import BenchmarkCase
 from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
@@ -154,6 +155,28 @@ def _ensure_repository(repo_root: str, repo_dir: str, repository: str) -> None:
         raise ToolError(f"检出 base 分支失败: {err}")
 
 
+def _check_consistency(case: BenchmarkCase, diff: str) -> tuple[bool, str]:
+    """交付一致性核查（E10）：diff 实际删除文件数与 expected_actions 核对。
+
+    背景：兄弟项目 #1 演示中 Agent 交付报告声称删除 17 条而实际 diff 仅 5 条，
+    deliverable 与 diff 不符。本函数在判定后核对——diff 删除文件数（复用 E9
+    domain_checks 的 _parse_deleted_paths，同款 git quotepath 风格解析）与
+    expected_actions["deletions"] 比较：相符 → (True, "")；不符 → (False, 差异详情：
+    预期 N / 实际 M + 实际删除文件前几条)。未配 expected_actions → (True, "")。
+    仅标注风险，不改变 resolution 语义（控制器裁决）。
+    """
+    if "deletions" not in (case.expected_actions or {}):
+        return True, ""
+    expected_n = case.expected_actions["deletions"]
+    actual = _parse_deleted_paths(diff)
+    actual_n = len(actual)
+    if actual_n == expected_n:
+        return True, ""
+    head = "、".join(actual[:3]) if actual else "无"
+    return False, (f"预期删除 {expected_n} 个文件，实际删除 {actual_n} 个文件"
+                   f"（实际删除：{head}）")
+
+
 def _environment_error_result(case: BenchmarkCase, summary: str,
                               llm: LLMClient, prompt_before: int,
                               completion_before: int, start: float,
@@ -204,6 +227,9 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
         judge_verdict, judge_reason = judge.verdict, judge.reason
         patch_acceptance = judge.verdict == "PASS"
     resolution = test_pass and patch_acceptance
+    # E10：判定后核查交付一致性（diff 实际删除数 vs expected_actions）——仅标注
+    # consistency/consistency_note，不参与 resolution（控制器裁决：resolution 语义不变）。
+    consistency, consistency_note = _check_consistency(case, diff)
     prompt, completion = (llm.tokens_total["prompt"] - prompt_before,
                           llm.tokens_total["completion"] - completion_before)
     model = getattr(llm, "model", "unknown")
@@ -221,6 +247,7 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
         cost_usd=_cost_usd(model, prompt, completion),
         diff=diff, errors=errors,
         test_error_summary=test_summary[:600],
+        consistency=consistency, consistency_note=consistency_note,
     )
 
 

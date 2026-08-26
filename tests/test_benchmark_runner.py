@@ -679,3 +679,82 @@ def test_no_domain_check_does_not_call_checker(tmp_path, monkeypatch):
     report = runner_mod.run_benchmark_cases(
         llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
     assert report.results[0].judge_verdict == "PASS"   # LLM Judge 正常生效
+
+
+# --- E10：交付一致性核查——expected_actions 与 diff 实际删除文件数核对 ---
+
+DELETIONS_3_DIFF = (
+    "diff --git a/old_a.py b/old_a.py\n"
+    "deleted file mode 100644\n"
+    "--- a/old_a.py\n"
+    "+++ /dev/null\n"
+    "@@ -1 +0,0 @@\n-old\n"
+    "diff --git a/old_b.py b/old_b.py\n"
+    "deleted file mode 100644\n"
+    "--- a/old_b.py\n"
+    "+++ /dev/null\n"
+    "@@ -1 +0,0 @@\n-old\n"
+    "diff --git a/old_c.py b/old_c.py\n"
+    "deleted file mode 100644\n"
+    "--- a/old_c.py\n"
+    "+++ /dev/null\n"
+    "@@ -1 +0,0 @@\n-old\n"
+)
+
+
+def _expected_actions_case(expected):
+    """构造配了 expected_actions 的 case（仅测核查接线，不走域判定）。"""
+    c = _case("schedule-646")
+    c.expected_actions = expected
+    return c
+
+
+def test_consistency_match_expected_deletions(tmp_path, monkeypatch):
+    """expected_actions.deletions 与 diff 实际删除数相符 → consistency=True、note 空。"""
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff(diff=DELETION_DIFF))
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_expected_actions_case({"deletions": 1})],
+        _make_gold(tmp_path), "", "local", tmp_path)
+    r = report.results[0]
+    assert r.consistency is True
+    assert r.consistency_note == ""
+
+
+def test_consistency_mismatch_notes_detail_and_resolution_unchanged(tmp_path, monkeypatch):
+    """预期 5 实际 3 → consistency=False、note 含差异（预期/实际 + 实际删除文件前几条）；
+    resolution 仅由 test_pass ∧ patch_acceptance 决定——核查不改变 resolution。"""
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff(diff=DELETIONS_3_DIFF))
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_expected_actions_case({"deletions": 5})],
+        _make_gold(tmp_path), "", "local", tmp_path)
+    r = report.results[0]
+    assert r.consistency is False
+    assert "预期删除 5 个文件" in r.consistency_note
+    assert "实际删除 3 个文件" in r.consistency_note
+    assert "old_a.py" in r.consistency_note and "old_c.py" in r.consistency_note
+    # 既有判定不受影响：测试全绿 + Judge PASS → resolution 仍为 True
+    assert r.test_pass is True and r.patch_acceptance is True
+    assert r.resolution is True and r.status == "resolved"
+
+
+def test_consistency_unconfigured_true_and_note_empty(tmp_path, monkeypatch):
+    """未配 expected_actions → consistency=True、note 空（不干扰既有判定）。"""
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff())
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "local", tmp_path)
+    r = report.results[0]
+    assert r.consistency is True
+    assert r.consistency_note == ""
+    assert r.status == "resolved"
