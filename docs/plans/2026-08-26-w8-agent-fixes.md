@@ -38,6 +38,22 @@
 - 测试：`_review_context` 在临时 git 仓库（删除/新增/修改混合）下输出含三类事实；`_review_diff` 传入 context 后 user 消息含该段；context 为空/失败降级不抛错。
 - 注意：Reviewer 依然只读文本（不做工具调用），证据面 = 文本事实，避免引入多 Agent 框架。
 
+### A4: 红线路径工具级拦截（重测 #2 暴露：提示词约束不够硬）
+- 现象：#2 重测中 Agent 仍修改 `_meta.generated_at`（v3_seed_db_v2.json）与 `output/eval/cost_log.jsonl`（运行兄弟项目脚本的副作用）。
+- `agent/issue.py` 新增 `_enforce_red_lines(repo_dir, base_branch) -> list[str]`：
+  - 红线模式集（常量 `RED_LINE_PATTERNS`，可用环境变量 `KA_REDLINE_PATTERNS`（逗号分隔子串）覆盖）：`cost_log`、`generated_at`；
+  - 以 `git diff --name-only <base>` 取变更文件，文件名含模式 → 从工作树还原该文件（`git checkout -- <path>`，宿主执行；run 内从不暂存，还原只影响工作树）；
+  - 返回被还原文件清单（审计）；
+- `run_issue_agent` 产单前调用：还原清单记入审批单（create_approval 新增可选参数 `red_line_reverts: list[str] = []`，既存字段不动）与 `_review_context` 摘要（Reviewer 可见「红线还原」事实）。
+- 测试：真实 git 仓库（改动 cost_log.jsonl/generated_at 行 + 合法改动）→ 还原仅命中红线文件、合法改动保留、清单正确；env 覆盖模式；无红线时零动作。
+
+### A5: 域任务收敛与产物纪律（重测 #2 暴露：31 轮烧在分析脚本上）
+- `agent/graph.py` `_decide_system` 域操作规则追加两条：
+  4. 禁止新增分析/验证脚本与中间产物到工作树（scripts/、output/ 下不留中间文件；分析用一次性命令（run_command 内联 python -c / 既有脚本）；必要验证并入仓库既有测试）；
+  5. 交付收敛：迭代预算耗尽或任务完成时必须产出简短结论（做了什么/没做什么/为什么）；不存在满足条件的删除候选时必须显式说明并附分析摘要。
+- `agent/issue.py` REVIEW_PROMPT 追加第 6 点：检查工作树残留中间产物（scripts/output 新增文件，证据面 A3 已提供）并指出。
+- 测试：关键字断言（新增两条 + 第 6 点）。
+
 ## 收尾
 
-- 全量回归；双轴审查；合并（在 eval-fixes 之后）；随后按用户流程：同题新数据重测 W8（新建或复用兄弟项目 Issue）→ 人工批准 → 真实远程修复（--approve 建 PR）→ 全部验证后 W8/eval-fixes/agent-fixes 依次合并收尾 + 文档（roadmap/devlog/readme）。
+- 全量回归；双轴审查；合并（在 eval-fixes 之后）；随后按用户流程：同题重测（复用 Issue #2，已拒绝一轮）→ 人工批准 → 真实远程修复（--approve 建 PR）→ 全部验证后 W8/eval-fixes/agent-fixes 依次合并收尾 + 文档（roadmap/devlog/readme）。
