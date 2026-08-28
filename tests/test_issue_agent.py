@@ -350,6 +350,13 @@ def test_review_prompt_contains_domain_audit_point():
     assert "元数据" in REVIEW_PROMPT
 
 
+def test_review_prompt_contains_artifact_residue_point():
+    """REVIEW_PROMPT 含工作树残留审查要点：脚本/中间产物类残留视为无关改动。"""
+    from agent.issue import REVIEW_PROMPT
+    assert "残留" in REVIEW_PROMPT
+    assert "中间产物" in REVIEW_PROMPT
+
+
 # --- A3: Reviewer 证据面扩展（审查上下文携带工作树事实） ---
 
 

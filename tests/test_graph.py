@@ -413,3 +413,11 @@ def test_decide_system_contains_domain_operation_rules():
     assert "来源锚点" in system
     assert "元数据" in system
     assert "变更清单" in system
+
+
+def test_decide_system_contains_artifact_discipline_and_delivery_rules():
+    """_decide_system 输出含产物纪律与交付收敛：禁止新增分析脚本/中间产物、交付必附结论。"""
+    system = _decide_system(["步骤1"], verify_rounds=0, max_verify_rounds=5)
+    assert "禁止新增分析" in system
+    assert "中间产物" in system
+    assert "交付收敛" in system
