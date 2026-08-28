@@ -99,11 +99,13 @@ def _probe_review_context(repo_dir: str) -> list[str]:
     return verdicts
 
 
-def _review_context(repo_dir: str, base_branch: str) -> str:
+def _review_context(repo_dir: str, base_branch: str,
+                    extra_facts: list[str] | None = None) -> str:
     """收集工作树事实摘要，供 Reviewer 核对论据（防只看 diff 文本的幻觉）。
 
     事实 = 变更清单（git status --porcelain）+ 删除文件（git diff --name-status
-    相对 base）+ 新增文件（status 未跟踪 ?? 项）+ 关键路径存在性（文件系统探针）。
+    相对 base）+ 新增文件（status 未跟踪 ?? 项）+ 关键路径存在性（文件系统探针）
+    + 额外事实（extra_facts：调用方追加的审计事实，如红线还原清单；None/空不追加）。
     目录必须自身就是 git 工作树（含 .git，覆盖完整克隆与 linked worktree 的
     .git 文件形式）：缺失时降级——否则 git 会向上回溯命中外围仓库，把外层仓库
     的事实误报成 repo_dir 的事实（正是本函数要防的幻觉来源）。
@@ -145,7 +147,73 @@ def _review_context(repo_dir: str, base_branch: str) -> str:
         out.append("新增文件: （无）")
     out.append("关键路径存在性:")
     out += [f"  {line}" for line in _probe_review_context(repo_dir)]
+    if extra_facts:
+        out.append("额外事实:")
+        out += [f"  {line}" for line in extra_facts]
     return "\n".join(out)
+
+
+# 红线路径模式（重测 #2 暴露：A2 提示词约束不够硬，需执行层拦截）：
+# 命中模式的文件被 _enforce_red_lines 从工作树还原，不得进入 diff/审查/审批单。
+# cost_log：output/eval/cost_log.jsonl 类运行成本日志（运行兄弟项目脚本的副作用）；
+# generated_at：v3_seed 等数据文件 _meta.generated_at 行的误改。
+RED_LINE_PATTERNS = ("cost_log", "generated_at")
+
+
+def _red_line_patterns() -> tuple[str, ...]:
+    """红线模式集：默认常量；KA_REDLINE_PATTERNS（逗号分隔子串）覆盖，空/未设 → 默认。"""
+    raw = os.environ.get("KA_REDLINE_PATTERNS", "").strip()
+    if not raw:
+        return RED_LINE_PATTERNS
+    return tuple(p.strip() for p in raw.split(",") if p.strip())
+
+
+def _enforce_red_lines(repo_dir: str, base_branch: str) -> list[str]:
+    """执行层红线拦截：还原工作树中命中红线模式的文件，返回被还原文件清单。
+
+    以 `git diff --name-only <base>` 取变更文件；命中判定为双通道——
+    文件路径含模式（cost_log 类），或该文件相对 base 的 diff 新增行含模式
+    （generated_at 类：v3_seed_db_v2.json 路径不含模式，靠 _meta.generated_at
+    改动行命中）。还原用 `git checkout -- <path>`（宿主执行，cwd=repo_dir）；
+    run 内从不暂存，还原只影响工作树（index 与 base 一致）。
+    git 命令失败 → 冒泡 ToolError：拦截是门禁不是证据，执行层拦截失败必须
+    显式报错、不得静默放行（与 _review_context 的「审查信息降级」语义相反，
+    后者缺事实时降级告知，前者放行 = 红线改动进入 PR）。
+    """
+    name_only = _run(["git", "diff", "--name-only", base_branch], cwd=repo_dir)
+    if isinstance(name_only, ToolError):
+        raise ToolError(f"红线检查失败（读取变更清单）: {name_only.message}")
+    patterns = _red_line_patterns()
+    reverted: list[str] = []
+    for path in name_only.splitlines():
+        path = path.strip()
+        if not path or not _is_red_line_path(repo_dir, base_branch, path, patterns):
+            continue
+        reset = _run(["git", "checkout", "--", path], cwd=repo_dir)
+        if isinstance(reset, ToolError):
+            raise ToolError(f"红线还原失败（{path}）: {reset.message}")
+        reverted.append(path)
+    return reverted
+
+
+def _is_red_line_path(repo_dir: str, base_branch: str, path: str,
+                      patterns: tuple[str, ...]) -> bool:
+    """红线命中判定：路径含模式，或该文件 diff 新增行含模式（内容级通道）。"""
+    if any(p in path for p in patterns):
+        return True
+    frag = _run(["git", "diff", base_branch, "--", path], cwd=repo_dir)
+    if isinstance(frag, ToolError):
+        raise ToolError(f"红线检查失败（读取 {path} 的 diff）: {frag.message}")
+    return any(line.startswith("+") and not line.startswith("+++")
+               and any(p in line for p in patterns)
+               for line in frag.splitlines())
+
+
+def _red_line_facts(reverts: list[str]) -> list[str]:
+    """红线还原事实行（追加进 _review_context，Reviewer 可见）；空清单 → 无事实。"""
+    if not reverts:
+        return []
+    return [f"红线还原（{len(reverts)} 个文件）: {', '.join(reverts)}"]
 
 
 def _review_metadata(args, kwargs, result) -> dict:
@@ -223,11 +291,20 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
                              workspace_root=repo_dir, code_graph=code_graph,
                              knowledge_client=knowledge_client)
 
+    # A4 红线拦截（执行层门禁）：每次图运行后、diff 计算前调用——红线改动
+    # （cost_log/generated_at 类）从工作树还原，永不进入 diff/审查/审批单；
+    # 拦截失败冒泡 ToolError（门禁不是证据，失败必须显式报错）。重试轮的图
+    # 运行可能再次产生红线改动，故两轮各自拦截；还原清单跨轮合并去重
+    # （审批单审计全部被还原的红线文件）。
+    red_line_reverts: list[str] = []
+    round_reverts = _enforce_red_lines(repo_dir, repo_info.default_branch)
+    red_line_reverts += [p for p in round_reverts if p not in red_line_reverts]
     diff = git_diff_since(repo_dir, repo_info.default_branch)
     if isinstance(diff, ToolError):
         raise ToolError(f"读取 diff 失败: {diff.message}")
     review = _review_diff(llm, diff, prompt, result.verify_rounds,
-                          _review_context(repo_dir, repo_info.default_branch))
+                          _review_context(repo_dir, repo_info.default_branch,
+                                          extra_facts=_red_line_facts(round_reverts)))
 
     # Review 未通过：以审查意见为任务重跑一轮（上限 1 次）。
     # retried 在首轮判定时捕获（review 后续会被重试后的结论覆盖），
@@ -238,13 +315,16 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         result = run_agent_graph(retry_prompt, llm, max_iterations=task.max_iterations,
                                  workspace_root=repo_dir, code_graph=code_graph,
                                  knowledge_client=knowledge_client)
+        round_reverts = _enforce_red_lines(repo_dir, repo_info.default_branch)
+        red_line_reverts += [p for p in round_reverts if p not in red_line_reverts]
         diff = git_diff_since(repo_dir, repo_info.default_branch)
         if isinstance(diff, ToolError):
             raise ToolError(f"读取 diff 失败: {diff.message}")
         # 重试轮同样携带工作树事实：diff 已在重试后重新计算，context 也取
         # 重试后的新状态（工作树可能在重试中变化，首轮事实已过时）。
         review = _review_diff(llm, diff, retry_prompt, result.verify_rounds,
-                              _review_context(repo_dir, repo_info.default_branch))
+                              _review_context(repo_dir, repo_info.default_branch,
+                                              extra_facts=_red_line_facts(round_reverts)))
 
     approval_path = None
     if task.approval_dir:
@@ -254,7 +334,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
             base_branch=repo_info.default_branch,
             commit_message=f"fix: 修复 #{issue.number} {issue.title}",
             diff=diff, review=review,
-            verify_rounds=result.verify_rounds, retry_count=1 if retried else 0)
+            verify_rounds=result.verify_rounds, retry_count=1 if retried else 0,
+            red_line_reverts=red_line_reverts)
         approval_path = save_approval(approval, task.approval_dir)
 
     return IssueAgentResult(

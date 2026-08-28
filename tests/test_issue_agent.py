@@ -32,6 +32,9 @@ def _patch_github(monkeypatch):
     monkeypatch.setattr(issue_mod, "create_branch", lambda d, b, base: None)
     monkeypatch.setattr(issue_mod, "git_diff_since",
                         lambda d, base: "+fixed\n-fixed\n")
+    # A4 红线拦截：干跑 workdir 非 git 仓库，默认无红线（红线语义由专门集成测试覆盖）
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines", lambda d, b: [],
+                        raising=False)
 
 
 def _graph_script():
@@ -464,3 +467,145 @@ def test_run_issue_agent_passes_review_context_both_rounds(tmp_path, monkeypatch
     assert len(seen["contexts"]) == 2
     assert all(c is not None for c in seen["contexts"])          # 两次调用都传了 context
     assert all("工作树事实不可用" in c for c in seen["contexts"])  # 非 git 目录 → 降级提示
+
+
+# --- A4: 红线路径工具级拦截（_enforce_red_lines 还原 cost_log/generated_at 类改动） ---
+
+
+def _make_redline_repo(tmp_path) -> str:
+    """构造红线拦截测试仓库：基线提交后制造红线改动 + 合法改动。
+
+    基线含 output/eval/cost_log.jsonl（红线：文件名含 cost_log）、
+    data/extractions/v3_seed_db_v2.json（红线：文件内 _meta.generated_at 行，
+    文件名不含模式，靠改动行内容命中）、a.txt（合法改动）、
+    notes/other_meta.txt（env 覆盖模式的命中文件，名字含 other）。
+    """
+    repo = tmp_path / "redline-repo"
+    repo.mkdir()
+    (repo / "output" / "eval").mkdir(parents=True)
+    (repo / "data" / "extractions").mkdir(parents=True)
+    (repo / "notes").mkdir()
+    (repo / "output" / "eval" / "cost_log.jsonl").write_text(
+        '{"cost": 1}\n', encoding="utf-8")
+    (repo / "data" / "extractions" / "v3_seed_db_v2.json").write_text(
+        '{"_meta": {"generated_at": "2024-01-01"}}\n', encoding="utf-8")
+    (repo / "a.txt").write_text("base\n", encoding="utf-8")
+    (repo / "notes" / "other_meta.txt").write_text("other meta\n", encoding="utf-8")
+    _git(str(repo), "init", "-b", "main")
+    _git(str(repo), "add", "-A")
+    _git(str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-m", "base")
+    # 工作树改动：红线两文件 + 合法文件 + env 命中文件（均未暂存）
+    (repo / "output" / "eval" / "cost_log.jsonl").write_text(
+        '{"cost": 1}\n{"cost": 2}\n', encoding="utf-8")
+    (repo / "data" / "extractions" / "v3_seed_db_v2.json").write_text(
+        '{"_meta": {"generated_at": "2025-01-01"}}\n', encoding="utf-8")
+    (repo / "a.txt").write_text("base\nfixed\n", encoding="utf-8")
+    (repo / "notes" / "other_meta.txt").write_text("other meta 2\n", encoding="utf-8")
+    return str(repo)
+
+
+def test_enforce_red_lines_reverts_red_line_authored_changes(tmp_path):
+    """默认红线模式：cost_log（文件名命中）与 v3_seed（generated_at 行命中）
+    被还原为 base 版本，合法改动 a.txt 保留，返回清单恰为两条红线路径。"""
+    repo = _make_redline_repo(tmp_path)
+    reverted = issue_mod._enforce_red_lines(repo, "main")
+    assert sorted(reverted) == sorted([
+        "output/eval/cost_log.jsonl",
+        "data/extractions/v3_seed_db_v2.json",
+    ])
+    assert "a.txt" not in reverted
+    # 红线文件内容还原为 base 版本
+    assert open(os.path.join(repo, "output", "eval", "cost_log.jsonl"),
+                encoding="utf-8").read() == '{"cost": 1}\n'
+    assert open(os.path.join(repo, "data", "extractions", "v3_seed_db_v2.json"),
+                encoding="utf-8").read() == '{"_meta": {"generated_at": "2024-01-01"}}\n'
+    # 合法改动保留
+    assert open(os.path.join(repo, "a.txt"), encoding="utf-8").read() == "base\nfixed\n"
+
+
+def test_enforce_red_lines_env_override_patterns(tmp_path, monkeypatch):
+    """KA_REDLINE_PATTERNS 覆盖默认模式：仅 other 命中，默认红线不再拦截。"""
+    monkeypatch.setenv("KA_REDLINE_PATTERNS", "other")
+    repo = _make_redline_repo(tmp_path)
+    reverted = issue_mod._enforce_red_lines(repo, "main")
+    assert reverted == ["notes/other_meta.txt"]
+    # 默认模式不拦：cost_log / v3_seed 的改动保留在工作树
+    assert '{"cost": 2}' in open(os.path.join(
+        repo, "output", "eval", "cost_log.jsonl"), encoding="utf-8").read()
+    assert "2025-01-01" in open(os.path.join(
+        repo, "data", "extractions", "v3_seed_db_v2.json"),
+        encoding="utf-8").read()
+
+
+def test_enforce_red_lines_no_hits_returns_empty(tmp_path):
+    """无红线文件（仅合法改动）：返回空清单，工作树零还原。"""
+    repo = tmp_path / "clean-repo"
+    repo.mkdir()
+    (repo / "a.txt").write_text("base\n", encoding="utf-8")
+    _git(str(repo), "init", "-b", "main")
+    _git(str(repo), "add", "-A")
+    _git(str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-m", "base")
+    (repo / "a.txt").write_text("base\nfixed\n", encoding="utf-8")
+    assert issue_mod._enforce_red_lines(str(repo), "main") == []
+    assert open(os.path.join(repo, "a.txt"), encoding="utf-8").read() == "base\nfixed\n"
+
+
+def test_review_context_appends_extra_facts(tmp_path):
+    """_review_context 的 extra_facts 追加为「额外事实」段（红线还原事实面）；
+    缺省（None/空）不追加任何段。"""
+    repo = _make_worktree_repo(tmp_path)
+    out = issue_mod._review_context(
+        repo, "main",
+        extra_facts=["红线还原（2 个文件）: output/eval/cost_log.jsonl, "
+                     "data/extractions/v3_seed_db_v2.json"])
+    assert "额外事实" in out
+    assert "红线还原（2 个文件）" in out
+    assert "output/eval/cost_log.jsonl" in out
+    assert "额外事实" not in issue_mod._review_context(repo, "main")
+
+
+def test_run_issue_agent_records_red_line_reverts(tmp_path, monkeypatch):
+    """红线还原清单进入审批单 JSON，且 _review_context 调用收到红线事实
+    （Reviewer 可见）。_enforce_red_lines 打桩（集成测试不依赖真 git 仓库）。"""
+    _patch_github(monkeypatch)
+    fake_reverts = ["output/eval/cost_log.jsonl",
+                    "data/extractions/v3_seed_db_v2.json"]
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines",
+                        lambda d, b: list(fake_reverts))
+    seen = {"facts": []}
+    original_ctx = issue_mod._review_context
+
+    def spy(repo_dir, base_branch, extra_facts=None):
+        seen["facts"].append(extra_facts)
+        return original_ctx(repo_dir, base_branch, extra_facts)
+
+    monkeypatch.setattr(issue_mod, "_review_context", spy)
+    script = _graph_script() + [
+        LLMMessage(role="assistant", content="PASS 变更解决问题。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
+    result = run_issue_agent(task, MockLLMClient(script))
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert data["red_line_reverts"] == fake_reverts
+    # Reviewer 可见：reverts 非空时 _review_context 至少一次收到红线还原事实
+    assert any(f and len(f) == 1 and "红线还原（2 个文件）" in f[0]
+               for f in seen["facts"])
+
+
+def test_run_issue_agent_no_red_lines_empty_field(tmp_path, monkeypatch):
+    """无红线还原：审批单 red_line_reverts 为空清单（字段恒在）。"""
+    _patch_github(monkeypatch)
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines", lambda d, b: [])
+    script = _graph_script() + [
+        LLMMessage(role="assistant", content="PASS 变更解决问题。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
+    result = run_issue_agent(task, MockLLMClient(script))
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert data["red_line_reverts"] == []

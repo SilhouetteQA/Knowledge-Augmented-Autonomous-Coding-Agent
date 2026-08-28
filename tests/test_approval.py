@@ -39,7 +39,19 @@ def test_save_load_roundtrip(tmp_path):
     assert path.endswith(f"{a.approval_id}.json")
     loaded = load_approval(path)
     assert loaded == a
+    assert loaded.red_line_reverts == []    # 新字段缺省为空清单（A4）
     assert loaded.to_dict() == a.to_dict()
+
+
+def test_create_approval_red_line_reverts_field(tmp_path):
+    """红线还原字段（A4）：缺省 []，显式传入时原样进入审批单。"""
+    assert _approval().red_line_reverts == []
+    a = _approval(red_line_reverts=["output/eval/cost_log.jsonl"])
+    assert a.red_line_reverts == ["output/eval/cost_log.jsonl"]
+    # 旧审批单 JSON 缺该字段：load 回退为空清单（前向兼容，不破坏旧数据）
+    path = save_approval(_approval(), str(tmp_path))
+    loaded = load_approval(path)
+    assert loaded.red_line_reverts == []
 
 
 def test_load_ignores_extra_fields(tmp_path):
