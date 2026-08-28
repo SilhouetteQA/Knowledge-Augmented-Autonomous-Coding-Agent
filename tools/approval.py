@@ -52,6 +52,7 @@ class ApprovalRequest:
     decision_comment: str | None = None
     pr_url: str | None = None
     red_line_reverts: list[str] = field(default_factory=list)   # 红线还原文件清单（A4 审计）
+    final_answer: str = ""            # Agent 最终结论（A7：合法零变更时人工审批可见核验依据）
 
     def to_dict(self) -> dict:
         """序列化为 dict（dataclasses.asdict）。"""
@@ -68,10 +69,12 @@ def create_approval(*, action_type: str, repository: str, issue_number: int,
                     diff: str, review: str,
                     verify_rounds: int, retry_count: int,
                     created_at: str | None = None,
-                    red_line_reverts: list[str] | None = None) -> ApprovalRequest:
+                    red_line_reverts: list[str] | None = None,
+                    final_answer: str | None = None) -> ApprovalRequest:
     """生成审批单：approval_id（repository__issue-runid）+ diff_sha256 指纹。
 
     red_line_reverts：执行层红线拦截还原的文件清单（审计；缺省 None → []）。
+    final_answer：Agent 最终结论（审计/人工核验依据；缺省 None → ""）。
     """
     if action_type not in KNOWN_ACTIONS:
         raise ApprovalError(f"未知动作类型: {action_type}（已知: {sorted(KNOWN_ACTIONS)}）")
@@ -83,7 +86,8 @@ def create_approval(*, action_type: str, repository: str, issue_number: int,
         base_branch=base_branch, commit_message=commit_message, diff=diff,
         diff_sha256=_sha256(diff), review=review, verify_rounds=verify_rounds,
         retry_count=retry_count, created_at=stamp,
-        red_line_reverts=red_line_reverts or [])
+        red_line_reverts=red_line_reverts or [],
+        final_answer=final_answer or "")
 
 
 def save_approval(approval: ApprovalRequest, directory: str) -> str:

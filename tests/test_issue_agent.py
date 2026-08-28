@@ -85,16 +85,61 @@ def test_issue_read_failure_raises(tmp_path, monkeypatch):
 
 
 def test_dry_run_no_changes_review_fail(tmp_path, monkeypatch):
+    """空 diff 且图结论无实质内容（空白）：审查硬短路 FAIL 无代码变更，审查阶段零 LLM 调用。
+
+    FAIL 触发重试轮，故图为两轮（plan+decide 各 4 调）；两轮审查均硬短路，
+    任何一次 LLM 调用都不是审查（REVIEW_PROMPT）调用。
+    """
     _patch_github(monkeypatch)
     monkeypatch.setattr(issue_mod, "git_diff_since", lambda d, base: "")
-    script = _graph_script() + [
-        LLMMessage(role="assistant", content="PASS ok"),
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="   "),      # 首轮图结论为空白（无实质内容）
+        LLMMessage(role="assistant", content=json.dumps(["重检"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="   "),      # 重试轮图结论同样空白
+        LLMMessage(role="assistant", content="PASS ok"),  # 审查不应消费（两轮均硬短路）
     ]
     task = IssueTask(repository="test/arc-wiki", issue_number=123,
                      workspace_root=_make_workdir(tmp_path))
-    result = run_issue_agent(task, MockLLMClient(script))
+    mock = MockLLMClient(script)
+    result = run_issue_agent(task, mock)
     assert result.review == "FAIL 无代码变更"
     assert result.pr_url is None
+    # 审查阶段零 LLM 调用：没有任何一次调用以 REVIEW_PROMPT 为 system
+    assert all((m[0][0].get("content") or "") != issue_mod.REVIEW_PROMPT
+               for m in mock.calls)
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\n\t"])
+def test_review_diff_empty_diff_empty_final_answer_short_circuits(blank):
+    """空 diff + 空/空白 final_answer（strip 后为空）：硬短路 FAIL 无代码变更，LLM 零调用。"""
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS ok")])
+    out = issue_mod._review_diff(mock, diff="", issue_text="issue-text",
+                                 verify_rounds=1, final_answer=blank)
+    assert out == "FAIL 无代码变更"
+    assert mock.calls == []        # 未调 LLM（静态断言零调用）
+
+
+def test_review_diff_empty_diff_substantive_final_answer_reviews_conclusion():
+    """空 diff + 实质 final_answer：不短路，转结论审查模式——LLM 收到核验结论的 user 消息。"""
+    answer = "经核验四条候选均有 related_entities 引用，无可删条目，全部保留"
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS 结论可信。")])
+    out = issue_mod._review_diff(mock, diff="", issue_text="issue-text",
+                                 verify_rounds=2, context="变更清单: （无变更）",
+                                 final_answer=answer)
+    assert out == "PASS 结论可信。"
+    user = mock.calls[0][0][1]["content"]
+    assert "无代码变更" in user
+    assert "Agent 最终结论" in user
+    assert answer in user
+    # 结构保持现状：Issue → 验证轮数段 + 工作树事实段 → 结论段（无 Diff 段）
+    assert user.index("Issue:") < user.index("验证轮数: 2") < user.index("工作树事实")
+    assert "Diff:" not in user
+    # 审查角度与输出格式：核验证据充分性/是否满足任务验收 + 模式说明 + PASS/FAIL
+    assert "核验证据充分性" in user
+    assert "是否满足任务验收" in user
+    assert "结论审查模式" in user
+    assert "PASS/FAIL" in user
 
 
 def _patch_push_calls(monkeypatch):
@@ -160,6 +205,9 @@ def test_issue_creates_approval_request(tmp_path, monkeypatch):
     assert data["review"].startswith("PASS")
     assert data["verify_rounds"] == result.verify_rounds
     assert data["retry_count"] == 0
+    # A7：产单携带 Agent 最终结论（人工审批可见核验依据，与结果对象同源）
+    assert "final_answer" in data
+    assert data["final_answer"] == result.final_answer == "已修复"
     # 无远端副作用：run 内不执行 commit/push/PR
     assert calls["commit"] == [] and calls["push"] == [] and calls["pr"] == []
 
@@ -204,6 +252,8 @@ def test_review_fail_still_generates_approval_request(tmp_path, monkeypatch):
     assert data["status"] == "pending"
     assert data["review"].startswith("FAIL")
     assert data["retry_count"] == 1
+    # A7：产单结论为重试轮图结局（重试后 result 已重新赋值，final_answer 取最新轮）
+    assert data["final_answer"] == "修好了"
 
 
 def test_review_diff_receives_verify_rounds(tmp_path, monkeypatch):
@@ -212,9 +262,9 @@ def test_review_diff_receives_verify_rounds(tmp_path, monkeypatch):
     seen = {}
     original = issue_mod._review_diff
 
-    def spy(llm, diff, issue_text, verify_rounds, context=None):
+    def spy(llm, diff, issue_text, verify_rounds, context=None, final_answer=""):
         seen["verify_rounds"] = verify_rounds
-        return original(llm, diff, issue_text, verify_rounds, context)
+        return original(llm, diff, issue_text, verify_rounds, context, final_answer)
 
     monkeypatch.setattr(issue_mod, "_review_diff", spy)
     script = _graph_script() + [
@@ -455,9 +505,9 @@ def test_run_issue_agent_passes_review_context_both_rounds(tmp_path, monkeypatch
     seen = {"contexts": []}
     original = issue_mod._review_diff
 
-    def spy(llm, diff, issue_text, verify_rounds, context=None):
+    def spy(llm, diff, issue_text, verify_rounds, context=None, final_answer=""):
         seen["contexts"].append(context)
-        return original(llm, diff, issue_text, verify_rounds, context)
+        return original(llm, diff, issue_text, verify_rounds, context, final_answer)
 
     monkeypatch.setattr(issue_mod, "_review_diff", spy)
     script = [
@@ -474,6 +524,31 @@ def test_run_issue_agent_passes_review_context_both_rounds(tmp_path, monkeypatch
     assert len(seen["contexts"]) == 2
     assert all(c is not None for c in seen["contexts"])          # 两次调用都传了 context
     assert all("工作树事实不可用" in c for c in seen["contexts"])  # 非 git 目录 → 降级提示
+
+
+def test_run_issue_agent_passes_final_answer_to_review_both_rounds(tmp_path, monkeypatch):
+    """两轮 _review_diff 各传本轮 result.final_answer（重试轮为轮次新结论）。"""
+    _patch_github(monkeypatch)
+    seen = {"answers": []}
+    original = issue_mod._review_diff
+
+    def spy(llm, diff, issue_text, verify_rounds, context=None, final_answer=""):
+        seen["answers"].append(final_answer)
+        return original(llm, diff, issue_text, verify_rounds, context, final_answer)
+
+    monkeypatch.setattr(issue_mod, "_review_diff", spy)
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复（首轮结论）"),
+        LLMMessage(role="assistant", content="FAIL 缺少边界测试"),
+        LLMMessage(role="assistant", content=json.dumps(["补测试"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复（重试轮结论）"),
+        LLMMessage(role="assistant", content="PASS 测试已补齐。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path))
+    run_issue_agent(task, MockLLMClient(script))
+    assert seen["answers"] == ["已修复（首轮结论）", "已修复（重试轮结论）"]
 
 
 # --- A4: 红线路径工具级拦截（_enforce_red_lines 还原 cost_log/generated_at 类改动） ---

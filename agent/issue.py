@@ -230,20 +230,33 @@ def _review_metadata(args, kwargs, result) -> dict:
 
 @traced("review", as_type="generation", metadata_fn=_review_metadata)
 def _review_diff(llm: LLMClient, diff: str, issue_text: str,
-                 verify_rounds: int, context: str | None = None) -> str:
+                 verify_rounds: int, context: str | None = None,
+                 final_answer: str = "") -> str:
     """独立 Reviewer 审查 diff，返回结论文本（首行 PASS/FAIL + 中文要点）。
 
     context：工作树事实摘要（_review_context 产物），非 None 时插入
     Issue/验证轮数之后、Diff 之前（Reviewer 的文本证据面）。
+    final_answer：Agent 本轮最终结论（图 run 产物）。空 diff 分支（A7）：
+    final_answer 无实质内容（strip 后为空）→ 硬短路 FAIL 不调 LLM（防止对
+    空变更空转审查）；final_answer 有实质内容 → 转入结论审查模式——空 diff
+    可能是合法零变更（无修改即正确行为），此时审查 Agent 的核验结论是否
+    合理可信（证据充分性/是否满足任务验收），供人工审批参考。
     """
-    if not diff.strip():
-        return "FAIL 无代码变更"
     context_section = f"\n\n工作树事实:\n{context}" if context else ""
+    if not diff.strip():
+        if not final_answer.strip():
+            return "FAIL 无代码变更"
+        user_content = (f"Issue:\n{issue_text}\n\n验证轮数: {verify_rounds}"
+                        f"{context_section}\n\n无代码变更。Agent 最终结论:\n"
+                        f"{final_answer}\n\n请审查该结论是否合理可信"
+                        "（核验证据充分性/是否满足任务验收），输出 PASS/FAIL + 要点\n"
+                        "（无代码变更时的结论审查模式）")
+    else:
+        user_content = (f"Issue:\n{issue_text}\n\n验证轮数: {verify_rounds}"
+                        f"{context_section}\n\nDiff:\n{diff}")
     msg = llm.chat(
         [{"role": "system", "content": REVIEW_PROMPT},
-         {"role": "user",
-          "content": f"Issue:\n{issue_text}\n\n验证轮数: {verify_rounds}"
-                     f"{context_section}\n\nDiff:\n{diff}"}],
+         {"role": "user", "content": user_content}],
         [],
     )
     return (msg.content or "FAIL 审查无输出").strip()
@@ -306,7 +319,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         raise ToolError(f"读取 diff 失败: {diff.message}")
     review = _review_diff(llm, diff, prompt, result.verify_rounds,
                           _review_context(repo_dir, repo_info.default_branch,
-                                          extra_facts=_red_line_facts(round_reverts)))
+                                          extra_facts=_red_line_facts(round_reverts)),
+                          final_answer=result.final_answer)
 
     # Review 未通过：以审查意见为任务重跑一轮（上限 1 次）。
     # retried 在首轮判定时捕获（review 后续会被重试后的结论覆盖），
@@ -328,7 +342,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         # 不再触碰的文件，其红线事件仍须对 Reviewer 可见（审查修复）。
         review = _review_diff(llm, diff, retry_prompt, result.verify_rounds,
                               _review_context(repo_dir, repo_info.default_branch,
-                                              extra_facts=_red_line_facts(red_line_reverts)))
+                                              extra_facts=_red_line_facts(red_line_reverts)),
+                              final_answer=result.final_answer)
 
     approval_path = None
     if task.approval_dir:
@@ -339,7 +354,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
             commit_message=f"fix: 修复 #{issue.number} {issue.title}",
             diff=diff, review=review,
             verify_rounds=result.verify_rounds, retry_count=1 if retried else 0,
-            red_line_reverts=red_line_reverts)
+            red_line_reverts=red_line_reverts,
+            final_answer=result.final_answer)
         approval_path = save_approval(approval, task.approval_dir)
 
     return IssueAgentResult(
