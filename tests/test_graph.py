@@ -421,3 +421,14 @@ def test_decide_system_contains_artifact_discipline_and_delivery_rules():
     assert "禁止新增分析" in system
     assert "中间产物" in system
     assert "交付收敛" in system
+
+
+def test_decide_system_contains_stage_budget_discipline():
+    """_decide_system 域操作规则含第 6 条阶段预算纪律：前 1/3 探索核验、后 2/3 执行交付（A6）。"""
+    system = _decide_system(["步骤1"], verify_rounds=0, max_verify_rounds=5)
+    assert "预算纪律" in system
+    assert "前 1/3" in system
+    assert "剩余 2/3" in system
+    assert "执行" in system
+    assert "交付" in system
+    assert "重复探索" in system
