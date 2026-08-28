@@ -54,6 +54,11 @@
 - `agent/issue.py` REVIEW_PROMPT 追加第 6 点：检查工作树残留中间产物（scripts/output 新增文件，证据面 A3 已提供）并指出。
 - 测试：关键字断言（新增两条 + 第 6 点）。
 
+### A6: 阶段预算纪律（评估 L3，用户 2026-08-28 拍板）
+- `agent/graph.py` `_decide_system` 域操作规则追加第 6 条（中文）：预算纪律——迭代预算内前 1/3 用于数据结构了解与候选核验，剩余 2/3 必须进入执行（变更/删除/构建/验证）并交付结论；禁止把执行阶段消耗在重复探索上。
+- 测试：关键字断言（前 1/3 / 执行 / 交付）。
+- 提交：`git add agent/graph.py tests/test_graph.py && git commit -m "feat(agent): 阶段预算纪律——前 1/3 探索核验、后 2/3 执行交付（A6，评估 L3）"`
+
 ## 收尾
 
 - 全量回归；双轴审查；合并（在 eval-fixes 之后）；随后按用户流程：同题重测（复用 Issue #2，已拒绝一轮）→ 人工批准 → 真实远程修复（--approve 建 PR）→ 全部验证后 W8/eval-fixes/agent-fixes 依次合并收尾 + 文档（roadmap/devlog/readme）。
