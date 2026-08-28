@@ -48,10 +48,13 @@ def test_create_approval_red_line_reverts_field(tmp_path):
     assert _approval().red_line_reverts == []
     a = _approval(red_line_reverts=["output/eval/cost_log.jsonl"])
     assert a.red_line_reverts == ["output/eval/cost_log.jsonl"]
-    # 旧审批单 JSON 缺该字段：load 回退为空清单（前向兼容，不破坏旧数据）
-    path = save_approval(_approval(), str(tmp_path))
-    loaded = load_approval(path)
-    assert loaded.red_line_reverts == []
+    # 旧审批单 JSON 真缺该字段：load 回退为空清单（前向兼容，不破坏旧数据）
+    legacy = _approval().to_dict()
+    assert "red_line_reverts" in legacy
+    legacy.pop("red_line_reverts")
+    p = tmp_path / "legacy.json"
+    p.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    assert load_approval(str(p)).red_line_reverts == []
 
 
 def test_load_ignores_extra_fields(tmp_path):

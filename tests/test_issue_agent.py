@@ -609,3 +609,37 @@ def test_run_issue_agent_no_red_lines_empty_field(tmp_path, monkeypatch):
     result = run_issue_agent(task, MockLLMClient(script))
     data = json.load(open(result.approval_path, encoding="utf-8"))
     assert data["red_line_reverts"] == []
+
+
+def test_run_issue_agent_retry_round_context_uses_merged_reverts(tmp_path, monkeypatch):
+    """重试轮红线事实用合并清单（A4 审查修复）：首轮还原 A、重试轮还原 B，
+    最终 Review Reviewer 摘要携带完整红线还原清单（而非仅本轮 B）。
+    首轮与重试轮为真实 FAIL→重试 两轮集成（_enforce_red_lines 打桩序列）。"""
+    _patch_github(monkeypatch)
+    reverts_sequence = [["a_round1.jsonl"], ["b_round2.jsonl"]]
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines",
+                        lambda d, b: reverts_sequence.pop(0))
+    seen = {"facts": []}
+    original_ctx = issue_mod._review_context
+
+    def spy(repo_dir, base_branch, extra_facts=None):
+        seen["facts"].append(extra_facts)
+        return original_ctx(repo_dir, base_branch, extra_facts)
+
+    monkeypatch.setattr(issue_mod, "_review_context", spy)
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复"),
+        LLMMessage(role="assistant", content="FAIL 缺少边界测试"),
+        LLMMessage(role="assistant", content=json.dumps(["补测试"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已补测试"),
+        LLMMessage(role="assistant", content="PASS 测试已补齐。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
+    result = run_issue_agent(task, MockLLMClient(script))
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert data["red_line_reverts"] == ["a_round1.jsonl", "b_round2.jsonl"]
+    # 重试轮是最后一次 _review_context 调用：其 extra_facts 必须含完整合并清单
+    assert seen["facts"][-1] == ["红线还原（2 个文件）: a_round1.jsonl, b_round2.jsonl"]

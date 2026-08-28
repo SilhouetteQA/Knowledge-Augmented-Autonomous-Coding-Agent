@@ -322,9 +322,11 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
             raise ToolError(f"读取 diff 失败: {diff.message}")
         # 重试轮同样携带工作树事实：diff 已在重试后重新计算，context 也取
         # 重试后的新状态（工作树可能在重试中变化，首轮事实已过时）。
+        # 红线还原事实用跨轮合并清单（red_line_reverts）：首轮已还原但重试轮
+        # 不再触碰的文件，其红线事件仍须对 Reviewer 可见（审查修复）。
         review = _review_diff(llm, diff, retry_prompt, result.verify_rounds,
                               _review_context(repo_dir, repo_info.default_branch,
-                                              extra_facts=_red_line_facts(round_reverts)))
+                                              extra_facts=_red_line_facts(red_line_reverts)))
 
     approval_path = None
     if task.approval_dir:
