@@ -6,9 +6,11 @@
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 from dataclasses import asdict, dataclass, field
+from uuid import uuid4
 
 from tools.file_tools import ToolError
 from tools.github_tools import (
@@ -79,7 +81,9 @@ def create_approval(*, action_type: str, repository: str, issue_number: int,
     if action_type not in KNOWN_ACTIONS:
         raise ApprovalError(f"未知动作类型: {action_type}（已知: {sorted(KNOWN_ACTIONS)}）")
     stamp = created_at or time.strftime("%Y%m%d-%H%M%S")
-    approval_id = f"{repository.replace('/', '__')}-{issue_number}-{stamp}"
+    # 4 位随机后缀防同秒同库同 issue 撞 id（Minor 台账 T1 采纳项）
+    suffix = uuid4().hex[:4]
+    approval_id = f"{repository.replace('/', '__')}-{issue_number}-{stamp}-{suffix}"
     return ApprovalRequest(
         approval_id=approval_id, action_type=action_type, status="pending",
         repository=repository, issue_number=issue_number, branch=branch,
@@ -117,6 +121,9 @@ def load_approval(path: str) -> ApprovalRequest:
         raise ApprovalError(f"非法状态: {data['status']}")
     if data["action_type"] not in KNOWN_ACTIONS:
         raise ApprovalError(f"未知动作类型: {data['action_type']}")
+    # approval_id 参与审批单保存路径与分支拼接（安全边界：防路径穿越字符）
+    if not re.fullmatch(r"[\w.-]+", str(data["approval_id"])):
+        raise ApprovalError(f"非法 approval_id（仅允许字母/数字/下划线/点/连字符）: {data['approval_id']}")
     # 仅取 dataclass 已知字段（前向兼容：忽略未来新增字段）
     known = set(ApprovalRequest.__dataclass_fields__)
     return ApprovalRequest(**{k: v for k, v in data.items() if k in known})

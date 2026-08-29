@@ -49,6 +49,18 @@ def check_destructive_git(command: str) -> ToolError | None:
     return None
 
 
+def _test_timeout_s() -> int:
+    """run_tests 超时秒数：KA_TEST_TIMEOUT_S 覆盖，缺省 120。非法/非正值回退默认。"""
+    raw = os.environ.get("KA_TEST_TIMEOUT_S", "").strip()
+    if not raw:
+        return 120
+    try:
+        value = int(float(raw))
+    except ValueError:
+        return 120
+    return value if value > 0 else 120
+
+
 def _truncate(text: str) -> str:
     """截断过长的命令输出，尾部附加标记。"""
     if len(text) <= MAX_COMMAND_OUTPUT:

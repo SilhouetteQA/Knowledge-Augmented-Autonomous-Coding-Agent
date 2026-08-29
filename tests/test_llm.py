@@ -229,3 +229,28 @@ def test_no_env_keeps_previous_construction_kwargs(monkeypatch, capture_openai_k
         "api_key": "k",
         "base_url": "http://localhost:1",
     }
+
+
+# ---- E5-1: 超时异常透传（设计意图钉子：客户端层外抛，由图层的 G1 优雅降级捕获）----
+
+def test_chat_timeout_error_propagates(monkeypatch):
+    """chat 遇 APITimeoutError 必须原样外抛（吞掉会让 G1 的降级无从谈起）。"""
+    import httpx
+    import openai
+    from agent.llm import LLMMessage, OpenAICompatClient, ToolSpec
+
+    client = OpenAICompatClient(api_key="k", base_url="http://localhost:1")
+
+    def raise_timeout(*args, **kwargs):
+        raise openai.APITimeoutError(request=httpx.Request("POST", "http://localhost:1"))
+
+    class FakeCompletions:
+        def create(self, *args, **kwargs):
+            raise_timeout(*args, **kwargs)
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    monkeypatch.setattr(client._client, "chat", FakeChat())
+    with pytest.raises(openai.APITimeoutError):
+        client.chat([{"role": "user", "content": "hi"}], [])

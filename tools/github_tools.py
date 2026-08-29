@@ -28,6 +28,11 @@ class GitHubRepo:
     language: str | None
 
 
+def run_host(cmd: list[str], cwd: str | None = None, timeout: int = 120) -> str | ToolError:
+    """宿主只读命令执行器（公开 API）：统一编码/超时/ToolError 语义。"""
+    return _run(cmd, cwd=cwd, timeout=timeout)
+
+
 def _run(cmd: list[str], cwd: str | None = None, timeout: int = 120) -> str | ToolError:
     """宿主执行命令返回 stdout；失败返回 ToolError（含 stderr 原文）。"""
     try:

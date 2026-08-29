@@ -21,8 +21,8 @@ from tools.github_tools import (
     get_issue,
     get_repository,
     git_diff_since,
+    run_host,      # 宿主只读执行器（统一编码/超时/ToolError 语义，A3 复用；公开 API）
     sync_repository,
-    _run,          # 宿主只读执行器（统一编码/超时/ToolError 语义，A3 复用）
 )
 from tools.tracing import traced
 
@@ -122,10 +122,10 @@ def _review_context(repo_dir: str, base_branch: str,
         return "（工作树事实不可用: 仓库目录不存在）"
     if not os.path.exists(os.path.join(repo_dir, ".git")):
         return "（工作树事实不可用: 目录不是 git 工作树）"
-    status_out = _run(["git", "status", "--porcelain"], cwd=repo_dir)
+    status_out = run_host(["git", "status", "--porcelain"], cwd=repo_dir)
     if isinstance(status_out, ToolError):
         return f"（工作树事实不可用: {status_out.message.splitlines()[0]}）"
-    name_status = _run(["git", "diff", "--name-status", base_branch], cwd=repo_dir)
+    name_status = run_host(["git", "diff", "--name-status", base_branch], cwd=repo_dir)
     if isinstance(name_status, ToolError):
         return f"（工作树事实不可用: {name_status.message.splitlines()[0]}）"
 
@@ -185,7 +185,7 @@ def _enforce_red_lines(repo_dir: str, base_branch: str) -> list[str]:
     显式报错、不得静默放行（与 _review_context 的「审查信息降级」语义相反，
     后者缺事实时降级告知，前者放行 = 红线改动进入 PR）。
     """
-    name_only = _run(["git", "diff", "--name-only", base_branch], cwd=repo_dir)
+    name_only = run_host(["git", "diff", "--name-only", base_branch], cwd=repo_dir)
     if isinstance(name_only, ToolError):
         raise ToolError(f"红线检查失败（读取变更清单）: {name_only.message}")
     patterns = _red_line_patterns()
@@ -194,7 +194,7 @@ def _enforce_red_lines(repo_dir: str, base_branch: str) -> list[str]:
         path = path.strip()
         if not path or not _is_red_line_path(repo_dir, base_branch, path, patterns):
             continue
-        reset = _run(["git", "checkout", "--", path], cwd=repo_dir)
+        reset = run_host(["git", "checkout", "--", path], cwd=repo_dir)
         if isinstance(reset, ToolError):
             raise ToolError(f"红线还原失败（{path}）: {reset.message}")
         reverted.append(path)
@@ -206,7 +206,7 @@ def _is_red_line_path(repo_dir: str, base_branch: str, path: str,
     """红线命中判定：路径含模式，或该文件 diff 新增行含模式（内容级通道）。"""
     if any(p in path for p in patterns):
         return True
-    frag = _run(["git", "diff", base_branch, "--", path], cwd=repo_dir)
+    frag = run_host(["git", "diff", base_branch, "--", path], cwd=repo_dir)
     if isinstance(frag, ToolError):
         raise ToolError(f"红线检查失败（读取 {path} 的 diff）: {frag.message}")
     return any(line.startswith("+") and not line.startswith("+++")
