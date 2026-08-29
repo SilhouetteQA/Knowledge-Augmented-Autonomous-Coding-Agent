@@ -256,11 +256,15 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
 
     @traced("graph.plan", as_type="span")
     def plan_node(state: AgentState) -> dict:
-        msg = llm.chat(
-            [{"role": "system", "content": PLAN_PROMPT},
-             {"role": "user", "content": state["task"]}],
-            [],
-        )
+        try:
+            msg = llm.chat(
+                [{"role": "system", "content": PLAN_PROMPT},
+                 {"role": "user", "content": state["task"]}],
+                [],
+            )
+        except Exception as e:  # noqa: BLE001
+            # 与 decide 同语义：计划失败不阻断（decide 阶段再失败会走 llm_error 终态）
+            return {"plan": [f"（计划生成失败: {type(e).__name__}，直接执行）"]}
         return {"plan": _parse_plan(msg.content or "")}
 
     @traced("graph.decide", as_type="generation")
@@ -326,12 +330,18 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
             details = asdict(tr)
         else:
             details = {"error": getattr(tr, "message", str(tr))}
-        msg = llm.chat(
-            [{"role": "system",
-              "content": _reflect_system(json.dumps(details, ensure_ascii=False))},
-             {"role": "user", "content": state["task"]}],
-            [],
-        )
+        try:
+            msg = llm.chat(
+                [{"role": "system",
+                  "content": _reflect_system(json.dumps(details, ensure_ascii=False))},
+                 {"role": "user", "content": state["task"]}],
+                [],
+            )
+        except Exception as e:  # noqa: BLE001
+            # 反思失败不阻断循环：记失败说明后回到 decide（decide 再失败走 llm_error 终态）
+            return {"messages": state["messages"] + [
+                {"role": "assistant",
+                 "content": f"[失败分析] LLM 调用失败: {type(e).__name__}: {e}"}]}
         return {"messages": state["messages"] + [
             {"role": "assistant", "content": f"[失败分析] {msg.content}"}]}
 
