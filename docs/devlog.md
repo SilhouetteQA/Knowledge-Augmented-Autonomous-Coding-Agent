@@ -464,3 +464,30 @@
 - **rich#3299 触顶失败**：两轮 41 迭代全触顶；失败链 = /testbed 环境幻觉 → write_file 全量覆盖测试文件丢原测试 → git stash 自伤 → 恢复泥潭，始终未改 segment.py；Reviewer FAIL 准确。
 - 结论：导航不是瓶颈（≤6 步定位）；瓶颈是每轮质量——环境模型错位 / write_file 全量覆盖 / git 破坏性命令无护栏 / Reviewer 机械套规则，四项均有低成本修法（详见 docs/analysis/2026-08-29-real-issue-capability-test.md 第三节）。轮数不是第一杠杆。
 - 环境备忘：pip 走清华镜像；agent .venv 存在 dist-info 在而模块缺的损坏包（--force-reinstall 修）；rich 基线 test_log 环境性失败用 PYTEST_ADDOPTS deselect。
+
+## 第二轮实测 + 三轴审查修复（2026-08-29，W8 后增强）
+
+### 第二轮实测（docker 沙箱，详见 docs/analysis/2026-08-29-round2-docker-multi-repo-test.md）
+
+- markdown-it-py#415：**9 迭代完整解决**（edit_file 实战验证、diff 2 文件 8 行、981 全绿、Reviewer PASS）——四项修复全部正反馈。
+- dateutil#1545：三轮未收敛；暴露镜像依赖遮蔽（假绿基线）、F4 盲点、G3 缺口；v2 源码修复本身正确（独立验证 123457+进位）。
+- 兄弟项目 Issue #4（试点三）：v1 mimo APITimeoutError 击穿崩溃 → G1；v2 deepseek thinking 400 → G8；v3 deepseek 51 轮触顶 FAIL（两次越界删 PR#3 内容，Reviewer 判定准确）。**Issue #4 保持开放**；REVIEW_CONTEXT_PROBES 硬编码兄弟项目探针问题记录待修。
+- 模型结论：mimo 触达订阅周限；deepseek-v4-flash @ api.deepseek.com 在 G8 修复后可跑但预算纪律差（40 轮全耗在上游考古），专注度不如 mimo。
+
+### 三轴全项目审查（brooks-health skill 本机不存在 → 3 个并行审查 agent 替代）
+
+- 架构轴：2 Critical（execute_node 击穿面 + untracked 绕过红线/漂移）+ 6 Important；**抓到 2 个本轮修复的接线缺陷**（KA_TEST_TIMEOUT_S 未接执行器、G3 未传 workspace_root——均被 monkeypatch 测试掩盖）。
+- 测试轴：2 Critical（同上两项的死代码/误报形态）+ 6 Important（G1 中途降级/G8 主链路/红线冒泡等零覆盖）。
+- 卫生轴：无 Critical；密钥零入库、依赖声明精确；文档时效性欠账（readme 数字/命令、.env.example 17 个变量未文档化）。
+
+### 审查修复（当日全部落地，回归 395 passed / 4 skipped / 0 failed）
+
+- Critical：execute_node 工具异常防护 + run_command timeout 上限 600；untracked 纳入红线（命中即删）+ approve 纵深防御（红线 untracked 存在即拒绝）；破坏性 git 引号段剥离（echo "done; git reset" 误报修复，漏拦形态 docstring 显式声明）；KA_TEST_TIMEOUT_S 两执行器接线。
+- Important：G3 workspace_root 透传；docker 容器路径换算（workspace 基准 + POSIX 归一——run_tests(path) docker 模式此前必报越界）；tracing is_enabled 移入调用时（.env 配置此前对装饰不可见）；loop 模式 LLM 降级；main.py compare 句柄/遮蔽导入；correct out_dir 回填。
+- 测试补强：G1 中途降级保步骤、G8 graph 主链路、G3 接线经 run_agent_graph、红线 git 故障冒泡、untracked 红线删除、edit_file 四分支、平台无关越界测试、tracing 新语义；readme/.env.example/roadmap 文档对齐。
+- 未修（入台账 docs/analysis/2026-08-29-unfinished-ledger.md）：G5 上下文压缩（架构）、G4 verify 空洞通过语义（设计决策）、A12 预算纪律执行层、B7-B11 小项、C1 单价表（用户项）、D1-D4 排期项。
+
+### 环境备忘
+
+- 派生镜像 ka-sandbox:py312-v1x（pytest 8.3.5 钉版 + 常用测试依赖 + setuptools/wheel；**不含与目标仓库同名的包**——dateutil 遮蔽教训）。
+- 容器 root 残留用一次性 root 容器清理；实验命令带 PYTHONDONTWRITEBYTECODE=1。

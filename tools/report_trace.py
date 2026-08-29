@@ -42,7 +42,7 @@ def _clickhouse_env(env_file: str | None) -> dict:
             result["CLICKHOUSE_PASSWORD"] = os.environ.get("CLICKHOUSE_PASSWORD", "")
     else:
         result["CLICKHOUSE_PASSWORD"] = os.environ.get("CLICKHOUSE_PASSWORD", "")
-    result.setdefault("CLICKHOUSE_PASSWORD", "clickhouse")
+    result.setdefault("CLICKHOUSE_PASSWORD", "clickhouse")  # 仅本地 compose 默认；生产必须显式注入
     return result
 
 

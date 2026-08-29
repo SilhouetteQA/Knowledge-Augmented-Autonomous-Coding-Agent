@@ -237,7 +237,7 @@ coding-agent/
 - **真实里程碑**：五轮远程修复迭代 → Issue #2 R5 人工批准 → 真实 PR #3（3 文件纯删除 2 条已核验死数据）；rejected 单零副作用与防重放均实测。
 - **模型结论**：mimo-v2.5 稳定默认；deepseek-v4-flash 多轮工具调用返回 DSML 文本致假完成早停（证据留存审批单）。
 - **D5 可行性评估**：完全自动 PR 暂不推荐（正确执行率 1/5）；建议"条件自动放行"档（Reviewer PASS + 红线 0 + 测试全绿 + 非删除型变更），见 `docs/analysis/2026-08-29-d5-full-automation-assessment.md`。
-- 回归：main 合并后全量 **353 passed / 14 skipped / 0 failed**；双轴全分支终审 APPROVE（无 Critical/Important）。
+- 回归：main 合并后全量 **353 passed / 14 skipped / 0 failed**（后续两轮实测补强至 395 passed / 4 skipped，见 devlog 2026-08-29 条目）；双轴全分支终审 APPROVE（无 Critical/Important）。
 - 知识纠错第二阶段（W5 冻结项）：审批通道已预留（action_type=knowledge_apply），随本窗口完成解冻，排期待定。
 
 ---

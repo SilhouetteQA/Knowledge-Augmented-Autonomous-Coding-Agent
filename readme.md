@@ -6,7 +6,7 @@
 
 基于现有的《明日方舟》全量剧情结构化知识库、Knowledge Graph 与 LangGraph ReAct Agent，进一步构建能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，最终产出 GitHub Pull Request。
 
-> 项目状态：W0-W8 全部完成 —— W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox（容器化执行 + 六维资源限制 + 一个任务一个沙箱）、W4 Repository Intelligence（代码图 + Arknights 域知识双检索）、W5 GitHub Issue Agent（Issue → 沙箱工作 → Review → push 门禁的 PR 全链路；真实演示 dbader/schedule#646 修复与社区方案一致）+ 知识抽查扩展（三次提取产物 2% 抽查：来源可靠性 96.88% / 内容实用性 70.98%，main.py --correct）、W6 Evaluation（Issue Benchmark 案例库五类 + Issue Resolution Rate 核心指标 + LLM-as-a-Judge 双判定 + `--benchmark/--compare` CLI + Langfuse 部署文件与可开关 tracing，评测执行器须 docker）、W7 Observability（graph 七节点 + tool.execute/test.run + issue.run retry 指标全链路 Trace；`--trace-report` 经 ClickHouse 直查导出 JSON+Markdown 报告——真实 W6 trace 与 W7 新 trace 均验证通过；SDK 4.14.4 经 OTel 上报落库）、W8 Human-in-the-loop（两段式 --approve 审批门禁 + 独立 Reviewer + 红线机械拦截；真实远程修复里程碑：五轮迭代 → 人工批准 → 真实 PR #3；D5 评估：完全自动 PR 暂不推荐，建议条件自动放行档）。全量回归 353 passed / 14 skipped / 0 failed。下一步：评估问题清单 P0-P2 收尾与知识纠错第二阶段（--apply 写回，审批通道已预留）。
+> 项目状态：W0-W8 全部完成 —— W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox（容器化执行 + 六维资源限制 + 一个任务一个沙箱）、W4 Repository Intelligence（代码图 + Arknights 域知识双检索）、W5 GitHub Issue Agent（Issue → 沙箱工作 → Review → push 门禁的 PR 全链路；真实演示 dbader/schedule#646 修复与社区方案一致）+ 知识抽查扩展（三次提取产物 2% 抽查：来源可靠性 96.88% / 内容实用性 70.98%，main.py --correct）、W6 Evaluation（Issue Benchmark 案例库五类 + Issue Resolution Rate 核心指标 + LLM-as-a-Judge 双判定 + `--benchmark/--compare` CLI + Langfuse 部署文件与可开关 tracing，评测执行器须 docker）、W7 Observability（graph 七节点 + tool.execute/test.run + issue.run retry 指标全链路 Trace；`--trace-report` 经 ClickHouse 直查导出 JSON+Markdown 报告——真实 W6 trace 与 W7 新 trace 均验证通过；SDK 4.14.4 经 OTel 上报落库）、W8 Human-in-the-loop（两段式 --approve 审批门禁 + 独立 Reviewer + 红线机械拦截；真实远程修复里程碑：五轮迭代 → 人工批准 → 真实 PR #3；D5 评估：完全自动 PR 暂不推荐，建议条件自动放行档）。全量回归 395 passed / 4 skipped / 0 failed。两轮真实 GitHub Issue 实测（rich/jsonschema/markdown-it-py/dateutil + 兄弟项目 Issue #4）驱动的补强已全部落地（edit_file/环境声明/G1 降级/G3 钩子/G8 回传/untracked 红线等，见 docs/analysis/2026-08-29-unfinished-ledger.md）。下一步：W8 后增强收尾与知识纠错第二阶段（--apply 写回，审批通道已预留）。
 > 开发规范见 [agents.md](agents.md)，窗口路线图见 [docs/roadmap.md](docs/roadmap.md)。
 
 ---
@@ -152,7 +152,7 @@ Knowledge-Augmented Autonomous Coding Agent/
 
 ## 快速开始
 
-> 已实现 Level 1 + Level 2 起步：八个工具（四文件 + run_command / run_tests + git 只读三件套）+ LangGraph 显式编排（强制测试验证闭环）。
+> 已实现 Level 1-4 全链路：文件工具四件套 + edit_file 局部编辑 + run_command/run_tests + git 只读三件套 + 双知识检索 + Docker 沙箱 + GitHub Issue 全链路（--issue 产单停等 → --approve 人工审批推送）+ 基准评测与全链路 Trace。
 
 ```bash
 # 环境要求：Python 3.12+、ripgrep（PATH 或 RIPGREP_BIN 指定）
@@ -173,9 +173,17 @@ python -m venv .venv
 ## 常用命令
 
 ```bash
-git status / git diff            # 查看变更
 pytest tests/ -v                 # 全量测试
 pytest tests/xxx.py -v           # 单文件测试
+
+# Issue 全链路（干跑产单停等，不推送）
+python main.py "owner/name#123" --issue --max-iterations 40
+# 人工审批（approve 才 commit+push+建 PR；reject 零远端副作用）
+python main.py --approve output/approvals/<审批单>.json --decision approve
+# 基准评测 / 版本对比 / Trace 导出（需 ".[eval]" 与 docker 执行器）
+python main.py --benchmark --executor docker
+python main.py --compare <run_id>
+python main.py --trace-report <trace_id>
 ```
 
 ## 关联项目
