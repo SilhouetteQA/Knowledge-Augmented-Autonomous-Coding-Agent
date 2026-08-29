@@ -35,6 +35,40 @@ def test_openai_client_requires_env(monkeypatch):
     assert client.model == "mimo-v2.5"
 
 
+def test_deepseek_provider_uses_its_own_env(monkeypatch):
+    """KA_LLM_PROVIDER=deepseek 时读取 deepseek_api / DEEPSEEK_* 配置。"""
+    monkeypatch.delenv("opencode_go_api", raising=False)
+    monkeypatch.delenv("OPENCODE_GO_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENCODE_GO_MODEL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.setenv("KA_LLM_PROVIDER", "deepseek")
+    monkeypatch.setenv("deepseek_api", "dk")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://api.deepseek.com"
+    assert client.model == "deepseek-v4-flash"
+    # 环境变量可覆盖端点与模型
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://ds.example.com/v1")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-chat")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://ds.example.com/v1"
+    assert client.model == "deepseek-chat"
+
+
+def test_deepseek_provider_missing_key(monkeypatch):
+    monkeypatch.setenv("KA_LLM_PROVIDER", "deepseek")
+    monkeypatch.delenv("deepseek_api", raising=False)
+    with pytest.raises(ValueError, match="deepseek_api"):
+        OpenAICompatClient()
+
+
+def test_unknown_provider_rejected(monkeypatch):
+    monkeypatch.setenv("KA_LLM_PROVIDER", "no-such-provider")
+    monkeypatch.setenv("opencode_go_api", "k")
+    with pytest.raises(ValueError, match="未知供应商"):
+        OpenAICompatClient()
+
+
 def test_openai_client_chat_converts_response(monkeypatch):
     # 固定模型默认值，避免本机 OPENCODE_GO_MODEL 环境变量干扰断言
     monkeypatch.delenv("OPENCODE_GO_MODEL", raising=False)

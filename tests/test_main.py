@@ -2,6 +2,8 @@
 """CLI 测试：参数解析与 main 输出（注入 fake，不触发真实 LLM）"""
 import os
 
+import pytest
+
 import main
 from agent.loop import AgentResult
 
@@ -73,21 +75,22 @@ def test_main_prints_emoji_in_arguments_without_crash(monkeypatch, capsys):
     assert "write_file" in out
 
 
-def test_main_issue_mode_dry_run(monkeypatch, capsys):
+def test_main_issue_mode_generates_approval(monkeypatch, capsys):
     from agent.issue import IssueAgentResult
     from tools.github_tools import GitHubIssue
     fake_issue = GitHubIssue(number=1, title="标题", body="b", labels=[], state="open")
     fake = IssueAgentResult(issue=fake_issue, steps=[], final_answer="ok",
                             branch="fix/issue-1", diff="+x", review="PASS ok",
                             pr_url=None, stopped_by_limit=False,
-                            iteration_count=1, verify_rounds=1)
+                            iteration_count=1, verify_rounds=1,
+                            approval_path="output/approvals/x-1-1-20260826-120000.json")
     monkeypatch.setattr("main.run_issue_agent", lambda *a, **k: fake)
     monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
     rc = main.main(["test/arc-wiki#1", "--issue"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "fix/issue-1" in out
-    assert "dry-run" in out
+    assert "等待人工审批" in out       # 停等审批提示（替换原 dry-run 文案）
 
 
 def test_main_issue_mode_bad_format(monkeypatch, capsys):
@@ -186,3 +189,75 @@ def test_trace_report_flag_parses():
     parser = main_mod.build_parser()
     args = parser.parse_args(["--trace-report", "abc123", "--trace-out", "x"])
     assert args.trace_report == "abc123" and args.trace_out == "x"
+
+
+# --- W8: --approve 审批模式 ---
+
+
+def test_approve_cli_happy_path(monkeypatch, capsys, tmp_path):
+    from tools.approval import create_approval, save_approval
+    a = create_approval(action_type="pr_push", repository="test/arc-wiki",
+                        issue_number=1, branch="fix/issue-1", base_branch="main",
+                        commit_message="fix: 修复 #1 标题", diff="+x",
+                        review="PASS ok", verify_rounds=1, retry_count=0,
+                        created_at="20260826-120000")
+    path = save_approval(a, str(tmp_path))
+    decided = a
+    decided.status = "approved"
+    decided.pr_url = "https://github.com/test/arc-wiki/pull/9"
+    decided.decided_at = "2026-08-26T12:01:00"
+    monkeypatch.setattr("main.approve_request",
+                        lambda *a2, **k: decided)
+    monkeypatch.setattr("main.save_approval", lambda *a2, **k: path)
+    rc = main.main(["--approve", path, "--decision", "approve"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "已批准并推送" in out
+    assert "pull/9" in out
+
+
+def test_approve_cli_reject(monkeypatch, capsys, tmp_path):
+    from tools.approval import create_approval, save_approval
+    a = create_approval(action_type="pr_push", repository="test/arc-wiki",
+                        issue_number=1, branch="fix/issue-1", base_branch="main",
+                        commit_message="fix: 修复 #1 标题", diff="+x",
+                        review="FAIL 测试未并入套件", verify_rounds=1, retry_count=1,
+                        created_at="20260826-120000")
+    path = save_approval(a, str(tmp_path))
+    decided = a
+    decided.status = "rejected"
+    decided.decision_comment = "测试未并入现有套件"
+    decided.decided_at = "2026-08-26T12:01:00"
+    monkeypatch.setattr("main.approve_request", lambda *a2, **k: decided)
+    rc = main.main(["--approve", path, "--decision", "reject",
+                    "--comment", "测试未并入现有套件"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "已拒绝" in out
+
+
+def test_approve_cli_missing_file(capsys):
+    rc = main.main(["--approve", "no-such-approval.json", "--decision", "approve"])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "不存在" in out
+
+
+def test_approve_cli_missing_decision(capsys, tmp_path):
+    from tools.approval import create_approval, save_approval
+    a = create_approval(action_type="pr_push", repository="test/arc-wiki",
+                        issue_number=1, branch="fix/issue-1", base_branch="main",
+                        commit_message="fix: 修复 #1 标题", diff="+x",
+                        review="PASS ok", verify_rounds=1, retry_count=0,
+                        created_at="20260826-120000")
+    path = save_approval(a, str(tmp_path))
+    rc = main.main(["--approve", path])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "缺少审批决定" in out
+
+
+def test_push_flag_removed():
+    """--push 已移除：任何绕过人工门禁的自动推送入口都不存在。"""
+    with pytest.raises(SystemExit):
+        main.build_parser().parse_args(["--push"])

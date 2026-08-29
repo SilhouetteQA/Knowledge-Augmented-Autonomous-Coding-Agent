@@ -1,5 +1,6 @@
 """GitHub Issue Agent 编排测试：Mock LLM + Fake GitHub（不触网、不真推）。"""
 import json
+import os
 
 import pytest
 
@@ -53,19 +54,21 @@ def test_dry_run_full_pipeline(tmp_path, monkeypatch):
     _patch_github(monkeypatch)
     commits = []
     monkeypatch.setattr(issue_mod, "commit_changes",
-                        lambda d, m: commits.append(m) or None)
+                        lambda d, m: commits.append(m) or None,
+                        raising=False)   # 3a 已移除该属性：run 内不再调用，仅断言零提交
     script = _graph_script() + [
         LLMMessage(role="assistant", content="PASS 变更解决了问题。"),
     ]
     task = IssueTask(repository="test/arc-wiki", issue_number=123,
-                     workspace_root=_make_workdir(tmp_path), push=False)
+                     workspace_root=_make_workdir(tmp_path))
     result = run_issue_agent(task, MockLLMClient(script))
     assert result.issue.number == 123
     assert result.branch == "fix/issue-123"
     assert result.review.startswith("PASS")
     assert result.pr_url is None
+    assert result.approval_path is None      # 未配 approval_dir 不产单（评估兼容）
     assert commits == []
-    assert result.retry_count == 0        # 无 Review FAIL 重试
+    assert result.retry_count == 0           # 无 Review FAIL 重试
 
 
 def test_issue_read_failure_raises(tmp_path, monkeypatch):
@@ -91,17 +94,24 @@ def test_dry_run_no_changes_review_fail(tmp_path, monkeypatch):
 
 
 def _patch_push_calls(monkeypatch):
-    """打桩 commit/push/PR（真执行会触网或落在非 git 目录）。"""
+    """打桩 commit/push/PR（真执行会触网或落在非 git 目录）。
+
+    raising=False：run 内已不再调用这些函数（3a 移除 import），打桩仅用于
+    记录调用并断言"零调用"（推送唯一入口为 --approve）。
+    """
     calls = {"commit": [], "push": [], "pr": []}
     monkeypatch.setattr(issue_mod, "commit_changes",
-                        lambda d, m: calls["commit"].append(m) or None)
+                        lambda d, m: calls["commit"].append(m) or None,
+                        raising=False)
     monkeypatch.setattr(issue_mod, "push_branch",
-                        lambda d, b: calls["push"].append(b) or None)
+                        lambda d, b: calls["push"].append(b) or None,
+                        raising=False)
     monkeypatch.setattr(
         issue_mod, "create_pull_request",
         lambda repo, head, base, title, body:
             calls["pr"].append((head, base, title)) or
-            "https://github.com/test/arc-wiki/pull/999")
+            "https://github.com/test/arc-wiki/pull/999",
+        raising=False)
     return calls
 
 
@@ -117,25 +127,37 @@ def test_review_fail_triggers_retry(tmp_path, monkeypatch):
         LLMMessage(role="assistant", content="PASS 测试已补齐。"),
     ]
     task = IssueTask(repository="test/arc-wiki", issue_number=123,
-                     workspace_root=_make_workdir(tmp_path), push=True)
+                     workspace_root=_make_workdir(tmp_path))
     result = run_issue_agent(task, MockLLMClient(script))
     assert result.review.startswith("PASS")
-    assert calls["commit"]  # 重试通过后才提交
+    # 新语义：run 内永不推送，重试通过亦无 commit/push/PR（推送唯一入口为 --approve）
+    assert calls["commit"] == [] and calls["push"] == [] and calls["pr"] == []
 
 
-def test_push_mode_creates_pr(tmp_path, monkeypatch):
+def test_issue_creates_approval_request(tmp_path, monkeypatch):
     _patch_github(monkeypatch)
     calls = _patch_push_calls(monkeypatch)
     script = _graph_script() + [
         LLMMessage(role="assistant", content="PASS 变更解决问题。"),
     ]
     task = IssueTask(repository="test/arc-wiki", issue_number=123,
-                     workspace_root=_make_workdir(tmp_path), push=True)
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
     result = run_issue_agent(task, MockLLMClient(script))
-    assert result.pr_url == "https://github.com/test/arc-wiki/pull/999"
-    assert calls["commit"] == ["fix: 修复 #123 修复重复创建实体"]
-    assert calls["push"] == ["fix/issue-123"]
-    assert calls["pr"][0][:2] == ("fix/issue-123", "main")
+    # 干跑产单：审批文件存在且内容完整
+    path = result.approval_path
+    assert path is not None and os.path.isfile(path)
+    data = json.load(open(path, encoding="utf-8"))
+    assert data["status"] == "pending"
+    assert data["action_type"] == "pr_push"
+    assert data["branch"] == "fix/issue-123"
+    assert data["base_branch"] == "main"
+    assert data["diff"] == "+fixed\n-fixed\n"
+    assert data["review"].startswith("PASS")
+    assert data["verify_rounds"] == result.verify_rounds
+    assert data["retry_count"] == 0
+    # 无远端副作用：run 内不执行 commit/push/PR
+    assert calls["commit"] == [] and calls["push"] == [] and calls["pr"] == []
 
 
 def test_issue_snapshot_skips_get_issue(tmp_path, monkeypatch):
@@ -156,7 +178,8 @@ def test_issue_snapshot_skips_get_issue(tmp_path, monkeypatch):
     assert result.issue.title == "[CRASH] guard self.unit against None"
 
 
-def test_push_mode_review_fail_aborts(tmp_path, monkeypatch):
+def test_review_fail_still_generates_approval_request(tmp_path, monkeypatch):
+    """Review 重试后仍 FAIL：仍产审批单（人工是最终仲裁者，FAIL 结论供拒绝参考）。"""
     _patch_github(monkeypatch)
     calls = _patch_push_calls(monkeypatch)
     script = [
@@ -168,10 +191,35 @@ def test_push_mode_review_fail_aborts(tmp_path, monkeypatch):
         LLMMessage(role="assistant", content="FAIL 仍有问题"),
     ]
     task = IssueTask(repository="test/arc-wiki", issue_number=123,
-                     workspace_root=_make_workdir(tmp_path), push=True)
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
     result = run_issue_agent(task, MockLLMClient(script))
     assert result.pr_url is None
-    assert calls["commit"] == []
+    assert calls["commit"] == [] and calls["push"] == [] and calls["pr"] == []
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert data["status"] == "pending"
+    assert data["review"].startswith("FAIL")
+    assert data["retry_count"] == 1
+
+
+def test_review_diff_receives_verify_rounds(tmp_path, monkeypatch):
+    """Reviewer 输入含验证轮数（独立角色输入 = Issue + diff + verify_rounds）。"""
+    _patch_github(monkeypatch)
+    seen = {}
+    original = issue_mod._review_diff
+
+    def spy(llm, diff, issue_text, verify_rounds):
+        seen["verify_rounds"] = verify_rounds
+        return original(llm, diff, issue_text, verify_rounds)
+
+    monkeypatch.setattr(issue_mod, "_review_diff", spy)
+    script = _graph_script() + [
+        LLMMessage(role="assistant", content="PASS 变更解决问题。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path))
+    run_issue_agent(task, MockLLMClient(script))
+    assert "verify_rounds" in seen
 
 
 # --- W7 Task 3: issue.run span metadata（verify_rounds / retry_count） ---
@@ -263,8 +311,28 @@ def test_review_metadata_records_first_line():
             return self.text
 
     assert _review_metadata((), {}, FakeResult("PASS 修复点一致。")) == \
-        {"first_line": "PASS 修复点一致。"}
-    assert _review_metadata((), {}, FakeResult("")) == {"first_line": ""}
+        {"first_line": "PASS 修复点一致。", "has_manual_flag": False}
+    assert _review_metadata((), {}, FakeResult("")) == \
+        {"first_line": "", "has_manual_flag": False}
     # 首行截断 80 字符（metadata 限长）
     long_line = "PASS " + "x" * 100
-    assert _review_metadata((), {}, long_line) == {"first_line": ("PASS " + "x" * 75)[:80]}
+    assert _review_metadata((), {}, long_line) == {
+        "first_line": ("PASS " + "x" * 75)[:80], "has_manual_flag": False}
+
+
+def test_review_metadata_records_manual_flag():
+    """Review 结论含「人工关注」行时 metadata 标记 has_manual_flag=True。"""
+    from agent.issue import _review_metadata
+
+    class FakeResult:
+        def __init__(self, text):
+            self.text = text
+
+        def __str__(self):
+            return self.text
+
+    assert _review_metadata((), {}, FakeResult(
+        "PASS 修复一致。\n人工关注 沙箱缺 pytz 依赖。")) == {
+        "first_line": "PASS 修复一致。", "has_manual_flag": True}
+    assert _review_metadata((), {}, FakeResult("PASS ok")) == {
+        "first_line": "PASS ok", "has_manual_flag": False}
