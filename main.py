@@ -90,7 +90,11 @@ def _run_correct_mode(args: argparse.Namespace) -> int:
 
 
 def _run_trace_report_mode(args: argparse.Namespace) -> int:
-    """trace 导出模式：fetch → 报告 → 打印摘要（独立模式，无需任务描述/LLM key）。"""
+    """trace 导出模式：fetch → 报告 → 打印摘要（独立模式，无需任务描述/LLM key）。
+
+    无效/无数据 trace_id：拉取到的 summary steps 为空 → 打印「无数据」并
+    return 1（P2-9）；有效 trace（steps 非空）正常出报告 rc=0。
+    """
     try:
         summary = fetch_trace(
             args.trace_report,
@@ -99,6 +103,9 @@ def _run_trace_report_mode(args: argparse.Namespace) -> int:
                 "docker", "langfuse", ".env"))
     except TraceError as e:
         print(f"trace 获取失败: {e}")
+        return 1
+    if not summary.steps:
+        print(f"trace 无数据: {summary.trace_id}")
         return 1
     report_path = save_trace_report(summary, args.trace_out)
     print(f"trace: {summary.trace_id} | 任务: {summary.task}")

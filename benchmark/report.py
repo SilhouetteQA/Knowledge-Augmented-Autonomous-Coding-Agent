@@ -22,7 +22,7 @@ class CaseResult:
     """单个基准任务结果。"""
     case_id: str
     category: str
-    status: str                 # resolved / not_resolved / error
+    status: str                 # resolved / not_resolved / error / environment_error
     resolution: bool
     test_pass: bool
     patch_acceptance: bool
@@ -36,6 +36,12 @@ class CaseResult:
     cost_usd: float
     diff: str
     errors: list[str] = field(default_factory=list)
+    test_error_summary: str = ""   # must_pass 失败摘要（判定阶段；无失败为空）
+    # E10：交付一致性核查——diff 实际删除数 与 expected_actions 核对；相符/未配 →
+    # True 且 note 空，不符 → False + 差异详情（预期/实际 + 实际删除文件前几条）。
+    # 仅标注风险，不改变 resolution 语义（控制器裁决）。
+    consistency: bool = True
+    consistency_note: str = ""
 
 
 @dataclass
@@ -46,6 +52,15 @@ class BenchmarkReport:
     resolved: int
     resolution_rate: float
     results: list[CaseResult]
+    # 双口径（P2-6）：resolution_rate 分母为全部案例（raw，兼容既有报告/对比）；
+    # resolution_rate_adjusted 分母排除 error 与 environment_error，由 runner 汇总计算，
+    # 分母为 0 时记 0.0；缺省 0.0 仅为兼容直接构造报告的既有调用
+    resolution_rate_adjusted: float = 0.0
+
+
+def _truncate(text: str, limit: int) -> str:
+    """明细表格文本截断：超长保留前 limit 字符并追加省略号。"""
+    return text if len(text) <= limit else text[:limit] + "..."
 
 
 def _git(args: list[str]) -> str:
@@ -99,28 +114,47 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
         f"({report.resolved}/{report.total})",
         "",
     ]
+    err_n = sum(1 for r in report.results if r.status == "error")
+    env_n = sum(1 for r in report.results if r.status == "environment_error")
+    adj_denom = report.total - err_n - env_n
+    adj_note = "（分母为 0，Adjusted 记 0.0）" if adj_denom == 0 else ""
+    lines += [
+        f"**Adjusted Resolution Rate: {report.resolution_rate_adjusted:.0%}** "
+        f"({report.resolved}/{adj_denom})" + adj_note,
+        "",
+        "> 口径说明：Resolution Rate 分母为全部案例（raw，含 error / environment_error）；"
+        "Adjusted Resolution Rate 分母排除执行异常（error）与基线环境错误"
+        "（environment_error），仅统计实际运行 Agent 的案例，代表被测能力口径；"
+        "分母为 0 时 Adjusted 记 0.0。",
+        "",
+        f"**环境错误: {env_n}**"
+        "（基线测试失败，未运行 Agent）",
+        "",
+    ]
     cats = {}
     for r in report.results:
         cats.setdefault(r.category, []).append(r)
     lines.append("## 分类统计")
     lines.append("")
-    lines.append("| 类别 | 任务数 | 解决 | 解决率 |")
-    lines.append("|------|--------|------|--------|")
+    lines.append("| 类别 | 任务数 | 解决 | 解决率 | 环境错误 |")
+    lines.append("|------|--------|------|--------|----------|")
     for cat in sorted(cats):
         rs = cats[cat]
         n = len(rs)
         ok = sum(1 for r in rs if r.resolution)
-        lines.append(f"| {cat} | {n} | {ok} | {ok / n if n else 0:.0%} |")
+        env = sum(1 for r in rs if r.status == "environment_error")
+        lines.append(f"| {cat} | {n} | {ok} | {ok / n if n else 0:.0%} | {env} |")
     lines += ["", "## 明细", "",
-              "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) |",
-              "|---------|------|------|------|------|-------|------|---------|---------|"]
+              "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) | 失败摘要 | 交付一致 |",
+              "|---------|------|------|------|------|-------|------|---------|---------|----------|---------|"]
     for r in report.results:
         lines.append(
             f"| {r.case_id} | {r.category} | {r.status} | "
             f"{'PASS' if r.test_pass else 'FAIL'} | "
             f"{'PASS' if r.patch_acceptance else 'FAIL'} | "
             f"{r.judge_verdict} | {r.iteration_count} | {r.latency_s:.1f} | "
-            f"{r.cost_usd:.4f} |")
+            f"{r.cost_usd:.4f} | {_truncate(r.test_error_summary, 80).replace('|', '\\|')} | "
+            f"{'✓' if r.consistency else '✗'} |")
     lines += ["", "## Judge 理由", ""]
     for r in report.results:
         lines.append(f"### {r.case_id} ({r.judge_verdict})")

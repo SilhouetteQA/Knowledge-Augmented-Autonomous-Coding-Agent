@@ -159,7 +159,7 @@ def test_compare_flag_parses():
 
 
 def test_trace_report_cli_reads_args(monkeypatch):
-    """--trace-report 模式解析并调用 fetch_trace/save_trace_report（Fake）。"""
+    """--trace-report 模式解析并调用 fetch_trace/save_trace_report（Fake，有效 trace rc=0）。"""
     import main as main_mod
     captured = {}
     class FakeSummary:
@@ -173,7 +173,7 @@ def test_trace_report_cli_reads_args(monkeypatch):
         errors = []
         retries = 0
         test_results = []
-        steps = []
+        steps = [{"name": "tool.search_code", "latency_s": 1.0}]
     monkeypatch.setattr(main_mod, "fetch_trace",
                         lambda tid, **kw: captured.update(tid=tid) or FakeSummary())
     monkeypatch.setattr(main_mod, "save_trace_report",
@@ -182,6 +182,31 @@ def test_trace_report_cli_reads_args(monkeypatch):
         type("A", (), {"trace_report": "abc123", "trace_out": "output/trace"})())
     assert rc == 0
     assert captured["tid"] == "abc123"
+
+
+def test_trace_report_empty_steps_returns_1(monkeypatch, capsys):
+    """--trace-report 拉取到空 steps（无效/无数据 trace_id）→ 打印「无数据」并 return 1。"""
+    import main as main_mod
+    class FakeSummary:
+        trace_id = "abc123"
+        task = "修复 bug"
+        total_latency_s = 0.0
+        tool_calls = 0
+        tokens_prompt = 0
+        tokens_completion = 0
+        cost_usd = 0.0
+        errors = []
+        retries = 0
+        test_results = []
+        steps = []
+    monkeypatch.setattr(main_mod, "fetch_trace", lambda tid, **kw: FakeSummary())
+    monkeypatch.setattr(main_mod, "save_trace_report",
+                        lambda s, out: "out/report.md")
+    rc = main_mod._run_trace_report_mode(
+        type("A", (), {"trace_report": "abc123", "trace_out": "output/trace"})())
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "无数据" in out
 
 
 def test_trace_report_flag_parses():

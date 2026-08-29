@@ -16,8 +16,8 @@ COPY scripts/fetch_node.py /usr/local/bin/fetch_node.py
 RUN python /usr/local/bin/fetch_node.py && \
     tar -xJf /node.tar.xz -C /usr/local --strip-components=1 && \
     rm /node.tar.xz && node --version && npm --version
-# Python 测试框架（清华 PyPI 镜像加速）
-RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple pytest
+# Python 测试框架与 schedule 时区测试依赖（清华 PyPI 镜像加速）
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple pytest pytz==2023.3
 # 消除 Windows/Linux 文件权限位差异（W3 spec §5.1，容器内 git 行为与宿主一致）
 RUN git config --system core.filemode false
 WORKDIR /workspace

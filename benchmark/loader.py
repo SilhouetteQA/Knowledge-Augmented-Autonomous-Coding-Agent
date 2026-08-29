@@ -12,6 +12,14 @@ from tools.github_tools import GitHubIssue
 
 CATEGORIES = ("bug", "feature", "test", "refactor", "domain")
 
+# E7（P2-7）：case 未显式配 max_iterations 时按 task_type 补默认——开放型任务
+# （test/refactor/domain）迭代上限更紧（20，逼小步收敛），bug/feature 保持 30。
+DEFAULT_MAX_ITERATIONS = {"bug": 30, "feature": 30,
+                          "test": 20, "refactor": 20, "domain": 20}
+
+# E9：case 可选 domain_check 的允许取值（域案例判定器，替代 LLM Judge 功能等价模型）
+DOMAIN_CHECKS = ("deletions", "bridge")
+
 
 class CaseError(Exception):
     """案例 schema 非法时抛出（含文件名与原因）。"""
@@ -27,7 +35,12 @@ class BenchmarkCase:
     gold_patch: str
     must_pass: list[str]
     max_iterations: int = 30
+    task_type: str = ""
     notes: str = ""
+    setup_commands: list[str] = field(default_factory=list)
+    domain_check: str = ""
+    # E10：交付一致性核查配置——期望动作（如 {"deletions": 5}），缺省空 dict 不核查
+    expected_actions: dict = field(default_factory=dict)
 
 
 def _validate(data: dict, path: Path) -> BenchmarkCase:
@@ -37,6 +50,11 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
         raise CaseError(f"{path.name}: id 缺失或非字符串")
     if category not in CATEGORIES:
         raise CaseError(f"{path.name}: category '{category}' 非法（应为 {CATEGORIES}）")
+    # E7（P2-7）：task_type 可选，与 category 同域（bug/feature/test/refactor/domain），
+    # 缺省取 category；非法取值（含非字符串）报错并列出允许集。
+    task_type = data.get("task_type", category)
+    if task_type not in CATEGORIES:
+        raise CaseError(f"{path.name}: task_type '{task_type}' 非法（应为 {CATEGORIES}）")
     repo = data.get("repository")
     if not isinstance(repo, str) or "/" not in repo:
         raise CaseError(f"{path.name}: repository 缺失或非法（应为 owner/name）")
@@ -66,16 +84,47 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
     if not isinstance(must_pass, list) or not must_pass or not all(
             isinstance(m, str) for m in must_pass):
         raise CaseError(f"{path.name}: must_pass 须为非空字符串列表")
-    max_iter = data.get("max_iterations", 30)
+    # E7（P2-7）：显式 max_iterations 永远优先（存在即用，显式 null 视同非法
+    # 走正整数校验）；未配置时按 task_type 补默认（bug/feature=30，开放型=20）。
+    if "max_iterations" in data:
+        max_iter = data["max_iterations"]
+    else:
+        max_iter = DEFAULT_MAX_ITERATIONS[task_type]
     if not isinstance(max_iter, int) or max_iter <= 0:
         raise CaseError(f"{path.name}: max_iterations 须为正整数")
+    setup = data.get("setup_commands", [])
+    if not isinstance(setup, list):
+        raise CaseError(f"{path.name}: setup_commands 须为列表")
+    for i, cmd in enumerate(setup):
+        if not isinstance(cmd, str):
+            raise CaseError(f"{path.name}: setup_commands[{i}] 须为字符串（got {cmd!r}）")
+    # E9：domain_check 可选，取值 deletions/bridge 之一；缺省无（空串），显式空串与缺省同义。
+    # 非字符串或（非空且非允许取值）→ CaseError（含取值与允许集）。
+    domain_check = data.get("domain_check", "")
+    if (not isinstance(domain_check, str)
+            or (domain_check and domain_check not in DOMAIN_CHECKS)):
+        raise CaseError(f"{path.name}: domain_check '{domain_check}' 非法"
+                        f"（应为 {DOMAIN_CHECKS}）")
+    # E10：expected_actions 可选 dict（如 {"deletions": 5}），缺省 {}；非 dict →
+    # CaseError；键 deletions 存在时值须为非负 int（bool 为 int 子类，一并拒绝）。
+    expected_actions = data.get("expected_actions", {})
+    if not isinstance(expected_actions, dict):
+        raise CaseError(f"{path.name}: expected_actions 须为对象"
+                        f"（got {expected_actions!r}）")
+    if "deletions" in expected_actions:
+        del_n = expected_actions["deletions"]
+        if not isinstance(del_n, int) or isinstance(del_n, bool) or del_n < 0:
+            raise CaseError(f"{path.name}: expected_actions.deletions 须为非负整数"
+                            f"（got {del_n!r}）")
     return BenchmarkCase(
         id=case_id, category=category, repository=repo,
         issue=GitHubIssue(number=issue["number"], title=issue["title"],
                           body=issue["body"], labels=list(issue["labels"]),
                           state=issue["state"]),
         gold_patch=str(gold), must_pass=list(must_pass),
-        max_iterations=max_iter, notes=data.get("notes", ""),
+        max_iterations=max_iter, task_type=task_type, notes=data.get("notes", ""),
+        setup_commands=list(setup), domain_check=domain_check,
+        expected_actions=dict(expected_actions),
     )
 
 

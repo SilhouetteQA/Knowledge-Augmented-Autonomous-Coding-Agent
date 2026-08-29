@@ -80,6 +80,40 @@ def test_labels_as_string_raises(tmp_path):
         load_cases(str(tmp_path))
 
 
+def test_setup_commands_default_empty(tmp_path):
+    """无 setup_commands 字段 → 默认空列表。"""
+    _write_case(tmp_path, "bug", "schedule-646")
+    c = load_cases(str(tmp_path))[0]
+    assert c.setup_commands == []
+
+
+def test_setup_commands_loaded(tmp_path):
+    """合法字符串列表正常载入。"""
+    cmds = ["pip install -r requirements.txt", "python -m compileall ."]
+    _write_case(tmp_path, "bug", "schedule-646", setup_commands=cmds)
+    c = load_cases(str(tmp_path))[0]
+    assert c.setup_commands == cmds
+
+
+@pytest.mark.parametrize("bad", [
+    {"setup_commands": "pip install pytz"},   # 非列表
+    {"setup_commands": [None]},               # 元素非 str
+    {"setup_commands": ["ok", 42]},           # 部分元素非 str
+])
+def test_invalid_setup_commands_raises(tmp_path, bad):
+    _write_case(tmp_path, "bug", "x", **bad)
+    with pytest.raises(CaseError, match="setup_commands"):
+        load_cases(str(tmp_path))
+
+
+def test_invalid_setup_command_element_reports_index(tmp_path):
+    """非 str 元素报错须含下标，便于定位。"""
+    _write_case(tmp_path, "bug", "schedule-646",
+                setup_commands=["pip install pytz", 42])
+    with pytest.raises(CaseError, match=r"setup_commands\[1\]"):
+        load_cases(str(tmp_path))
+
+
 def test_real_cases_loaded():
     """真实基准案例库可全量加载（纯本地文件校验）。"""
     cases = load_cases("benchmark/cases")
@@ -87,3 +121,137 @@ def test_real_cases_loaded():
     cats = {c.category for c in cases}
     assert {"bug", "feature", "test", "refactor"} <= cats
     assert all(c.gold_patch.endswith(".diff") for c in cases)
+
+
+# --- E7（P2-7）：task_type 校验与按任务类型的默认迭代上限 ---
+
+
+def _write_case_without_max_iterations(cases_dir, category, case_id, **overrides):
+    """先落盘显式 max_iterations 的 case，再移除该键（模拟未配置）。"""
+    _write_case(cases_dir, category, case_id, **overrides)
+    p = cases_dir / category / (case_id + ".json")
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data.pop("max_iterations", None)
+    p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+
+def test_task_type_defaults_to_category(tmp_path):
+    """未配置 task_type → 缺省取 category。"""
+    _write_case(tmp_path, "bug", "schedule-646")
+    c = load_cases(str(tmp_path))[0]
+    assert c.task_type == "bug"
+
+
+def test_task_type_explicit(tmp_path):
+    """显式 task_type 独立于 category 载入。"""
+    _write_case(tmp_path, "feature", "x", task_type="test")
+    c = load_cases(str(tmp_path))[0]
+    assert c.task_type == "test"
+    assert c.category == "feature"
+
+
+def test_task_type_invalid_raises(tmp_path):
+    """非法 task_type → CaseError（报错含取值与允许集）。"""
+    _write_case(tmp_path, "bug", "x", task_type="unknown")
+    with pytest.raises(CaseError, match="task_type 'unknown' 非法.*bug"):
+        load_cases(str(tmp_path))
+
+
+@pytest.mark.parametrize("cat,expected", [
+    ("bug", 30),              # 修复类：默认 30
+    ("feature", 30),          # 功能类：默认 30
+    ("test", 20),             # 开放型：默认 20
+    ("refactor", 20),         # 开放型：默认 20
+    ("domain", 20),           # 开放型：默认 20
+])
+def test_default_max_iterations_by_task_type(tmp_path, cat, expected):
+    """无 max_iterations 时按 task_type 补默认（bug/feature=30，test/refactor/domain=20）。"""
+    _write_case_without_max_iterations(tmp_path, cat, "c-" + cat)
+    c = load_cases(str(tmp_path))[0]
+    assert c.max_iterations == expected
+    assert c.task_type == cat
+    assert c.category == cat
+
+
+def test_default_max_iterations_from_task_type_not_category(tmp_path):
+    """默认值取 task_type 而非目录 category：category=bug + task_type=test → 20。"""
+    _write_case_without_max_iterations(tmp_path, "bug", "x", task_type="test")
+    c = load_cases(str(tmp_path))[0]
+    assert c.max_iterations == 20
+    assert c.task_type == "test"
+
+
+def test_explicit_max_iterations_wins_over_task_type_default(tmp_path):
+    """显式 max_iterations 永远优先，不被 task_type 默认覆盖。"""
+    _write_case(tmp_path, "test", "x", task_type="test", max_iterations=15)
+    c = load_cases(str(tmp_path))[0]
+    assert c.max_iterations == 15
+    assert c.task_type == "test"
+
+
+def test_real_cases_explicit_max_iterations_unaffected():
+    """既有 5 个 case 均显式配 max_iterations → 不受新默认值影响；无 task_type → 取 category。"""
+    cases = load_cases("benchmark/cases")
+    assert all(c.max_iterations == 30 for c in cases)
+    assert all(c.task_type == c.category for c in cases)
+
+
+# --- E9：domain_check 域判定配置（deletions / bridge，缺省无） ---
+
+
+def test_domain_check_default_empty(tmp_path):
+    """未配置 domain_check → 缺省空串（不触发域判定）。"""
+    _write_case(tmp_path, "domain", "c-1")
+    c = load_cases(str(tmp_path))[0]
+    assert c.domain_check == ""
+
+
+def test_domain_check_valid_values(tmp_path):
+    """合法 domain_check（deletions/bridge）正常载入且与类别独立。"""
+    _write_case(tmp_path, "domain", "c-del", domain_check="deletions")
+    _write_case(tmp_path, "domain", "c-bridge", domain_check="bridge")
+    cases = {c.id: c for c in load_cases(str(tmp_path))}
+    assert cases["c-del"].domain_check == "deletions"
+    assert cases["c-bridge"].domain_check == "bridge"
+
+
+@pytest.mark.parametrize("bad", ["unknown", 42, None, ["deletions"]])
+def test_domain_check_invalid_raises(tmp_path, bad):
+    """非法 domain_check → CaseError（报错含取值与允许集）；显式空串与缺省同义不报错。"""
+    _write_case(tmp_path, "domain", "x", domain_check=bad)
+    with pytest.raises(CaseError, match=r"domain_check '.*' 非法.*deletions"):
+        load_cases(str(tmp_path))
+
+
+# --- E10：expected_actions 交付一致性核查配置（可选 dict，键 deletions 非负 int） ---
+
+
+def test_expected_actions_default_empty(tmp_path):
+    """未配置 expected_actions → 缺省空 dict（不触发一致性核查）。"""
+    _write_case(tmp_path, "bug", "schedule-646")
+    c = load_cases(str(tmp_path))[0]
+    assert c.expected_actions == {}
+
+
+def test_expected_actions_valid(tmp_path):
+    """合法 expected_actions（键 deletions 非负 int；空 dict 亦合法）正常载入。"""
+    _write_case(tmp_path, "bug", "c-1", expected_actions={"deletions": 5})
+    _write_case(tmp_path, "bug", "c-2", expected_actions={})
+    cases = {c.id: c for c in load_cases(str(tmp_path))}
+    assert cases["c-1"].expected_actions == {"deletions": 5}
+    assert cases["c-2"].expected_actions == {}
+
+
+@pytest.mark.parametrize("bad", [
+    ["deletions"],          # 非 dict（列表）
+    "deletions=5",          # 非 dict（字符串）
+    {"deletions": -1},      # deletions 为负
+    {"deletions": "5"},     # deletions 非 int（字符串）
+    {"deletions": 5.0},     # deletions 非 int（float）
+    {"deletions": True},    # deletions 为 bool（int 子类，须拒绝）
+])
+def test_expected_actions_invalid_raises(tmp_path, bad):
+    """非法 expected_actions → CaseError（非 dict 或 deletions 非非负 int）。"""
+    _write_case(tmp_path, "bug", "x", expected_actions=bad)
+    with pytest.raises(CaseError, match="expected_actions"):
+        load_cases(str(tmp_path))
