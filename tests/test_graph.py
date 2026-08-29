@@ -565,3 +565,28 @@ def test_issue_setup_commands_tool_error_not_raised(monkeypatch):
     monkeypatch.setattr(g, "run_command", lambda *a, **k: TE("模拟失败"))
     monkeypatch.setenv("KA_ISSUE_SETUP_COMMANDS", "pip install -e . --no-build-isolation")
     g._run_issue_setup_commands(str("D:/tmp"))  # 不抛即通过
+
+
+def test_budget_nudge_appended_when_over_two_thirds_without_writes(tmp_path):
+    """A12：迭代过 2/3 且无写操作时，decide 收到预算提醒消息。"""
+    from agent.graph import run_agent_graph
+    from agent.llm import LLMMessage, MockLLMClient, ToolCall
+
+    tools_msg = LLMMessage(role="assistant", content=None, tool_calls=[
+        ToolCall(id="t", name="list_files", arguments={})])
+    script = [
+        LLMMessage(role="assistant", content='["做"]'),   # plan
+        tools_msg,                                        # decide#1 iteration=1
+        tools_msg,                                        # decide#2 iteration=2（过 2/3）
+        LLMMessage(role="assistant", content="完成"),      # decide#3 收尾
+    ]
+    llm = MockLLMClient(script)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
+    run_agent_graph("任务", llm, max_iterations=3, workspace_root=str(ws))
+    # decide#3（calls[3]，此时 state iteration=2 >= 3*2/3=2 且无写操作）应携带预算提醒
+    assert any("预算提醒" in str(m.get("content")) for m in llm.calls[3][0])
+    # decide#1/#2（iteration=0/1 < 2）不携带
+    assert not any("预算提醒" in str(m.get("content")) for m in llm.calls[1][0])
+    assert not any("预算提醒" in str(m.get("content")) for m in llm.calls[2][0])

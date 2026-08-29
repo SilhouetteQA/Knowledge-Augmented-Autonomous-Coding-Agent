@@ -151,7 +151,7 @@ def test_markdown_shows_both_rates_with_comment(tmp_path):
 
 
 def test_markdown_consistency_column(tmp_path):
-    """明细表新增「交付一致」列：consistency=True → ✓、False → ✗（备注省略）。"""
+    """明细表「交付一致」列：consistency=True → 一致、False → 不一致（B6：✓✗→中文）。"""
     match = _result()
     mismatch = _result(False, "FAIL")
     mismatch.consistency = False
@@ -160,8 +160,8 @@ def test_markdown_consistency_column(tmp_path):
                              resolution_rate=0.5, results=[match, mismatch])
     text = Path(save_markdown(report, str(tmp_path))).read_text(encoding="utf-8")
     assert "交付一致" in text                       # 列头
-    assert text.count("✓") == 1                     # 相符行
-    assert text.count("✗") == 1                     # 不符行
+    assert "| 一致 |" in text                       # 相符行
+    assert "| 不一致 |" in text                     # 不符行
     assert mismatch.consistency_note not in text    # 备注省略（不展开细节）
 
 

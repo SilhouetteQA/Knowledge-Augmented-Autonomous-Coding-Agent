@@ -192,7 +192,15 @@ def approve_request(approval: ApprovalRequest, decision: str,
                                  approval.base_branch, approval.commit_message,
                                  pr_body)
     if isinstance(pr_url, ToolError):
-        raise ApprovalError(f"创建 PR 失败: {pr_url.message}（分支已推送）")
+        # push 已成功、仅建 PR 失败（B7）：落 approved 终态（pr_url 留空 + 注记），
+        # 拒绝重放——重放会二次 commit/push（漂移检查虽能拦，但终态语义更明确）
+        approval.decided_at = now
+        approval.status = "approved"
+        approval.pr_url = None
+        approval.decision_comment = (
+            f"{comment or ''}\n[系统] commit+push 已完成，创建 PR 失败: "
+            f"{pr_url.message}（分支已推送，请手工建 PR）").strip()
+        return approval
     approval.decided_at = now
     approval.pr_url = pr_url
     approval.status = "approved"

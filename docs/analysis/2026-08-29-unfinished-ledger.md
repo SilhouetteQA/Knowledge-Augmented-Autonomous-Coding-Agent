@@ -17,7 +17,7 @@
 | A9 | G5 上下文膨胀（50 轮无压缩 → 超时/慢） | 待设计 | 架构项：历史压缩/摘要策略，本轮唯一未修的架构级缺口 |
 | A10 | G6 run_tests 超时 | ✅ 已修 | KA_TEST_TIMEOUT_S |
 | A11 | G7 容器 root 文件残留清理 | 部分 | root 容器清理可工作；可考虑 destroy 钩子自动化（小） |
-| A12 | 模型预算纪律（deepseek 无视 1/3-2/3 规则） | 待设计 | 提示词级在 mimo 有效、deepseek 无效；或执行层阶段预算强制 |
+| A12 | 模型预算纪律 | 部分：执行层 nudge 已落地（过 2/3 无写操作注入提醒 + 单测）；真实 run 复证待做 |
 | A13 | 兄弟项目测试容器内 2 errors | 待查 | 容器内基线不绿（0 passed/2 error），回归验收语义受损 |
 
 ## B. 历轮 Minor 台账（已清偿 + 剩余）
@@ -30,10 +30,10 @@
 | B4 | _run 私有跨模块导入 | ✅ run_host |
 | B5 | E5-1 超时透传测试 | ✅ |
 | B6 | 报告 ✓/✗ 擦边 emoji | ✅ 中文 |
-| B7 | approve push 成功建 PR 失败的重放窗口 | 待修（小）：异常时先落 approved-partial 或阻断重放 |
-| B8 | E1-M2 case.setup_commands 60s 默认不可配 | 待修（小）：与 KA_TEST_TIMEOUT_S 同法 |
-| B9 | E9 runner 对域 case 读 gold | 待修（小）：域 case 跳过 gold 读取 |
-| B10 | E4-1/2 md 摘要转义与测试 | 待修（小） |
+| B7 | approve push 成功建 PR 失败的重放窗口 | ✅ 已修：落 approved 终态（pr_url=None+注记），拒绝重放 |
+| B8 | E1-M2 case.setup_commands 60s 默认不可配 | ✅ 已修：KA_SETUP_TIMEOUT_S |
+| B9 | E9 runner 对域 case 读 gold | ✅ 已修：域 case 跳过 gold 读取 |
+| B10 | E4-1/2 md 摘要转义与测试 | ✅ 已修：失败摘要换行转义 + 一致列测试更新 |
 | B11 | E6-1 --compare 不回填 adjusted | 待设计（口径统一） |
 | B12 | A7-2 task-A7-brief.md 档案补全 | 待做（文档） |
 | B13 | E3-a docker setup environment_error 真实验证 | 部分（本轮 docker 实测覆盖主链路；setup 失败形态待专项） |

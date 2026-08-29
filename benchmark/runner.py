@@ -105,8 +105,10 @@ def _run_setup_commands(case: BenchmarkCase, repo_dir: str) -> None:
     if not case.setup_commands:
         return
     with sandbox_executor(repo_dir):
+        setup_timeout = int(os.environ.get("KA_SETUP_TIMEOUT_S", "60"))
         for cmd in case.setup_commands:
-            res = run_command(cmd, cwd=repo_dir, workspace_root=repo_dir)
+            res = run_command(cmd, cwd=repo_dir, workspace_root=repo_dir,
+                              timeout=setup_timeout)
             if isinstance(res, ToolError):
                 raise RuntimeError(f"setup 命令失败: {cmd} -> {res}")
             if res.exit_code != 0:
@@ -209,12 +211,15 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     diff = getattr(run, "diff", "") or ""
     test_pass, test_summary = _test_summary(case, repo_dir)
     gold_text = ""
-    gold_path = os.path.join(case_dir, case.gold_patch)
-    try:
-        with open(gold_path, encoding="utf-8") as f:
-            gold_text = f.read()
-    except OSError as e:
-        errors.append(f"gold patch 读取失败: {e}")
+    if not case.domain_check:
+        # B9（E9 自审遗留）：域 case 判定走规则检查器，gold 读取纯浪费且
+        # 读失败还会污染 errors——仅功能等价 case 需要 gold
+        gold_path = os.path.join(case_dir, case.gold_patch)
+        try:
+            with open(gold_path, encoding="utf-8") as f:
+                gold_text = f.read()
+        except OSError as e:
+            errors.append(f"gold patch 读取失败: {e}")
     if case.domain_check:
         # E9：域案例判定——规则检查器（deletions/bridge）替代 LLM Judge。域知识任务
         # （删除/bridge）无 gold 可比，「功能等价」模型不匹配；判定证据进 judge_reason，
@@ -283,23 +288,27 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     completion_before = llm.tokens_total["completion"]
     repo_dir = os.path.join(repo_root, _repo_dir_name(case.repository))
     try:
-        _ensure_repository(repo_root, repo_dir, case.repository)
-        _run_setup_commands(case, repo_dir)
-        baseline_ok, summary = _test_summary(case, repo_dir)
-        if not baseline_ok:
-            return _environment_error_result(
-                case, summary, llm, prompt_before, completion_before,
-                start, time.monotonic())
-        run = run_issue_agent(
-            IssueTask(repository=case.repository,
-                      issue_number=case.issue.number,
-                      workspace_root=repo_root,
-                      max_iterations=case.max_iterations,
-                      issue_snapshot=case.issue),
-            llm)
-        return _case_result(
-            case, llm, case_dir, repo_dir, prompt_before, completion_before,
-            start, time.monotonic(), run)
+        # 单 case 单沙箱（审查 I2）：setup/基线/Agent/判定共享同一容器——
+        # docker 下 setup 的环境级安装此前随独立容器销毁而蒸发；嵌套的
+        # sandbox_executor 调用按 workspace 匹配自动复用外层容器
+        with sandbox_executor(repo_dir):
+            _ensure_repository(repo_root, repo_dir, case.repository)
+            _run_setup_commands(case, repo_dir)
+            baseline_ok, summary = _test_summary(case, repo_dir)
+            if not baseline_ok:
+                return _environment_error_result(
+                    case, summary, llm, prompt_before, completion_before,
+                    start, time.monotonic())
+            run = run_issue_agent(
+                IssueTask(repository=case.repository,
+                          issue_number=case.issue.number,
+                          workspace_root=repo_root,
+                          max_iterations=case.max_iterations,
+                          issue_snapshot=case.issue),
+                llm)
+            return _case_result(
+                case, llm, case_dir, repo_dir, prompt_before, completion_before,
+                start, time.monotonic(), run)
     except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
         return CaseResult(
             case_id=case.id, category=case.category, status="error",

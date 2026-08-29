@@ -148,13 +148,14 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
               "| case_id | 类别 | 状态 | 测试 | 接受 | Judge | 迭代 | 耗时(s) | 成本($) | 失败摘要 | 交付一致 |",
               "|---------|------|------|------|------|-------|------|---------|---------|----------|---------|"]
     for r in report.results:
+        summary = _truncate(r.test_error_summary, 80).replace("|", "\\|").replace("\n", " ")
         lines.append(
             f"| {r.case_id} | {r.category} | {r.status} | "
             f"{'PASS' if r.test_pass else 'FAIL'} | "
             f"{'PASS' if r.patch_acceptance else 'FAIL'} | "
             f"{r.judge_verdict} | {r.iteration_count} | {r.latency_s:.1f} | "
-            f"{r.cost_usd:.4f} | {_truncate(r.test_error_summary, 80).replace('|', '\\|')} | "
-            f"{'✓' if r.consistency else '✗'} |")
+            f"{r.cost_usd:.4f} | {summary} | "
+            f"{'一致' if r.consistency else '不一致'} |")
     lines += ["", "## Judge 理由", ""]
     for r in report.results:
         lines.append(f"### {r.case_id} ({r.judge_verdict})")

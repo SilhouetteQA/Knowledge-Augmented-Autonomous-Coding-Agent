@@ -273,6 +273,15 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     def decide_node(state: AgentState) -> dict:
         system = _decide_system(state["plan"], state["verify_rounds"], max_verify_rounds)
         messages = [{"role": "system", "content": system}] + state["messages"]
+        # A12 预算纪律执行层：deepseek 实测无视提示词预算纪律——迭代过 2/3 且
+        # 尚无任何写操作时追加显式提醒（提示词合规的模型不受影响，多收一条消息）
+        if (max_iterations > 0 and state["iteration"] >= max_iterations * 2 // 3
+                and not any(s.tool_name in ("write_file", "edit_file")
+                            for s in state["steps"])):
+            messages.append({"role": "user", "content":
+                f"[预算提醒] 迭代预算已过 2/3（{state['iteration']}/{max_iterations}）"
+                "且尚无任何文件变更落地：立即停止探索，剩余预算全部用于执行"
+                "（edit_file/write_file）与验证，并在预算耗尽前产出结论。"})
         try:
             msg = llm.chat(messages, _graph_tools())
         except Exception as e:  # noqa: BLE001

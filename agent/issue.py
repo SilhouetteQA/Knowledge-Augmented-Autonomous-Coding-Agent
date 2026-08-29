@@ -90,10 +90,22 @@ REVIEW_CONTEXT_PROBES = [
 
 
 def _probe_review_context(repo_dir: str) -> list[str]:
-    """关键路径存在性探针：具体路径用 os.path.isfile，通配路径按存在文件数标计。"""
+    """关键路径存在性探针：具体路径用 os.path.isfile，通配路径按存在文件数标计。
+
+    自适应（brooks-health Top-1）：探针清单源自兄弟项目定制，对其它仓库
+    "缺失"是噪声证据——父目录不存在的探针跳过；KA_REVIEW_PROBES（冒号分隔）
+    可整体覆盖。
+    """
+    custom = os.environ.get("KA_REVIEW_PROBES", "").strip()
+    probes = [p for p in custom.split(":") if p.strip()] if custom else REVIEW_CONTEXT_PROBES
     verdicts = []
-    for path in REVIEW_CONTEXT_PROBES:
+    for path in probes:
         abs_path = os.path.join(repo_dir, path)
+        parent = os.path.dirname(abs_path)
+        if os.path.isdir(parent) and not os.path.isdir(abs_path):
+            pass  # 父目录存在，探测有意义
+        elif not os.path.isdir(parent):
+            continue  # 父目录不存在：探针不适用于该仓库，不出证据行
         if "*" in path:
             found = glob.glob(abs_path)
             verdicts.append(f"{path}: 存在（{len(found)} 个文件）" if found

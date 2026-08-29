@@ -260,6 +260,13 @@ def sandbox_executor(workspace_root: str, config: SandboxConfig | None = None,
     if os.environ.get("KA_EXECUTOR", "local") != "docker":
         yield LocalExecutor()
         return
+    existing = _CURRENT_EXECUTOR.get()
+    if existing is not None and getattr(getattr(existing, "_manager", None),
+                                        "workspace_root", None) == workspace_root:
+        # 嵌套复用（审查 I2）：外层上下文持有容器，内层不新建/不销毁——
+        # benchmark setup 的环境级安装因此在基线/判定阶段可见（docker 下此前蒸发）
+        yield existing
+        return
     manager = SandboxManager(config or get_sandbox_config(), workspace_root,
                              docker_runner=docker_runner)
     token = None
