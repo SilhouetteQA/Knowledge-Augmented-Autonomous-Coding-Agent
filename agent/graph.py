@@ -292,9 +292,12 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
                               "arguments": json.dumps(tc.arguments, ensure_ascii=False)}}
                 for tc in msg.tool_calls
             ]
+        assistant_msg = {"role": "assistant", "content": msg.content, "tool_calls": tool_calls}
+        if msg.reasoning_content:
+            # thinking 模式回传（G8）：端点要求 reasoning_content 随历史带回
+            assistant_msg["reasoning_content"] = msg.reasoning_content
         return {
-            "messages": state["messages"] + [
-                {"role": "assistant", "content": msg.content, "tool_calls": tool_calls}],
+            "messages": state["messages"] + [assistant_msg],
             "pending_tool_calls": msg.tool_calls,
             "iteration": state["iteration"] + 1,
         }

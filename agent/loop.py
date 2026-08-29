@@ -224,7 +224,7 @@ def run_agent(task: str, llm: LLMClient, max_iterations: int = DEFAULT_MAX_ITERA
                 steps.append(AgentStep(tool_name=tc.name, arguments=tc.arguments, result=result))
                 results.append(result)
             # OpenAI 格式：先回注 assistant 的 tool_calls 消息，再逐条回注 tool 结果
-            messages.append({
+            assistant_msg = {
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [
@@ -238,7 +238,11 @@ def run_agent(task: str, llm: LLMClient, max_iterations: int = DEFAULT_MAX_ITERA
                     }
                     for tc in msg.tool_calls
                 ],
-            })
+            }
+            if msg.reasoning_content:
+                # thinking 模式回传（G8）：端点要求 reasoning_content 随历史带回
+                assistant_msg["reasoning_content"] = msg.reasoning_content
+            messages.append(assistant_msg)
             for tc, result in zip(msg.tool_calls, results):
                 messages.append({
                     "role": "tool",

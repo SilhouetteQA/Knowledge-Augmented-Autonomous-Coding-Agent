@@ -254,3 +254,47 @@ def test_chat_timeout_error_propagates(monkeypatch):
     monkeypatch.setattr(client._client, "chat", FakeChat())
     with pytest.raises(openai.APITimeoutError):
         client.chat([{"role": "user", "content": "hi"}], [])
+
+
+# ---- G8: thinking 模式 reasoning_content 回传（deepseek-v4-flash 实测 400）----
+
+def test_chat_carries_reasoning_content(monkeypatch):
+    """端点返回 reasoning_content 时必须带入 LLMMessage（供回放侧带回）。"""
+    from types import SimpleNamespace
+    from agent.llm import OpenAICompatClient, ToolSpec
+
+    client = OpenAICompatClient(api_key="k", base_url="http://localhost:1")
+    fake_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(
+            content="答案", tool_calls=None, reasoning_content="思考链..."))],
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+
+    class FakeCompletions:
+        def create(self, *args, **kwargs):
+            return fake_resp
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    monkeypatch.setattr(client._client, "chat", FakeChat())
+    msg = client.chat([{"role": "user", "content": "hi"}], [])
+    assert msg.reasoning_content == "思考链..."
+
+
+def test_replayed_history_passes_reasoning_content_back(tmp_path):
+    """回放历史时 reasoning_content 随 assistant 消息带回（G8 验收：端点不再 400）。"""
+    import json as _json
+    from agent.loop import run_agent
+    from agent.llm import LLMMessage, MockLLMClient, ToolCall
+
+    first = LLMMessage(role="assistant", content=None,
+                       tool_calls=[ToolCall(id="t1", name="list_files", arguments={})],
+                       reasoning_content="需要先看目录")
+    second = LLMMessage(role="assistant", content="完成")
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    llm = MockLLMClient([first, second])
+    run_agent("列出文件", llm, max_iterations=3, workspace_root=str(tmp_path))
+    second_call_messages = llm.calls[1][0]
+    assistant_msgs = [m for m in second_call_messages if m.get("role") == "assistant"]
+    assert any(m.get("reasoning_content") == "需要先看目录" for m in assistant_msgs)

@@ -82,11 +82,17 @@ class ToolCall:
 
 @dataclass
 class LLMMessage:
-    """LLM 返回消息：有 tool_calls 表示需要执行工具，否则 content 为最终回答。"""
+    """LLM 返回消息：有 tool_calls 表示需要执行工具，否则 content 为最终回答。
+
+    reasoning_content：thinking 模式端点（deepseek-v4-flash 实测）随 assistant
+    消息返回的思维链；回放历史时必须原样带回，否则端点 400
+    （"The reasoning_content in the thinking mode must be passed back"）。
+    """
     role: str
     content: str | None = None
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    reasoning_content: str | None = None
 
 
 class LLMClient(Protocol):
@@ -168,7 +174,9 @@ class OpenAICompatClient:
                 )
                 for tc in msg.tool_calls
             ]
-        return LLMMessage(role="assistant", content=msg.content, tool_calls=tool_calls)
+        reasoning = getattr(msg, "reasoning_content", None)
+        return LLMMessage(role="assistant", content=msg.content, tool_calls=tool_calls,
+                          reasoning_content=reasoning)
 
 
 class MockLLMClient:
