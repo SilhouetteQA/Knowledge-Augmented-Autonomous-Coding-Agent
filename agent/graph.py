@@ -272,7 +272,11 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     @traced("graph.decide", as_type="generation")
     def decide_node(state: AgentState) -> dict:
         system = _decide_system(state["plan"], state["verify_rounds"], max_verify_rounds)
-        messages = [{"role": "system", "content": system}] + state["messages"]
+        # G5：工具结果滚动压缩（env 可调；默认保留最近 30 条、旧工具结果截 1200 字符）
+        keep = int(os.environ.get("KA_CONTEXT_KEEP_RECENT", "30"))
+        limit = int(os.environ.get("KA_CONTEXT_TOOL_LIMIT", "1200"))
+        history = _compact_messages(state["messages"], keep, limit)
+        messages = [{"role": "system", "content": system}] + history
         # A12 预算纪律执行层：deepseek 实测无视提示词预算纪律——迭代过 2/3 且
         # 尚无任何写操作时追加显式提醒（提示词合规的模型不受影响，多收一条消息）
         if (max_iterations > 0 and state["iteration"] >= max_iterations * 2 // 3
@@ -430,6 +434,23 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     g.add_edge("finalize_limited", END)
     g.add_edge("finalize_iter_limited", END)
     return g.compile()
+
+
+def _compact_messages(messages: list[dict], keep_recent: int, tool_limit: int) -> list[dict]:
+    """G5 上下文滚动压缩：最近 keep_recent 条原样保留，更早的工具结果截断到
+    tool_limit 字符（带标记）。上下文无压缩是 50 轮域任务超时崩溃的根因之一；
+    短对话（<= keep_recent）零影响。"""
+    if len(messages) <= keep_recent:
+        return messages
+    cut = len(messages) - keep_recent
+    out = []
+    for i, m in enumerate(messages):
+        if (i < cut and m.get("role") == "tool"
+                and len(m.get("content") or "") > tool_limit):
+            out.append({**m, "content": m["content"][:tool_limit] + "…[已压缩]"})
+        else:
+            out.append(m)
+    return out
 
 
 def _run_issue_setup_commands(workspace_root: str | None = None) -> None:

@@ -1,5 +1,7 @@
 # W4 Repository Intelligence 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实施。步骤使用 checkbox（`- [ ]`）跟踪。
 
 **Goal:** 为 Agent 增加代码结构认知（Python AST → Code Metadata → CodeGraph 查询工具）与域知识检索（search_knowledge），形成 Code + Domain 双知识检索，解决 W2 暴露的「盲目读文件、探索低效」问题。

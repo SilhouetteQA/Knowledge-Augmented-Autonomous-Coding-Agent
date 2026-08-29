@@ -196,8 +196,16 @@ class SandboxManager:
         )
 
     def destroy(self) -> None:
-        """销毁容器（幂等）。"""
+        """销毁容器（幂等）。销毁前清理容器侧以 root 写入的宿主可见残留
+        （G7：__pycache__/.pytest_cache 在 bind mount 上为 root 属主，宿主难删）。"""
         if self._created:
+            try:
+                self.exec("find /workspace -name __pycache__ -type d "
+                          "-exec rm -rf {} + 2>/dev/null; "
+                          "rm -rf /workspace/.pytest_cache /workspace/.pytest_tmp",
+                          timeout=30)
+            except Exception:  # noqa: BLE001 — 清理尽力而为，销毁不受影响
+                pass
             self._run("docker", "rm", "-f", self.name, check=False)
             self._created = False
 

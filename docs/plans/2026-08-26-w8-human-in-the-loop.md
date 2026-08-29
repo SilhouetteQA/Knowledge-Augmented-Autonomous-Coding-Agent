@@ -1,5 +1,7 @@
 # W8 Human-in-the-loop 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 W5 的 review 与 push 之间插入人工审批门禁——`--issue` 干跑产出审批单并停止等待，`--approve` 审批后才 commit+push+PR；Reviewer 升级为独立审查角色；多余自动推送入口（`--push`）移除。

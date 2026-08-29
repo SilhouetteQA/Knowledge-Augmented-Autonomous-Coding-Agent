@@ -174,9 +174,16 @@ def compare_reports(reports: list[BenchmarkReport]) -> str:
     lines = ["# 版本对比（Benchmark 演进）", "",
              "| 指标 | " + " | ".join(r.metadata.run_id for r in reports) + " |",
              "|------|" + "------|" * n]
+    def _adjusted(r: BenchmarkReport) -> str:
+        """adjusted 口径（P2-6）：分母排除 error/environment_error 的 case（B11 回填 compare）。"""
+        valid = [x for x in r.results if x.status not in ("error", "environment_error")]
+        return f"{sum(1 for x in valid if x.resolution) / max(len(valid), 1):.2f}"             if valid else "n/a"
+
     rows = [
         ("Issue Resolution Rate",
          lambda r: f"{r.resolution_rate:.2f}"),
+        ("Resolution Rate (adjusted)",
+         _adjusted),
         ("Test Pass Rate",
          lambda r: f"{sum(1 for x in r.results if x.test_pass) / max(r.total, 1):.2f}"),
         ("Patch Acceptance Rate",

@@ -1,5 +1,7 @@
 # W7 Observability 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 补齐全链路 Trace（Issue → Planner → Tool Call → LLM → Test → Failure → Retry → Review → PR 各环节在 Langfuse 可见），并实现本地 trace 导出汇总报告（JSON + Markdown）。

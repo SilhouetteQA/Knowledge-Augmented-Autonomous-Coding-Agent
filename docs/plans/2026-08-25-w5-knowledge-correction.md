@@ -1,5 +1,7 @@
 # W5 知识纠错——三次提取产物 2% 抽查验证 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实施。步骤使用 checkbox（`- [ ]`）跟踪。
 > 关联 spec：`docs/specs/2026-08-25-knowledge-correction.md`（已批准，并入 W5 窗口）
 

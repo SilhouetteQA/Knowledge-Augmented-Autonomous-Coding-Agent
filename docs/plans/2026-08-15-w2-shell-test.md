@@ -1,5 +1,7 @@
 # W2 Shell + Test 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实施本计划。步骤用 checkbox（`- [ ]`）跟踪。
 > 关联 Spec：`docs/specs/2026-08-15-w2-shell-test.md`（已批准）
 

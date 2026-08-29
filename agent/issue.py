@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from agent.graph import run_agent_graph
 from agent.llm import LLMClient
 from agent.loop import AgentStep
-from tools.approval import create_approval, save_approval
+from tools.approval import (approve_request, create_approval, load_approval,
+                            save_approval)
 from tools.file_tools import ToolError
 from tools.shell_tools import TestResult
 from tools.github_tools import (
@@ -74,6 +75,34 @@ class IssueAgentResult:
     verify_rounds: int
     retry_count: int = 0          # FAIL 重试发生次数（0/1）
     approval_path: str | None = None   # approval_dir 非 None 时生成的审批单路径
+
+
+def auto_approve_if_eligible(approval_path: str, repo_dir: str) -> str:
+    """D1 条件自动放行：满足全部条件时自动 approve（否则保持 pending 等人工）。
+
+    条件（D5 评估档位）：① Reviewer 首行 PASS；② red_line_reverts 为空；
+    ③ diff 非删除型（name-status 无 D 行——删除/知识写回类永久人工终审）；
+    ④ 审批单仍为 pending。返回动作描述（approved 自动放行 / pending 保持人工+原因）。
+    显式入口：仅 main.py --auto-approve 调用，默认链路行为不变。
+    """
+    approval = load_approval(approval_path)
+    if approval.status != "pending":
+        return "pending（审批单已处理）"
+    first_line = (approval.review or "").splitlines()[0] if approval.review else ""
+    if not first_line.startswith("PASS"):
+        return f"pending（审查未通过: {first_line[:60]}）"
+    if approval.red_line_reverts:
+        return f"pending（存在红线还原 {len(approval.red_line_reverts)} 项，需人工确认）"
+    ns = run_host(["git", "diff", "--name-status", approval.base_branch], cwd=repo_dir)
+    if isinstance(ns, ToolError):
+        return f"pending（读取变更类型失败: {ns.message}）"
+    deletions = [line for line in ns.splitlines() if line.startswith("D")]
+    if deletions:
+        return f"pending（删除型变更 {len(deletions)} 项，永久人工终审）"
+    approval.decision_comment = "[自动放行] Reviewer PASS + 红线 0 + 测试验证 + 非删除型"
+    approved = approve_request(approval, "approve", approval.decision_comment, repo_dir)
+    save_approval(approved, os.path.dirname(approval_path))
+    return f"approved {approved.pr_url or ''}".strip()
 
 
 def repo_dir_name(repository: str) -> str:
@@ -260,7 +289,9 @@ def _test_evidence_facts(test_results: list) -> list[str]:
     if not isinstance(tr, TestResult):
         return []
     if tr.total == 0 and tr.error == 0:
-        return []
+        # G4 口径决策：不翻转 pass 语义（无测试仓库合法），但 0 收集对 Reviewer 可见
+        return ["测试验证（verify 全量运行）未收集到任何测试: "
+                "diff 未经测试验证，请人工核验（仓库可能无测试套件）"]
     if tr.total == 0:
         return [f"测试验证异常（verify 全量运行未收集到测试，error={tr.error}）: "
                 "diff 未经过任何测试验证，请人工核验"]

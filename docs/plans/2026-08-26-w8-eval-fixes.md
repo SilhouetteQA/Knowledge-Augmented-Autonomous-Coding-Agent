@@ -1,5 +1,7 @@
 # W8 并行窗口：评估问题修复（eval-fixes）实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > 窗口：`feature/w8-eval-fixes`（基于 feature/w8-human-in-the-loop@22f4064，合并顺序 main ← W8 ← eval-fixes）
 > 规格依据：`docs/sessions/2026-08-26-w6w7-close-session.md` 第三节问题清单（P0/P1/P2 已诊断，无需新 spec；范围经用户批准 2026-08-26）
 > 跳过项：P2-10/11（被 W8 独立 Reviewer 覆盖，W8 真实干跑已实证）；P2-5（待用户提供 mimo-v2.5 单价）；P2-12（容器内 TLS 环境项，留档）

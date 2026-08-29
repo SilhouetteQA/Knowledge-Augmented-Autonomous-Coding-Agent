@@ -1,5 +1,7 @@
 # W5 GitHub Issue Agent 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实施。步骤使用 checkbox（`- [ ]`）跟踪。
 
 **Goal:** 打通 GitHub Issue → PR 全链路（Get Issue → Clone → Branch → Work → Test → Diff → Review → Commit → Push → PR），输入仓库 URL + Issue 编号产出可审查的 PR（dry-run 停在 review）。

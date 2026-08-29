@@ -742,7 +742,9 @@ def test_test_evidence_facts_empty_or_zero_total():
     from agent.issue import _test_evidence_facts
     from tools.shell_tools import TestResult
     assert _test_evidence_facts([]) == []
-    assert _test_evidence_facts([TestResult(passed=0, failed=0, error=0, total=0, duration=0.0, failures=[])]) == []
+    # G4 口径：0 收集不再静默——对 Reviewer 可见（无测试仓库合法但证据缺失须声明）
+    facts = _test_evidence_facts([TestResult(passed=0, failed=0, error=0, total=0, duration=0.0, failures=[])])
+    assert len(facts) == 1 and "未收集到任何测试" in facts[0]
 
 
 def test_review_prompt_treats_in_tree_test_files_as_merged():
@@ -812,3 +814,89 @@ def test_enforce_red_lines_untracked_red_line_file_removed(tmp_path, monkeypatch
     reverted = _enforce_red_lines(str(repo), "main")
     assert reverted == ["output/cost_log.jsonl"]
     assert not cost_log.exists()
+
+
+# ---- D1 条件自动放行 ----
+
+def _make_eligible_repo(tmp_path):
+    """最小 git 仓库：有分支 main + tracked 文件（非删除型 diff 场景由调用方追加）。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    (repo / "f.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run(["git", "add", "f.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "init"], cwd=repo, check=True)
+    return repo
+
+
+def _write_pending_approval(path, review="PASS 变更解决问题。"):
+    from tools.approval import create_approval, save_approval
+    approval = create_approval(
+        action_type="pr_push", repository="o/r", issue_number=1,
+        branch="fix/issue-1", base_branch="main",
+        commit_message="fix: x", diff="diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-a\n+b\n",
+        review=review, verify_rounds=1, retry_count=0)
+    return save_approval(approval, path)
+
+
+def test_auto_approve_rejects_on_deletions(tmp_path, monkeypatch):
+    """删除型变更：永久人工终审，不自动放行。"""
+    from agent.issue import auto_approve_if_eligible
+    repo = _make_eligible_repo(tmp_path)
+    (repo / "del.txt").write_text("gone\n", encoding="utf-8")
+    subprocess.run(["git", "add", "del.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "add"], cwd=repo, check=True)
+    subprocess.run(["git", "rm", "-q", "del.txt"], cwd=repo, check=True)
+    # 工作树 diff（相对 main）含 D 行；审批单 diff 指纹无所谓——条件判定先于漂移检查
+    path = _write_pending_approval(str(tmp_path / "ap"))
+    action = auto_approve_if_eligible(path, str(repo))
+    assert action.startswith("pending（删除型")
+    from tools.approval import load_approval
+    assert load_approval(path).status == "pending"
+
+
+def test_auto_approve_rejects_on_review_fail(tmp_path):
+    from agent.issue import auto_approve_if_eligible
+    repo = _make_eligible_repo(tmp_path)
+    path = _write_pending_approval(str(tmp_path / "ap"), review="FAIL 未完成")
+    action = auto_approve_if_eligible(path, str(repo))
+    assert action.startswith("pending（审查未通过")
+
+
+def test_auto_approve_rejects_on_red_lines(tmp_path):
+    from agent.issue import auto_approve_if_eligible
+    from tools.approval import load_approval, save_approval
+    repo = _make_eligible_repo(tmp_path)
+    path = _write_pending_approval(str(tmp_path / "ap"))
+    a = load_approval(path)
+    a.red_line_reverts = ["output/eval/cost_log.jsonl"]
+    save_approval(a, str(tmp_path / "ap"))
+    action = auto_approve_if_eligible(path, str(repo))
+    assert action.startswith("pending（存在红线还原")
+
+
+def test_auto_approve_eligible_pushes(tmp_path, monkeypatch):
+    """正向：PASS + 红线 0 + 非删除型 → 自动 approve（push/PR 打桩）。"""
+    import tools.approval as approval_mod
+    from agent.issue import auto_approve_if_eligible
+    monkeypatch.setattr(approval_mod, "push_branch", lambda repo, branch: None)
+    monkeypatch.setattr(approval_mod, "create_pull_request",
+                        lambda *a, **k: "https://github.com/o/r/pull/9")
+    repo = _make_eligible_repo(tmp_path)
+    subprocess.run(["git", "branch", "fix/issue-1"], cwd=repo, check=True)
+    (repo / "f.txt").write_text("b\n", encoding="utf-8")  # 非删除型修改
+    path = _write_pending_approval(str(tmp_path / "ap"))
+    # 漂移指纹对齐：审批单 diff 置为当前真实 diff（条件判定在漂移检查之前）
+    from tools.approval import _sha256, load_approval, save_approval
+    from tools.github_tools import git_diff_since
+    a = load_approval(path)
+    a.diff = git_diff_since(str(repo), "main")
+    a.diff_sha256 = _sha256(a.diff)
+    save_approval(a, str(tmp_path / "ap"))
+    action = auto_approve_if_eligible(path, str(repo))
+    assert action.startswith("approved")
+    from tools.approval import load_approval
+    assert load_approval(path).status == "approved"
+    assert load_approval(path).pr_url == "https://github.com/o/r/pull/9"

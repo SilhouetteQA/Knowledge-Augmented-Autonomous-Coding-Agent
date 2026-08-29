@@ -1,5 +1,7 @@
 # W6 Evaluation 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 建立可复现评估体系——基准任务库（真实 Issue 快照 + gold patch）、一键评测运行器、核心指标（Issue Resolution Rate）、版本对比报告；Langfuse 直接接入采集运行时指标。

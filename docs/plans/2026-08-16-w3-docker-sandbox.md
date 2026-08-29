@@ -1,5 +1,7 @@
 # W3 Docker Sandbox 实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: 使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实施。步骤使用 checkbox（`- [ ]`）跟踪。
 
 **Goal:** 用 Docker 容器替换 subprocess 命令执行：一个 Task 一个 Sandbox（创建 → 执行 → 销毁），实现 timeout / CPU / memory / network / filesystem / secrets 六项限制，全部命令（run_command / run_tests / git 三件套）在容器内执行。

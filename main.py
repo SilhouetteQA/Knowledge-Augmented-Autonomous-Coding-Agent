@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from agent.correct import print_audit_summary, run_audit
 from agent.graph import run_agent_graph
-from agent.issue import repo_dir_name, run_issue_agent
+from agent.issue import auto_approve_if_eligible, repo_dir_name, run_issue_agent
 from agent.llm import OpenAICompatClient
 from agent.loop import run_agent
 from benchmark.loader import load_cases
@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="审批决定：approve（commit+push+创建 PR）或 reject（拒绝，零远端副作用）")
     parser.add_argument("--comment", default=None,
                         help="审批意见（reject 建议填写原因，将写入审批单 decision_comment）")
+    parser.add_argument("--auto-approve", action="store_true",
+                        help="D1 条件自动放行：--issue 产单后满足条件（PASS+红线0+非删除型）自动 approve，否则停等人工")
     parser.add_argument("--correct", action="store_true",
                         help="知识抽查模式：对兄弟项目三次提取产物做 2% 分层抽查（dry-run，零写回）")
     parser.add_argument("--wiki-dir", default="",
@@ -140,6 +142,13 @@ def _run_issue_mode(args: argparse.Namespace, llm) -> int:
     print(f"Diff:\n{result.diff[:2000]}")
     if result.pr_url:
         print(f"PR: {result.pr_url}")
+    elif result.approval_path and args.auto_approve:
+        repo_dir = os.path.join(args.workspace, repo_dir_name(repo))
+        action = auto_approve_if_eligible(result.approval_path, repo_dir)
+        print(f"自动放行判定: {action}")
+        if not action.startswith("approved"):
+            print("等待人工审批：审阅差异与审查报告后执行 "
+                  f"--approve {result.approval_path} --decision approve|reject")
     elif result.approval_path:
         print(f"审批单已生成: {result.approval_path}")
         print("等待人工审批：审阅差异与审查报告后执行 "

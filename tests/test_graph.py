@@ -590,3 +590,22 @@ def test_budget_nudge_appended_when_over_two_thirds_without_writes(tmp_path):
     # decide#1/#2（iteration=0/1 < 2）不携带
     assert not any("预算提醒" in str(m.get("content")) for m in llm.calls[1][0])
     assert not any("预算提醒" in str(m.get("content")) for m in llm.calls[2][0])
+
+
+def test_compact_messages_truncates_old_tool_results():
+    """G5：最近 keep_recent 条原样，更早的工具结果截断带标记。"""
+    from agent.graph import _compact_messages
+    msgs = ([{"role": "user", "content": "任务"}]
+            + [{"role": "tool", "tool_call_id": str(i), "content": "x" * 5000}
+               for i in range(40)])
+    out = _compact_messages(msgs, keep_recent=5, tool_limit=1200)
+    assert out[0]["content"] == "任务"                     # user 不压
+    assert out[5]["content"].endswith("…[已压缩]")          # 旧工具结果被压
+    assert len(out[5]["content"]) == 1200 + len("…[已压缩]")
+    assert out[-1]["content"] == "x" * 5000                # 最近窗口原样
+
+
+def test_compact_messages_short_history_noop():
+    from agent.graph import _compact_messages
+    msgs = [{"role": "tool", "tool_call_id": "1", "content": "y" * 9000}]
+    assert _compact_messages(msgs, keep_recent=30, tool_limit=1200) is msgs

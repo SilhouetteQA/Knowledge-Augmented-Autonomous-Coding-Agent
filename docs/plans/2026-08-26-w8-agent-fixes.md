@@ -1,5 +1,7 @@
 # W8 Agent 侧修复窗口（agent-fixes）实施计划
 
+> 状态：本计划已全部完成（对应窗口已合并 main），进度与验收记录见 docs/roadmap.md 与 docs/devlog.md；文内 checkbox 不再回填。
+
 > 窗口：`feature/w8-agent-fixes`（基于 feature/w8-eval-fixes@40e4384；合并顺序 main ← W8 ← eval-fixes ← agent-fixes）
 > 背景：兄弟项目 #1 真实演示暴露三类 Agent 侧问题（用户 2026-08-26 定序：eval-fix 做完 → 本窗口修 Agent → 同题新数据重测 W8 → 批准后真实远程修复 → 全部验证后收尾）
 > 问题源：① verify_rounds=0（Agent 全程未声称完成，触顶即停，图从未强制跑测试）② 删除判定把「入度 0」粗筛当结论（无领域规则约束）③ Reviewer 只看 diff 文本，幻觉论据（identity_map 缺失误判）
