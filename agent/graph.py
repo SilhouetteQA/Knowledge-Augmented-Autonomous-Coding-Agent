@@ -400,7 +400,8 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     g.add_edge("plan", "decide")
     g.add_conditional_edges("decide", route_after_decide,
                             {"execute": "execute", "verify": "verify",
-                             "finalize_iter_limited": "finalize_iter_limited"})
+                             "finalize_iter_limited": "finalize_iter_limited",
+                             "finalize": "finalize"})
     g.add_edge("execute", "decide")
     g.add_conditional_edges("verify", route_after_verify,
                             {"finalize": "finalize", "finalize_limited": "finalize_limited",
