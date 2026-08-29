@@ -491,3 +491,12 @@
 
 - 派生镜像 ka-sandbox:py312-v1x（pytest 8.3.5 钉版 + 常用测试依赖 + setuptools/wheel；**不含与目标仓库同名的包**——dateutil 遮蔽教训）。
 - 容器 root 残留用一次性 root 容器清理；实验命令带 PYTHONDONTWRITEBYTECODE=1。
+
+## 复验闭环：arknights v4 首次完整通过（2026-08-30）
+
+- Issue #4 试点三第四轮（deepseek，local 执行器，50 迭代上限）：**43 迭代未触顶、Reviewer PASS、工作树零变更**——首次完整闭环。
+- 结论：3 条候选（万顷研究/忘水坪/神农）**全部保留，0 删除**——条件②事件参与与③结构化引用命中，逐条证据齐备，符合"无合规候选必须给完整核验结论"的验收。
+- 前序验证（诚实发现）：PR #3 从未合并 → 阮先生（画家）/玉门望烽节在 v3_seed 与 md 双残留，Agent 如实报告（Reviewer 列人工关注请人工核对——与实际一致）。
+- 回归如实：索引重建 5188 实体成功；兄弟项目测试套件容器内外均不可运行（pytest 0 collected + scripts/test_extraction.py SystemExit）——A13 兄弟侧问题再次暴露，Reviewer 如实区分"非本次变更引入"。
+- 复证映射：A12 预算 nudge（探索未失控、按期交付）；G5 上下文压缩（43 轮无超时）；G8 reasoning_content（43 轮无 400）；A7 结论交付（空 diff + PASS 的结论审查模式实战 PASS）。
+- 待办联动：Issue #4 的人工决策 = 保留 0 删除结论认可即可关闭；PR #3 处置（合并则 #4 背景变化）待 SilhouetteQA。

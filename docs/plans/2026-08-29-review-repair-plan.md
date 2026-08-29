@@ -48,5 +48,5 @@
 
 ## 四、当日已闭合 but 建议复验
 
-- [x] A12 预算 nudge：已落地 + 单测；真实 run 复证进行中（arknights v4，deepseek，后台）
+- [x] A12 预算 nudge：**实战复证通过**——arknights v4（deepseek，local，43/50 迭代未触顶）按期交付结论，无探索失控；G5/G8 同 run 验证（43 轮无超时崩溃、无 400）
 - [ ] 嵌套复用沙箱在真实 benchmark（docker 执行器全量 5 case）复跑验证（需 mimo 周限恢复后执行）
