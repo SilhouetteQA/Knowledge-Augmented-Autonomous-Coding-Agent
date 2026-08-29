@@ -479,3 +479,89 @@ def test_issue_setup_commands_unset_noop(monkeypatch):
     monkeypatch.delenv("KA_ISSUE_SETUP_COMMANDS", raising=False)
     g._run_issue_setup_commands()
     assert called == []
+
+
+# ---- 审查补强（2026-08-29 三轴审查）----
+
+def test_run_agent_graph_llm_error_midway_preserves_steps(tmp_path):
+    """G1 中途降级：已完成的工具步骤必须保留（审查 I1——此前只测首调即炸）。"""
+    from agent.graph import run_agent_graph
+    from agent.llm import LLMMessage, MockLLMClient, ToolCall
+
+    class ExplodesAfterFirst:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, messages, tools):
+            self.n += 1
+            if self.n == 1:  # plan 节点
+                return LLMMessage(role="assistant", content='["列出文件"]')
+            if self.n == 2:  # decide 第一轮：发起工具调用
+                return LLMMessage(role="assistant", content=None, tool_calls=[
+                    ToolCall(id="t1", name="list_files", arguments={})])
+            raise RuntimeError("第二次 decide 调用超时")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
+    result = run_agent_graph("列出文件", ExplodesAfterFirst(), max_iterations=5,
+                             workspace_root=str(ws))
+    assert result.stopped_by_limit is False
+    assert len(result.steps) == 1 and result.steps[0].tool_name == "list_files"
+    assert "LLM 调用失败" in result.final_answer
+
+
+def test_decide_replays_reasoning_content(tmp_path):
+    """G8 graph 主链路：decide 产出的 reasoning_content 在下一轮请求中带回（审查 I2）。"""
+    from agent.graph import run_agent_graph
+    from agent.llm import LLMMessage, MockLLMClient, ToolCall
+
+    first = LLMMessage(role="assistant", content=None, tool_calls=[
+        ToolCall(id="t1", name="list_files", arguments={})],
+        reasoning_content="先看目录结构")
+    second = LLMMessage(role="assistant", content="完成")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
+    plan = LLMMessage(role="assistant", content='["列出文件"]')
+    llm = MockLLMClient([plan, first, second])
+    run_agent_graph("列出文件", llm, max_iterations=3, workspace_root=str(ws))
+    # decide 第二次调用（calls[2]）的历史中应带回 reasoning_content
+    second_call = llm.calls[2][0]
+    assert any(m.get("role") == "assistant" and m.get("reasoning_content") == "先看目录结构"
+               for m in second_call)
+
+
+def test_issue_setup_commands_wired_into_run(monkeypatch, tmp_path):
+    """G3 接线验证（审查 I3）：setup 命令经 run_agent_graph 真实执行且带 workspace_root。"""
+    import agent.graph as g
+    calls = []
+    monkeypatch.setattr(g, "run_command",
+                        lambda cmd, cwd=None, timeout=60, workspace_root=None:
+                        calls.append({"cmd": cmd, "ws": workspace_root}) or "ok")
+    monkeypatch.setenv("KA_ISSUE_SETUP_COMMANDS", "pip install -e . --no-build-isolation")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    class OneShot:
+        def __init__(self):
+            self.n = 0
+
+        def chat(self, messages, tools):
+            self.n += 1
+            if self.n == 1:
+                return LLMMessage(role="assistant", content="完成")
+            return LLMMessage(role="assistant", content="完成")
+
+    run_agent_graph("任务", OneShot(), max_iterations=2, workspace_root=str(ws))
+    assert calls and calls[0]["ws"] == str(ws)
+
+
+def test_issue_setup_commands_tool_error_not_raised(monkeypatch):
+    """G3 失败路径：setup 命令返回 ToolError 不得中断任务（审查 I3）。"""
+    import agent.graph as g
+    from tools.file_tools import ToolError as TE
+    monkeypatch.setattr(g, "run_command", lambda *a, **k: TE("模拟失败"))
+    monkeypatch.setenv("KA_ISSUE_SETUP_COMMANDS", "pip install -e . --no-build-isolation")
+    g._run_issue_setup_commands(str("D:/tmp"))  # 不抛即通过

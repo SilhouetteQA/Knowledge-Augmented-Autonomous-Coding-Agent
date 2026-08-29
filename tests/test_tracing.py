@@ -40,12 +40,15 @@ def test_ka_tracing_0_disables_even_with_keys():
     assert tracing.is_enabled() is False
 
 
-def test_traced_disabled_returns_same_function():
+def test_traced_disabled_returns_same_function(monkeypatch):
+    """禁用态语义（I4 修复后）：装饰总是包装，调用时 get_client()=None 直通——
+    行为等价（返回值不变、零观测副作用），不再要求装饰期函数身份。"""
     def f(x):
         return x + 1
     decorated = tracing.traced("span1")(f)
-    assert decorated is f                        # 身份保留
+    monkeypatch.setattr(tracing, "get_client", lambda: None)
     assert decorated(1) == 2
+    assert decorated(41) == 42
 
 
 def test_traced_enabled_writes_metadata(monkeypatch):

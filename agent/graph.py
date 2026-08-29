@@ -172,8 +172,10 @@ def _graph_dispatch(name: str, args: dict, workspace_root: str | None,
         cmd = args.get("command")
         if not cmd:
             return ToolError("缺少参数: command")
+        # timeout 上限 600：执行器层各有硬限（docker CLI 300s），LLM 超传会击穿执行层
+        timeout = min(int(args.get("timeout", 60) or 60), 600)
         return run_command(cmd, cwd=args.get("cwd"),
-                           timeout=args.get("timeout", 60), workspace_root=workspace_root)
+                           timeout=timeout, workspace_root=workspace_root)
     if name == "run_tests":
         return run_tests(path=args.get("path"), workspace_root=workspace_root)
     if name == "git_status":
@@ -307,8 +309,13 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
         steps = list(state["steps"])
         messages = list(state["messages"])
         for tc in state["pending_tool_calls"] or []:
-            result = _graph_dispatch(tc.name, tc.arguments, workspace_root,
-                                     code_graph, knowledge_client)
+            try:
+                result = _graph_dispatch(tc.name, tc.arguments, workspace_root,
+                                         code_graph, knowledge_client)
+            except Exception as e:  # noqa: BLE001
+                # 工具执行异常转观察值回注（Arch-C1）：执行器层（docker exec 等）
+                # 会 raise ToolError，execute 是最后一个无防护节点——与 G1 同型击穿面
+                result = ToolError(f"工具执行异常: {type(e).__name__}: {e}")
             steps.append(AgentStep(tool_name=tc.name, arguments=tc.arguments, result=result))
             messages.append({
                 "role": "tool",
@@ -416,20 +423,22 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     return g.compile()
 
 
-def _run_issue_setup_commands() -> None:
+def _run_issue_setup_commands(workspace_root: str | None = None) -> None:
     """沙箱创建后、任务开始前执行任务级环境准备命令（KA_ISSUE_SETUP_COMMANDS）。
 
     dateutil#1545 实测：src 布局仓库在容器内裸 pytest 收集不到包（import 失败），
     需 editable 安装仓库源码；pip install -e 必须带 --no-build-isolation（沙箱运行期
     无网络，build isolation 会尝试联网取 setuptools）。命令按 && 分隔逐条执行，
     单条超时 300s；失败不中断任务（返回值由 Agent 在后续观察中自行消化）。
+    workspace_root 必须透传（审查 I1：缺省时 resolve 到进程 cwd/workspace，
+    docker 模式 relpath 越界 → 静默 no-op，local 模式在错误目录执行）。
     """
     raw = os.environ.get("KA_ISSUE_SETUP_COMMANDS", "").strip()
     if not raw:
         return
     for cmd in (c.strip() for c in raw.split("&&")):
         if cmd:
-            run_command(cmd, timeout=300)
+            run_command(cmd, timeout=300, workspace_root=workspace_root)
 
 
 def run_agent_graph(task: str, llm: LLMClient, max_iterations: int = 20,
@@ -441,7 +450,7 @@ def run_agent_graph(task: str, llm: LLMClient, max_iterations: int = 20,
     graph = build_graph(llm, max_iterations, max_verify_rounds, workspace_root,
                         code_graph, knowledge_client)
     with sandbox_executor(workspace_root or os.getcwd()):
-        _run_issue_setup_commands()
+        _run_issue_setup_commands(workspace_root)
         result = graph.invoke({
             "task": task,
             "plan": [],

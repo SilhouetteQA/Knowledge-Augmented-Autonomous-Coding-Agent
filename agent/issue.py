@@ -190,13 +190,27 @@ def _enforce_red_lines(repo_dir: str, base_branch: str) -> list[str]:
         raise ToolError(f"红线检查失败（读取变更清单）: {name_only.message}")
     patterns = _red_line_patterns()
     reverted: list[str] = []
-    for path in name_only.splitlines():
-        path = path.strip()
-        if not path or not _is_red_line_path(repo_dir, base_branch, path, patterns):
+    changed = [p.strip() for p in name_only.splitlines() if p.strip()]
+    # untracked 纳入红线（Arch-C2）：`git diff` 不含未跟踪文件，Agent 新建的
+    # cost_log/output 类文件此前会静默绕过门禁、进 diff 盲区、随 approve 被提交
+    others = run_host(["git", "ls-files", "--others", "--exclude-standard"], cwd=repo_dir)
+    if isinstance(others, ToolError):
+        raise ToolError(f"红线检查失败（读取未跟踪清单）: {others.message}")
+    untracked = [p.strip() for p in others.splitlines() if p.strip()]
+    for path in changed:
+        if not _is_red_line_path(repo_dir, base_branch, path, patterns):
             continue
         reset = run_host(["git", "checkout", "--", path], cwd=repo_dir)
         if isinstance(reset, ToolError):
             raise ToolError(f"红线还原失败（{path}）: {reset.message}")
+        reverted.append(path)
+    for path in untracked:
+        if not any(p in path for p in patterns):
+            continue
+        try:
+            os.remove(os.path.join(repo_dir, path))
+        except OSError as e:
+            raise ToolError(f"红线清除失败（未跟踪 {path}）: {e}") from e
         reverted.append(path)
     return reverted
 

@@ -54,8 +54,6 @@ def traced(name: str | None = None, as_type: str = "span", metadata_fn=None):
     注：仅支持同步函数（本项目埋点均为同步；异步函数开启态不包装、直通）。
     """
     def deco(func):
-        if not is_enabled():
-            return func
         import asyncio
         if asyncio.iscoroutinefunction(func):
             return func

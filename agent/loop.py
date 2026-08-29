@@ -210,7 +210,16 @@ def run_agent(task: str, llm: LLMClient, max_iterations: int = DEFAULT_MAX_ITERA
         tools = _build_tools()
         steps: list[AgentStep] = []
         for i in range(max_iterations):
-            msg = llm.chat(messages, tools)
+            try:
+                msg = llm.chat(messages, tools)
+            except Exception as e:  # noqa: BLE001
+                # LLM 故障优雅降级（与 graph G1 同语义）：保留已有步骤返回终态
+                return AgentResult(
+                    steps=steps,
+                    final_answer=f"LLM 调用失败，任务提前终止: {type(e).__name__}: {e}",
+                    iteration_count=i,
+                    stopped_by_limit=False,
+                )
             if not msg.tool_calls:
                 return AgentResult(
                     steps=steps,

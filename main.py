@@ -1,6 +1,7 @@
 # main.py
 """CLI 入口：python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10] [--executor local|docker] [--graph]；Issue 模式：python main.py "<owner/name>#<issue_number>" --issue；审批模式：python main.py --approve <审批单路径> --decision approve|reject；知识抽查：python main.py --correct [--wiki-dir <兄弟项目>]"""
 import argparse
+import json
 import os
 import sys
 
@@ -176,9 +177,6 @@ def _run_approve_mode(args: argparse.Namespace) -> int:
 
 def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
     """评测模式：加载基准案例 → 运行 → 报告；--compare 输出版本对比表。"""
-    import json
-    import os
-
     if args.compare:
         reports = []
         for run_id in args.compare.split(","):
@@ -186,7 +184,8 @@ def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
             if not os.path.isfile(path):
                 print(f"报告不存在: {path}")
                 return 1
-            data = json.loads(open(path, encoding="utf-8").read())
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
             cases = [CaseResult(**d) for d in data["results"]]
             reports.append(BenchmarkReport(
                 metadata=RunMetadata(**data["metadata"]),

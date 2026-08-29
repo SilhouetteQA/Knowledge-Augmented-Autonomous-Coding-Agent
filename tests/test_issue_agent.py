@@ -758,3 +758,57 @@ def test_test_evidence_facts_error_no_total_emits_abnormal_fact():
     facts = _test_evidence_facts([TestResult(passed=0, failed=0, error=1, total=0, duration=3.9, failures=[])])
     assert len(facts) == 1
     assert "异常" in facts[0] and "未经" in facts[0]
+
+
+# ---- 审查 I4：红线检查失败必须冒泡（门禁不是证据）----
+
+def test_enforce_red_lines_git_failure_bubbles(tmp_path, monkeypatch):
+    """git 读变更清单失败 → ToolError 冒泡，不得静默放行。"""
+    from agent.issue import _enforce_red_lines
+    from tools.file_tools import ToolError
+    monkeypatch.setattr(issue_mod, "run_host",
+                        lambda cmd, cwd=None, timeout=120: ToolError("模拟 git 故障"))
+    with pytest.raises(ToolError, match="红线检查失败"):
+        _enforce_red_lines(str(tmp_path), "main")
+
+
+def test_enforce_red_lines_untracked_red_line_file_removed(tmp_path, monkeypatch):
+    """untracked 红线文件（Arch-C2）：直接删除并计入还原清单。"""
+    import json as _json
+    from agent.issue import _enforce_red_lines
+
+    repo = tmp_path / "repo"
+    (repo / "data").mkdir(parents=True)
+    # 建最小 git 仓库
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "tracked.txt").write_text("ok\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "init"], cwd=repo, check=True)
+    (repo / "output").mkdir()
+    cost_log = repo / "output" / "cost_log.jsonl"
+    cost_log.write_text('{"step":"judge"}\n', encoding="utf-8")
+
+    calls = {"n": 0}
+
+    def fake_run(cmd, cwd=None, timeout=120):
+        calls["n"] += 1
+        if cmd[:3] == ["git", "diff", "--name-only"]:
+            from tools.file_tools import ToolError as _TE
+            return "" if False else _TE.__class__ and ""  # 占位，下方直接分支
+        if cmd[:2] == ["git", "ls-files"]:
+            return "output/cost_log.jsonl\n"
+        return ""
+
+    # diff --name-only 返回空串（无 tracked 变更）；ls-files 返回 untracked
+    def fake_run2(cmd, cwd=None, timeout=120):
+        if cmd[:3] == ["git", "diff", "--name-only"]:
+            return ""
+        if cmd[:2] == ["git", "ls-files"]:
+            return "output/cost_log.jsonl\n"
+        return ""
+
+    monkeypatch.setattr(issue_mod, "run_host", fake_run2)
+    reverted = _enforce_red_lines(str(repo), "main")
+    assert reverted == ["output/cost_log.jsonl"]
+    assert not cost_log.exists()

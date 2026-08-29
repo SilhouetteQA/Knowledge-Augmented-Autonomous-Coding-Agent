@@ -25,6 +25,7 @@ MODEL_PRICE_USD_PER_1K = {
 
 
 def _repo_dir_name(repository: str) -> str:
+    """repo_dir_name 的别名（历史调用点保留；实现以 agent.issue 为准）。"""
     """owner/name → owner__name（目录安全，与 agent/issue.py 同规则）。"""
     return repository.replace("/", "__")
 

@@ -37,10 +37,13 @@ _GIT_DESTRUCTIVE_RE = re.compile(
 def check_destructive_git(command: str) -> ToolError | None:
     """拦截 run_command 中的破坏性 git 子命令；命中返回 ToolError，放行返回 None。
 
-    按命令词法匹配（git 后跟可选全局选项再跟子命令），不解析引号嵌套——
-    这是防 Agent 自伤的护栏而非安全边界（沙箱负责真正的隔离）。
+    按命令词法匹配（git 后跟可选全局选项再跟子命令）；匹配前先剥离引号段
+    （Test-C2：echo "done; git reset" 类文本误报）。已知漏拦形态（显式记录，
+    防误判为 bug）：反引号内嵌 git、git 前置环境变量赋值（FOO=1 git stash）、
+    `git -c k=v stash`——本护栏防 Agent 自伤而非对抗安全边界（沙箱负责隔离）。
     """
-    match = _GIT_DESTRUCTIVE_RE.search(command)
+    stripped = re.sub(r'"[^"\n]*"|\'[^\'\n]*\'', "", command)
+    match = _GIT_DESTRUCTIVE_RE.search(stripped)
     if match:
         return ToolError(
             f"禁止执行破坏性 git 子命令: git {match.group('sub')}"
@@ -49,7 +52,7 @@ def check_destructive_git(command: str) -> ToolError | None:
     return None
 
 
-def _test_timeout_s() -> int:
+def test_timeout_s() -> int:
     """run_tests 超时秒数：KA_TEST_TIMEOUT_S 覆盖，缺省 120。非法/非正值回退默认。"""
     raw = os.environ.get("KA_TEST_TIMEOUT_S", "").strip()
     if not raw:
@@ -59,6 +62,9 @@ def _test_timeout_s() -> int:
     except ValueError:
         return 120
     return value if value > 0 else 120
+
+
+_test_timeout_s = test_timeout_s  # 兼容别名
 
 
 def _truncate(text: str) -> str:
@@ -185,7 +191,9 @@ class LocalExecutor:
             try:
                 out, err = proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                out, err = (proc.stdout or ""), (proc.stderr or "")
+                # 二次超时后管道可能仍是文件对象（text=False 路径），统一读串
+                out = proc.stdout.read() if hasattr(proc.stdout, "read") else (proc.stdout or "")
+                err = proc.stderr.read() if hasattr(proc.stderr, "read") else (proc.stderr or "")
         except OSError as e:
             return ToolError(f"命令执行失败: {e}")
         return CommandResult(
@@ -211,10 +219,10 @@ class LocalExecutor:
         try:
             proc = subprocess.run(
                 cmd, cwd=base, capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=120,
+                encoding="utf-8", errors="replace", timeout=test_timeout_s(),
             )
         except subprocess.TimeoutExpired:
-            return ToolError("测试超时（120 秒）")
+            return ToolError(f"测试超时（{test_timeout_s()} 秒）")
         except OSError as e:
             return ToolError(f"pytest 执行失败: {e}")
         return _parse_pytest_output(proc.stdout)

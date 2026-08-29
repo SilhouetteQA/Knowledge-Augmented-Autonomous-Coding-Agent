@@ -6,6 +6,7 @@
 """
 import hashlib
 import os
+from pathlib import Path, PurePosixPath
 import shlex
 import subprocess
 import time
@@ -23,6 +24,7 @@ from tools.shell_tools import (
     _CURRENT_EXECUTOR,
     _parse_pytest_output,
     _truncate,
+    test_timeout_s,
 )
 
 DEFAULT_IMAGE = "ka-sandbox:py312-v1"
@@ -169,11 +171,13 @@ class SandboxManager:
             return ToolError(f"沙箱容器未创建: {self.name}")
         container_cwd = "/workspace"
         if cwd:
-            rel = os.path.relpath(os.path.abspath(cwd), self.workspace_root)
+            # 以 workspace_root（挂载点）为基准换算，而非进程 cwd；Windows 反斜杠
+            # 归一为 POSIX（I3：run_command(cwd="tests") 在 docker 模式此前必报越界）
+            rel = os.path.relpath(os.path.abspath(cwd), os.path.abspath(self.workspace_root))
             if rel.startswith(".."):
                 return ToolError(f"路径越界: {cwd}")
             if rel != ".":
-                container_cwd = "/workspace/" + rel
+                container_cwd = "/workspace/" + Path(rel).as_posix()
         wrapped = f"timeout -k 5s {int(timeout)} bash -lc {_sh_quote(command)}"
         if container_cwd != "/workspace":
             wrapped = f"cd {_sh_quote(container_cwd)} && {wrapped}"
@@ -221,14 +225,16 @@ class DockerExecutor:
         """在容器内 /workspace 运行 pytest，解析结果（与 LocalExecutor 同格式）。"""
         cmd = "python -m pytest -q --tb=no"
         if path:
-            base = resolve_workspace_path("", workspace_root)
-            if isinstance(base, ToolError):
-                return base
-            rel = os.path.relpath(os.path.abspath(path), base)
+            # 与 LocalExecutor 同语义：path 按 workspace 相对解析（I3：此前按进程
+            # cwd 解析，docker 模式 run_tests(path=...) 必报越界；反斜杠归一 POSIX）
+            target = resolve_workspace_path(path, workspace_root)
+            if isinstance(target, ToolError):
+                return target
+            rel = os.path.relpath(target, os.path.abspath(workspace_root))
             if rel.startswith(".."):
                 return ToolError(f"路径越界: {path}")
-            cmd += f" {_sh_quote('/workspace/' + rel)}"
-        r = self._manager.exec(cmd, timeout=120)
+            cmd += f" {_sh_quote('/workspace/' + Path(rel).as_posix())}"
+        r = self._manager.exec(cmd, timeout=test_timeout_s())
         if isinstance(r, ToolError):
             return r
         return _parse_pytest_output(r.stdout)

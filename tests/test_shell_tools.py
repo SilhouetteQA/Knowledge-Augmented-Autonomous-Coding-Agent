@@ -287,14 +287,20 @@ def test_run_command_blocks_destructive_git(tmp_path):
 
 
 def test_run_command_allows_readonly_git(tmp_path):
-    """git 只读子命令（status/log/diff）不拦截（非 git 目录下返回命令失败而非 ToolError）。"""
-    from tools.shell_tools import run_command
+    """git 只读子命令（status/log/diff）不拦截（审查 M4：直接断言守卫判定）。"""
+    from tools.shell_tools import check_destructive_git, run_command
+    assert check_destructive_git("git status --short") is None
+    assert check_destructive_git("git log --oneline -5") is None
+    assert check_destructive_git("git diff HEAD~1") is None
     result = run_command("git status --short", workspace_root=str(tmp_path))
     assert not isinstance(result, ToolError)
 
 
 def test_run_command_allows_git_mention_in_text(tmp_path):
     """仅文本中提及 git stash（如 echo）不拦截。"""
-    from tools.shell_tools import run_command
+    from tools.shell_tools import check_destructive_git, run_command
     result = run_command('echo "git stash is forbidden"', workspace_root=str(tmp_path))
     assert not isinstance(result, ToolError)
+    # 引号内分号前缀形态（Test-C2 误报）：剥离引号段后不得命中
+    assert check_destructive_git('echo "done; git reset --hard"') is None
+    assert check_destructive_git('pip download "pkg; git apply"') is None

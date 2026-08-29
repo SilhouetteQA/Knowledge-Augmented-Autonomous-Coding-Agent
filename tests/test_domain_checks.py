@@ -203,7 +203,7 @@ def test_deletions_fail_mixed_reports_violating_entry(tmp_path):
     assert "违规概念" in res.reason and "活概念" not in res.reason.split("违规概念")[0]
 
 
-def test_deletions_skip_destroys_index_file(tmp_path):
+def test_deletions_fail_destroys_index_file(tmp_path):
     """删除知识索引/种子文件（非条目级）→ FAIL 判破坏性变更。"""
     diff = (
         "diff --git a/data/entity_source_map.json b/data/entity_source_map.json\n"

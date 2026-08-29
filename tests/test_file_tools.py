@@ -42,9 +42,12 @@ def test_resolve_rejects_escape(tmp_path):
 
 
 def test_resolve_rejects_absolute_outside(tmp_path):
+    """平台无关：构造 workspace 外的绝对路径（审查 I6——C:/Windows 仅 Windows 语义）。"""
     ws = tmp_path / "ws"
     ws.mkdir()
-    result = resolve_workspace_path("C:/Windows", str(ws))
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    result = resolve_workspace_path(str(outside), str(ws))
     assert isinstance(result, ToolError)
     assert "越界" in result.message
 
@@ -242,3 +245,32 @@ def test_edit_file_multiline_with_indent(tmp_path):
     result = edit_file("mod.py", "    pass", "    return 0", workspace_root=str(tmp_path))
     assert not isinstance(result, ToolError)
     assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "if True:\n    return 0\n"
+
+
+# ---- 审查 I5：edit_file 错误分支 ----
+
+def test_edit_file_rejects_directory(tmp_path):
+    (tmp_path / "sub").mkdir()
+    result = edit_file("sub", "a", "b", workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError) and "目录" in result.message
+
+
+def test_edit_file_rejects_oversize(tmp_path, monkeypatch):
+    from tools import file_tools as ft
+    big = tmp_path / "big.py"
+    big.write_text("x" * (ft.MAX_READ_SIZE + 1), encoding="utf-8")
+    result = edit_file("big.py", "x", "y", workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError) and "文件过大" in result.message
+
+
+def test_edit_file_rejects_non_utf8(tmp_path):
+    p = tmp_path / "bin.py"
+    p.write_bytes(b"\xff\xfe\x00bad")
+    result = edit_file("bin.py", "a", "b", workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError) and "UTF-8" in result.message
+
+
+def test_edit_file_expected_count_mismatch_errors(tmp_path):
+    (tmp_path / "m.py").write_text("pass\npass\npass\n", encoding="utf-8")
+    result = edit_file("m.py", "pass", "ok", expected_count=2, workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError) and "3 次" in result.message

@@ -76,7 +76,8 @@ def run_audit(wiki_dir: str, ratio: float = 0.02, seed: int = 42,
         samples=rows,
     )
     if out_dir:
-        _write_report(report, meta, out_dir)
+        # 回填 out_dir（M3：此前恒空，print_audit_summary 的"报告目录"永不打印）
+        report.out_dir = _write_report(report, meta, out_dir)
     return report
 
 

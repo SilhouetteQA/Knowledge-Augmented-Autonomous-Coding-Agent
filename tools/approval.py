@@ -148,6 +148,19 @@ def _check_drift(approval: ApprovalRequest, repo_dir: str) -> None:
     if _sha256(current) != approval.diff_sha256:
         raise ApprovalError(
             "仓库状态与审批时不一致（diff 已变化），请重新运行 --issue 生成新审批单")
+    # untracked 红线纵深防御（Arch-C2）：`git diff` 不含未跟踪文件，产单后新出现的
+    # 红线文件（cost_log 类）会被 git add -A 静默带进 PR——存在即拒绝
+    others = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=repo_dir, capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=30)
+    if others.returncode == 0:
+        from agent.issue import _red_line_patterns
+        hot = [p for p in others.stdout.splitlines() if p.strip()
+               and any(pat in p for pat in _red_line_patterns())]
+        if hot:
+            raise ApprovalError(
+                f"工作树存在红线模式未跟踪文件（approve 将带进 PR）: {hot}；请清理后重试")
 
 
 def approve_request(approval: ApprovalRequest, decision: str,
