@@ -15,7 +15,7 @@
 | W5 | GitHub Issue Agent + 知识抽查 | feature/w5-github-issue | W3 | [x] 已完成 |
 | W6 | Evaluation | feature/w6-evaluation | W5 | [x] 已完成 |
 | W7 | Observability | feature/w7-observability | W5 | [x] 已完成 |
-| W8 | Human-in-the-loop | feature/w8-human-in-the-loop | W6, W7 | [ ] 待开始 |
+| W8 | Human-in-the-loop | feature/w8-human-in-the-loop | W6, W7 | [x] 已完成 |
 
 依赖链：W1 → W2 → W3 → W5 → W6/W7 → W8；W4 与 W5 可并行。
 
@@ -222,13 +222,23 @@ coding-agent/
 
 **任务清单**：
 
-- [ ] Reviewer Agent（独立于 Coder 的审查角色）
-- [ ] Diff 展示与人工审批界面/流程
-- [ ] 审批通过后才 Commit → Push → Create PR
-- [ ] 评估完全自动化的可行性（基于 W6 指标）
-- [ ] TDD + Review + 合并回 main
+- [x] Reviewer Agent（独立于 Coder 的审查角色）
+- [x] Diff 展示与人工审批界面/流程
+- [x] 审批通过后才 Commit → Push → Create PR
+- [x] 评估完全自动化的可行性（基于 W6 指标）
+- [x] TDD + Review + 合并回 main
 
-**验收标准**：Agent 完成工作后停下等待审批；审批后自动完成 PR；演示完整闭环。
+**验收标准**：Agent 完成工作后停下等待审批；审批后自动完成 PR；演示完整闭环。—— 全部达成
+
+**完成记录（2026-08-29）**：
+
+- 主线（4 commits）：`tools/approval.py` 审批单核心（schema/状态机/pr_push 动作，预留 knowledge_apply）+ 审批执行（diff sha256 漂移检查 / approve 推送建 PR / reject 零副作用 / 防重放）+ `--approve` 两段式（--issue 产单停等，移除 --push）；Reviewer 升级独立审查角色（四要点 + 验证轮数输入）。
+- 并行修复：eval-fixes（E1-E10：case 级 setup_commands + 镜像预装 pytz + 基线预检 environment_error + test_pass 失败摘要 + KA_LLM_TIMEOUT_S/max_retries + resolution 双口径 + 开放型任务收敛 + 域案例规则判定器 + 交付一致性核查）；agent-fixes（A1-A7：verify 兜底 / 提示词约束 / Reviewer 证据面 / A4 红线机械拦截 / A5 产物纪律 / A6 阶段预算 / A7 结论交付）。
+- **真实里程碑**：五轮远程修复迭代 → Issue #2 R5 人工批准 → 真实 PR #3（3 文件纯删除 2 条已核验死数据）；rejected 单零副作用与防重放均实测。
+- **模型结论**：mimo-v2.5 稳定默认；deepseek-v4-flash 多轮工具调用返回 DSML 文本致假完成早停（证据留存审批单）。
+- **D5 可行性评估**：完全自动 PR 暂不推荐（正确执行率 1/5）；建议"条件自动放行"档（Reviewer PASS + 红线 0 + 测试全绿 + 非删除型变更），见 `docs/analysis/2026-08-29-d5-full-automation-assessment.md`。
+- 回归：main 合并后全量 **353 passed / 14 skipped / 0 failed**；双轴全分支终审 APPROVE（无 Critical/Important）。
+- 知识纠错第二阶段（W5 冻结项）：审批通道已预留（action_type=knowledge_apply），随本窗口完成解冻，排期待定。
 
 ---
 

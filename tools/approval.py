@@ -71,7 +71,7 @@ def create_approval(*, action_type: str, repository: str, issue_number: int,
                     created_at: str | None = None,
                     red_line_reverts: list[str] | None = None,
                     final_answer: str | None = None) -> ApprovalRequest:
-    """生成审批单：approval_id（repository__issue-runid）+ diff_sha256 指纹。
+    """生成审批单：approval_id（repository__issue-时间戳）+ diff_sha256 指纹。
 
     red_line_reverts：执行层红线拦截还原的文件清单（审计；缺省 None → []）。
     final_answer：Agent 最终结论（审计/人工核验依据；缺省 None → ""）。

@@ -435,3 +435,24 @@
 - **本会话完成**：W6 Evaluation（合并 76cae48，真实评测 Resolution Rate 20%，schedule-608 resolved）+ W7 Observability（合并 4035ce8，全链路 Trace + --trace-report + OTLP 贯通验证）；全量回归 229 passed / 4 skipped / 1 环境性失败（容器内 github TLS）。readme 状态行 W0-W7。
 - **会话归档**：docs/sessions/2026-08-26-w6w7-close-session.md（中心入口：能力画像、评估问题清单 P0/P1/P2、下会话顺序、环境备忘）+ 2026-08-26-w6-close-session.md / 2026-08-26-w7-close-session.md（窗口级细节）。
 - **下会话执行顺序（用户指定）**：① 先做 W8 Human-in-the-loop（worktree eature/w8-human-in-the-loop，brainstorming → spec → 用户批准 → plan → TDD；验收=Agent 停等审批、审批后自动 PR、完整闭环演示；知识纠错第二阶段可随之解冻排期）② 再处理评估问题（P0：沙箱依赖预装 + 基线预检；P1：test_pass 失败摘要 + LLM 重试；P2：单价表/分母口径/开放型任务收敛/case span 等，详见归档第三节）。
+
+## W8 合并收尾与项目级完成（2026-08-29）
+
+### 合并收尾（本会话）
+
+- 全量回归（agent-fixes 基线）：**353 passed / 14 skipped / 0 failed**（此前已知环境性失败项本次未复现）。
+- 双轴全分支终审（main..agent-fixes 累计 diff，36 commits / 26 文件 / +5160/-267）：**APPROVE**，无 Critical/Important；cherry-pick 对（608f251/5d79fef ↔ 4b85855/ed073d1）合并后仅存一份实现；--push 残留清理干净；审批↔issue↔main↔benchmark 接缝一致。
+- 合并顺序执行：main ← W8（f7a1dfb）← eval-fixes（9a759e4，agent/llm.py 冲突按 eval-fixes 侧解决，与 agent-fixes 版本逐字节一致）← agent-fixes（915d7af）；合并后 main 回归与分支基线一致（353 passed）。
+- 清理：三个 W8 worktree 与分支已删除（另清理早期 w1/w4/w5 worktree 残留目录；Windows 超长路径用 robocopy 空目录镜像法清除）。
+- Minor 台账处置（约 50 项）：采纳 2 项（approval.py approval_id docstring "runid"→"时间戳"已改；readme 快速开始补"部署必须显式设 KA_LLM_TIMEOUT_S"）；拒绝 1 项（E1 setup/agent 共用 except——双态区分已在）；其余推迟并整体记入本条目为遗留（approval_id 同秒撞 id、跨模块导入私有 _run、审批单 JSON 路径未做字符集校验、approve 中 push 成功建 PR 失败可重放窗口、report.py ✓/✗ 符号、E5-1 透传测试、E9 runner 对域 case 读 gold 等）。
+
+### Task 6：D5 完全自动化可行性评估
+
+- 结论：**完全自动 PR 暂不推荐，建议"条件自动放行"档**。依据五轮真实运行：正确执行率 1/5（R5 → PR #3）；Reviewer FAIL 捕获了全部 4 次应拒轮次（无反例但样本=1）；模型层故障（deepseek DSML）占 2 轮失败且 Agent 无法自愈；域任务正确性终审依赖人工核验；自动化会线性放大 token 成本。
+- 条件自动放行判定字段审批单均已具备（review 结论 / red_line_reverts / diff），实现成本低，建议独立小任务排期。
+- 详见 `docs/analysis/2026-08-29-d5-full-automation-assessment.md`。
+
+### 项目级状态
+
+- **W0-W8 全部完成**，roadmap W8 标 [x]，readme 状态行更新。
+- 遗留/下一步：① PR #3 审阅合并（SilhouetteQA 决定）+ 剩余 3 条死数据候选新 issue 续跑；② 评估问题 P0-P2 收尾（P2-5 单价表待用户提供 mimo-v2.5 单价）；③ 知识纠错第二阶段 --apply 解冻排期（action_type=knowledge_apply 已预留）；④ A7-2 补 task-A7-brief.md 档；⑤ E3-a 真实 docker 环境验证 environment_error 计数。

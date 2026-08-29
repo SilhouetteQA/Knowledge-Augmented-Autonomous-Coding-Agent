@@ -6,7 +6,7 @@
 
 基于现有的《明日方舟》全量剧情结构化知识库、Knowledge Graph 与 LangGraph ReAct Agent，进一步构建能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，最终产出 GitHub Pull Request。
 
-> 项目状态：W0-W7 已完成 —— W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox（容器化执行 + 六维资源限制 + 一个任务一个沙箱）、W4 Repository Intelligence（代码图 + Arknights 域知识双检索）、W5 GitHub Issue Agent（Issue → 沙箱工作 → Review → push 门禁的 PR 全链路；真实演示 dbader/schedule#646 修复与社区方案一致）+ 知识抽查扩展（三次提取产物 2% 抽查：来源可靠性 96.88% / 内容实用性 70.98%，main.py --correct）、W6 Evaluation（Issue Benchmark 案例库五类 + Issue Resolution Rate 核心指标 + LLM-as-a-Judge 双判定 + `--benchmark/--compare` CLI + Langfuse 部署文件与可开关 tracing，评测执行器须 docker）、W7 Observability（graph 七节点 + tool.execute/test.run + issue.run retry 指标全链路 Trace；`--trace-report` 经 ClickHouse 直查导出 JSON+Markdown 报告——真实 W6 trace 与 W7 新 trace 均验证通过；SDK 4.14.4 经 OTel 上报落库）。全量回归 227 passed / 4 skipped / 1 项已知环境性失败（test_docker_integration::test_clone_repo_when_empty：容器内 github.com TLS 握手被拒，GnuTLS -110）。下一步：W8 Human-in-the-loop（知识纠错第二阶段冻结，待 W8 门禁就绪后继续）。
+> 项目状态：W0-W8 全部完成 —— W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox（容器化执行 + 六维资源限制 + 一个任务一个沙箱）、W4 Repository Intelligence（代码图 + Arknights 域知识双检索）、W5 GitHub Issue Agent（Issue → 沙箱工作 → Review → push 门禁的 PR 全链路；真实演示 dbader/schedule#646 修复与社区方案一致）+ 知识抽查扩展（三次提取产物 2% 抽查：来源可靠性 96.88% / 内容实用性 70.98%，main.py --correct）、W6 Evaluation（Issue Benchmark 案例库五类 + Issue Resolution Rate 核心指标 + LLM-as-a-Judge 双判定 + `--benchmark/--compare` CLI + Langfuse 部署文件与可开关 tracing，评测执行器须 docker）、W7 Observability（graph 七节点 + tool.execute/test.run + issue.run retry 指标全链路 Trace；`--trace-report` 经 ClickHouse 直查导出 JSON+Markdown 报告——真实 W6 trace 与 W7 新 trace 均验证通过；SDK 4.14.4 经 OTel 上报落库）、W8 Human-in-the-loop（两段式 --approve 审批门禁 + 独立 Reviewer + 红线机械拦截；真实远程修复里程碑：五轮迭代 → 人工批准 → 真实 PR #3；D5 评估：完全自动 PR 暂不推荐，建议条件自动放行档）。全量回归 353 passed / 14 skipped / 0 failed。下一步：评估问题清单 P0-P2 收尾与知识纠错第二阶段（--apply 写回，审批通道已预留）。
 > 开发规范见 [agents.md](agents.md)，窗口路线图见 [docs/roadmap.md](docs/roadmap.md)。
 
 ---
@@ -140,7 +140,7 @@ Knowledge-Augmented Autonomous Coding Agent/
 | W5 | GitHub Issue Agent | Issue → Clone → Branch → Work → Test → Review → Commit → Push → PR（MVP） |
 | W6 | Evaluation | Issue Benchmark 五类 + Issue Resolution Rate 核心指标（已完成） |
 | W7 | Observability | 全链路 Trace + Langfuse / OpenTelemetry（已完成） |
-| W8 | Human-in-the-loop | Reviewer Agent + 人工审批门禁后自动 PR |
+| W8 | Human-in-the-loop | Reviewer Agent + 人工审批门禁后自动 PR（已完成） |
 
 ## 推荐的真实 Issue（用于 W5/W6 验证）
 
@@ -161,6 +161,7 @@ python -m venv .venv
 
 # 配置 LLM（复制 .env.example 为 .env 并填写）
 # opencode_go_api / OPENCODE_GO_BASE_URL（默认 https://opencode.ai/zen/go/v1）/ OPENCODE_GO_MODEL（默认 mimo-v2.5）
+# 部署必须显式设置 KA_LLM_TIMEOUT_S（建议 120）——未设置时 SDK 默认 600s，长任务单次请求挂起会拖垮整轮迭代
 
 # 运行测试
 .venv\Scripts\python.exe -m pytest tests/
