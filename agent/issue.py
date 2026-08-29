@@ -224,13 +224,20 @@ def _red_line_facts(reverts: list[str]) -> list[str]:
 def _test_evidence_facts(test_results: list) -> list[str]:
     """测试验证事实（Reviewer 判「测试已并入套件」的证据）：取最后一次全量 verify 结果。
 
-    total=0（套件未收集到测试）不产出事实——空洞通过不作为证据。
+    total>0：报通过/失败明细；total=0 且 error>0（收集/执行失败，dateutil 实测
+    环境依赖遮蔽仓库源码即此形态）：必须报异常——此时 diff 无法被测试验证，
+    缺证据会让 Reviewer 误判 PASS。两者皆无（空洞收集）不产出事实。
     """
     if not test_results:
         return []
     tr = test_results[-1]
-    if not isinstance(tr, TestResult) or tr.total == 0:
+    if not isinstance(tr, TestResult):
         return []
+    if tr.total == 0 and tr.error == 0:
+        return []
+    if tr.total == 0:
+        return [f"测试验证异常（verify 全量运行未收集到测试，error={tr.error}）: "
+                "diff 未经过任何测试验证，请人工核验"]
     return [f"测试验证（verify 全量运行）: {tr.passed} passed / {tr.failed} failed / "
             f"{tr.error} error（共 {tr.total} 项）"]
 

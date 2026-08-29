@@ -749,3 +749,12 @@ def test_review_prompt_treats_in_tree_test_files_as_merged():
     """提示词明确：位于测试目录内的新增测试文件视为已并入套件。"""
     from agent.issue import REVIEW_PROMPT
     assert "已并入正式套件" in REVIEW_PROMPT
+
+
+def test_test_evidence_facts_error_no_total_emits_abnormal_fact():
+    """total=0 且 error>0：必须产出异常事实（dateutil 实测：验证失败缺证据致 Reviewer 误 PASS）。"""
+    from agent.issue import _test_evidence_facts
+    from tools.shell_tools import TestResult
+    facts = _test_evidence_facts([TestResult(passed=0, failed=0, error=1, total=0, duration=3.9, failures=[])])
+    assert len(facts) == 1
+    assert "异常" in facts[0] and "未经" in facts[0]
