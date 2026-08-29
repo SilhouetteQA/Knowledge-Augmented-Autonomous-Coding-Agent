@@ -456,3 +456,11 @@
 
 - **W0-W8 全部完成**，roadmap W8 标 [x]，readme 状态行更新。
 - 遗留/下一步：① PR #3 审阅合并（SilhouetteQA 决定）+ 剩余 3 条死数据候选新 issue 续跑；② 评估问题 P0-P2 收尾（P2-5 单价表待用户提供 mimo-v2.5 单价）；③ 知识纠错第二阶段 --apply 解冻排期（action_type=knowledge_apply 已预留）；④ A7-2 补 task-A7-brief.md 档；⑤ E3-a 真实 docker 环境验证 environment_error 计数。
+
+## 真实 Issue 能力实测（2026-08-29，W8 后追加）
+
+- 用户质询"30/60 轮解不完、大仓库复杂 issue 是否没办法"→ 选两个开放真实 issue 实测（rich#3299 / jsonschema#1159，mimo-v2.5，local 执行器，40 迭代，不 push）。
+- **jsonschema#1159 实质解决**：27 迭代（3 步定位→修 multipleOf 整值浮点→套件内回归测试→全量 7892 passed）；独立复现通过；但 Reviewer 误判"测试未并入套件"→ FAIL（误判修法已记录）。
+- **rich#3299 触顶失败**：两轮 41 迭代全触顶；失败链 = /testbed 环境幻觉 → write_file 全量覆盖测试文件丢原测试 → git stash 自伤 → 恢复泥潭，始终未改 segment.py；Reviewer FAIL 准确。
+- 结论：导航不是瓶颈（≤6 步定位）；瓶颈是每轮质量——环境模型错位 / write_file 全量覆盖 / git 破坏性命令无护栏 / Reviewer 机械套规则，四项均有低成本修法（详见 docs/analysis/2026-08-29-real-issue-capability-test.md 第三节）。轮数不是第一杠杆。
+- 环境备忘：pip 走清华镜像；agent .venv 存在 dist-info 在而模块缺的损坏包（--force-reinstall 修）；rich 基线 test_log 环境性失败用 PYTEST_ADDOPTS deselect。
