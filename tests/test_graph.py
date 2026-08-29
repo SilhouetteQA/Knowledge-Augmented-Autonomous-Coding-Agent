@@ -441,3 +441,41 @@ def test_decide_system_declares_execution_environment():
     assert "/testbed" in system
     assert "根目录" in system
     assert "python --version" in system
+
+
+def test_run_agent_graph_llm_error_degrades_gracefully(tmp_path):
+    """LLM 调用故障（超时/限流）不得击穿整个 run：优雅降级为可收尾状态（arknights#4 实测）。"""
+    from agent.graph import run_agent_graph
+
+    class ExplodingLLM:
+        def chat(self, messages, tools):
+            raise RuntimeError("模拟端点超时")
+
+    result = run_agent_graph("任务", ExplodingLLM(), max_iterations=3,
+                             workspace_root=str(tmp_path))
+    assert result.stopped_by_limit is False
+    assert "LLM 调用失败" in result.final_answer
+    assert "模拟端点超时" in result.final_answer
+
+
+def test_issue_setup_commands_executed_in_order(monkeypatch):
+    """KA_ISSUE_SETUP_COMMANDS：&& 分隔逐条执行（dateutil 实测：src 布局需任务级环境准备）。"""
+    import agent.graph as g
+    calls = []
+    monkeypatch.setattr(g, "run_command",
+                        lambda cmd, cwd=None, timeout=60, workspace_root=None:
+                        calls.append((cmd, timeout)) or "ok")
+    monkeypatch.setenv("KA_ISSUE_SETUP_COMMANDS",
+                       "pip install -e . --no-build-isolation && rm -rf src/*.egg-info")
+    g._run_issue_setup_commands()
+    assert calls == [("pip install -e . --no-build-isolation", 300),
+                     ("rm -rf src/*.egg-info", 300)]
+
+
+def test_issue_setup_commands_unset_noop(monkeypatch):
+    import agent.graph as g
+    called = []
+    monkeypatch.setattr(g, "run_command", lambda *a, **k: called.append(a))
+    monkeypatch.delenv("KA_ISSUE_SETUP_COMMANDS", raising=False)
+    g._run_issue_setup_commands()
+    assert called == []

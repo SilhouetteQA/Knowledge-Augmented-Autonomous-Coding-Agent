@@ -267,7 +267,19 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     def decide_node(state: AgentState) -> dict:
         system = _decide_system(state["plan"], state["verify_rounds"], max_verify_rounds)
         messages = [{"role": "system", "content": system}] + state["messages"]
-        msg = llm.chat(messages, _graph_tools())
+        try:
+            msg = llm.chat(messages, _graph_tools())
+        except Exception as e:  # noqa: BLE001
+            # LLM 端点故障（超时/限流/网络）不得击穿整个 run：优雅降级为可收尾
+            # 状态，保留已完成工作供 Review/审批（arknights#4 实测：50 轮上下文
+            # 膨胀后单次调用超时直接崩溃，遥测与工作现场全部丢失）。
+            return {
+                "messages": state["messages"] + [
+                    {"role": "assistant", "content": f"[LLM 调用失败] {type(e).__name__}: {e}"}],
+                "final_answer": f"LLM 调用失败，任务提前终止: {type(e).__name__}: {e}",
+                "status": "llm_error",
+                "pending_tool_calls": None,
+            }
         tool_calls = None
         if msg.tool_calls:
             tool_calls = [
@@ -325,6 +337,10 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
 
     @traced("graph.finalize", as_type="span")
     def finalize_node(state: AgentState) -> dict:
+        if state["status"] == "llm_error":
+            # LLM 故障降级路径：decide 已写入终态结论（保留 type 与原因），不覆盖
+            return {"final_answer": state.get("final_answer") or "LLM 调用失败",
+                    "status": "llm_error"}
         content = state["messages"][-1].get("content") if state["messages"] else ""
         return {"final_answer": content or "任务完成", "status": "done"}
 
@@ -346,6 +362,8 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
         }
 
     def route_after_decide(state: AgentState) -> str:
+        if state["status"] == "llm_error":
+            return "finalize"
         if state["pending_tool_calls"]:
             return "execute" if state["iteration"] <= max_iterations else "finalize_iter_limited"
         return "verify"
@@ -384,6 +402,22 @@ def build_graph(llm: LLMClient, max_iterations: int = 20,
     return g.compile()
 
 
+def _run_issue_setup_commands() -> None:
+    """沙箱创建后、任务开始前执行任务级环境准备命令（KA_ISSUE_SETUP_COMMANDS）。
+
+    dateutil#1545 实测：src 布局仓库在容器内裸 pytest 收集不到包（import 失败），
+    需 editable 安装仓库源码；pip install -e 必须带 --no-build-isolation（沙箱运行期
+    无网络，build isolation 会尝试联网取 setuptools）。命令按 && 分隔逐条执行，
+    单条超时 300s；失败不中断任务（返回值由 Agent 在后续观察中自行消化）。
+    """
+    raw = os.environ.get("KA_ISSUE_SETUP_COMMANDS", "").strip()
+    if not raw:
+        return
+    for cmd in (c.strip() for c in raw.split("&&")):
+        if cmd:
+            run_command(cmd, timeout=300)
+
+
 def run_agent_graph(task: str, llm: LLMClient, max_iterations: int = 20,
                     max_verify_rounds: int = 3,
                     workspace_root: str | None = None,
@@ -393,6 +427,7 @@ def run_agent_graph(task: str, llm: LLMClient, max_iterations: int = 20,
     graph = build_graph(llm, max_iterations, max_verify_rounds, workspace_root,
                         code_graph, knowledge_client)
     with sandbox_executor(workspace_root or os.getcwd()):
+        _run_issue_setup_commands()
         result = graph.invoke({
             "task": task,
             "plan": [],
