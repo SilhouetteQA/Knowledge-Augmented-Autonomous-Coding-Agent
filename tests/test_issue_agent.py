@@ -1,6 +1,7 @@
 """GitHub Issue Agent 编排测试：Mock LLM + Fake GitHub（不触网、不真推）。"""
 import json
 import os
+import subprocess
 
 import pytest
 
@@ -31,6 +32,9 @@ def _patch_github(monkeypatch):
     monkeypatch.setattr(issue_mod, "create_branch", lambda d, b, base: None)
     monkeypatch.setattr(issue_mod, "git_diff_since",
                         lambda d, base: "+fixed\n-fixed\n")
+    # A4 红线拦截：干跑 workdir 非 git 仓库，默认无红线（红线语义由专门集成测试覆盖）
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines", lambda d, b: [],
+                        raising=False)
 
 
 def _graph_script():
@@ -81,16 +85,61 @@ def test_issue_read_failure_raises(tmp_path, monkeypatch):
 
 
 def test_dry_run_no_changes_review_fail(tmp_path, monkeypatch):
+    """空 diff 且图结论无实质内容（空白）：审查硬短路 FAIL 无代码变更，审查阶段零 LLM 调用。
+
+    FAIL 触发重试轮，故图为两轮（plan+decide 各 4 调）；两轮审查均硬短路，
+    任何一次 LLM 调用都不是审查（REVIEW_PROMPT）调用。
+    """
     _patch_github(monkeypatch)
     monkeypatch.setattr(issue_mod, "git_diff_since", lambda d, base: "")
-    script = _graph_script() + [
-        LLMMessage(role="assistant", content="PASS ok"),
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="   "),      # 首轮图结论为空白（无实质内容）
+        LLMMessage(role="assistant", content=json.dumps(["重检"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="   "),      # 重试轮图结论同样空白
+        LLMMessage(role="assistant", content="PASS ok"),  # 审查不应消费（两轮均硬短路）
     ]
     task = IssueTask(repository="test/arc-wiki", issue_number=123,
                      workspace_root=_make_workdir(tmp_path))
-    result = run_issue_agent(task, MockLLMClient(script))
+    mock = MockLLMClient(script)
+    result = run_issue_agent(task, mock)
     assert result.review == "FAIL 无代码变更"
     assert result.pr_url is None
+    # 审查阶段零 LLM 调用：没有任何一次调用以 REVIEW_PROMPT 为 system
+    assert all((m[0][0].get("content") or "") != issue_mod.REVIEW_PROMPT
+               for m in mock.calls)
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\n\t"])
+def test_review_diff_empty_diff_empty_final_answer_short_circuits(blank):
+    """空 diff + 空/空白 final_answer（strip 后为空）：硬短路 FAIL 无代码变更，LLM 零调用。"""
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS ok")])
+    out = issue_mod._review_diff(mock, diff="", issue_text="issue-text",
+                                 verify_rounds=1, final_answer=blank)
+    assert out == "FAIL 无代码变更"
+    assert mock.calls == []        # 未调 LLM（静态断言零调用）
+
+
+def test_review_diff_empty_diff_substantive_final_answer_reviews_conclusion():
+    """空 diff + 实质 final_answer：不短路，转结论审查模式——LLM 收到核验结论的 user 消息。"""
+    answer = "经核验四条候选均有 related_entities 引用，无可删条目，全部保留"
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS 结论可信。")])
+    out = issue_mod._review_diff(mock, diff="", issue_text="issue-text",
+                                 verify_rounds=2, context="变更清单: （无变更）",
+                                 final_answer=answer)
+    assert out == "PASS 结论可信。"
+    user = mock.calls[0][0][1]["content"]
+    assert "无代码变更" in user
+    assert "Agent 最终结论" in user
+    assert answer in user
+    # 结构保持现状：Issue → 验证轮数段 + 工作树事实段 → 结论段（无 Diff 段）
+    assert user.index("Issue:") < user.index("验证轮数: 2") < user.index("工作树事实")
+    assert "Diff:" not in user
+    # 审查角度与输出格式：核验证据充分性/是否满足任务验收 + 模式说明 + PASS/FAIL
+    assert "核验证据充分性" in user
+    assert "是否满足任务验收" in user
+    assert "结论审查模式" in user
+    assert "PASS/FAIL" in user
 
 
 def _patch_push_calls(monkeypatch):
@@ -156,6 +205,9 @@ def test_issue_creates_approval_request(tmp_path, monkeypatch):
     assert data["review"].startswith("PASS")
     assert data["verify_rounds"] == result.verify_rounds
     assert data["retry_count"] == 0
+    # A7：产单携带 Agent 最终结论（人工审批可见核验依据，与结果对象同源）
+    assert "final_answer" in data
+    assert data["final_answer"] == result.final_answer == "已修复"
     # 无远端副作用：run 内不执行 commit/push/PR
     assert calls["commit"] == [] and calls["push"] == [] and calls["pr"] == []
 
@@ -200,6 +252,8 @@ def test_review_fail_still_generates_approval_request(tmp_path, monkeypatch):
     assert data["status"] == "pending"
     assert data["review"].startswith("FAIL")
     assert data["retry_count"] == 1
+    # A7：产单结论为重试轮图结局（重试后 result 已重新赋值，final_answer 取最新轮）
+    assert data["final_answer"] == "修好了"
 
 
 def test_review_diff_receives_verify_rounds(tmp_path, monkeypatch):
@@ -208,9 +262,9 @@ def test_review_diff_receives_verify_rounds(tmp_path, monkeypatch):
     seen = {}
     original = issue_mod._review_diff
 
-    def spy(llm, diff, issue_text, verify_rounds):
+    def spy(llm, diff, issue_text, verify_rounds, context=None, final_answer=""):
         seen["verify_rounds"] = verify_rounds
-        return original(llm, diff, issue_text, verify_rounds)
+        return original(llm, diff, issue_text, verify_rounds, context, final_answer)
 
     monkeypatch.setattr(issue_mod, "_review_diff", spy)
     script = _graph_script() + [
@@ -336,3 +390,338 @@ def test_review_metadata_records_manual_flag():
         "first_line": "PASS 修复一致。", "has_manual_flag": True}
     assert _review_metadata((), {}, FakeResult("PASS ok")) == {
         "first_line": "PASS ok", "has_manual_flag": False}
+
+
+def test_review_prompt_contains_domain_audit_point():
+    """REVIEW_PROMPT 含域审查要点：删除条目三条件证据可核、元数据/日志无关改动指出。"""
+    from agent.issue import REVIEW_PROMPT
+    assert "三条件" in REVIEW_PROMPT
+    assert "来源锚点" in REVIEW_PROMPT
+    assert "元数据" in REVIEW_PROMPT
+
+
+def test_review_prompt_contains_artifact_residue_point():
+    """REVIEW_PROMPT 含工作树残留审查要点：脚本/中间产物类残留视为无关改动。"""
+    from agent.issue import REVIEW_PROMPT
+    assert "残留" in REVIEW_PROMPT
+    assert "中间产物" in REVIEW_PROMPT
+
+
+# --- A3: Reviewer 证据面扩展（审查上下文携带工作树事实） ---
+
+
+def _git(cwd: str, *args: str) -> str:
+    """测试内真实 git 调用；失败即断言错误（前置准备失败 = 测试环境问题）。"""
+    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
+    assert proc.returncode == 0, f"git {' '.join(args)} 失败: {proc.stderr}"
+    return proc.stdout.strip()
+
+
+def _make_worktree_repo(tmp_path) -> str:
+    """构造真实 git 仓库：基准提交后制造 修改+删除+新增 混合工作树状态。
+
+    基准含 config/identity_map.json（后修改）、config/archived.json（后删除）、
+    data/report.txt（报告类探针存在）；data/entity_source_map.json 从不创建
+    （探针缺失面）；data/new.txt 为未跟踪新增文件。
+    """
+    repo = tmp_path / "worktree-repo"
+    repo.mkdir()
+    (repo / "config").mkdir()
+    (repo / "data").mkdir()
+    (repo / "config" / "identity_map.json").write_text("{}", encoding="utf-8")
+    (repo / "config" / "archived.json").write_text("{}", encoding="utf-8")
+    (repo / "data" / "report.txt").write_text("report", encoding="utf-8")
+    _git(str(repo), "init")
+    _git(str(repo), "symbolic-ref", "HEAD", "refs/heads/main")
+    _git(str(repo), "add", "-A")
+    _git(str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-m", "base")
+    # 工作树变更：修改 identity_map、删除 archived、新增未跟踪 new.txt
+    (repo / "config" / "identity_map.json").write_text(
+        '{"updated": true}', encoding="utf-8")
+    (repo / "config" / "archived.json").unlink()
+    (repo / "data" / "new.txt").write_text("new", encoding="utf-8")
+    return str(repo)
+
+
+def test_review_context_reports_worktree_facts(tmp_path):
+    """_review_context 输出含四类事实：变更清单/删除文件/新增文件/关键路径存在性。"""
+    out = issue_mod._review_context(_make_worktree_repo(tmp_path), "main")
+    # ① 变更清单（status porcelain 原样行）
+    assert "变更清单" in out
+    assert " M config/identity_map.json" in out
+    # ② 删除文件（diff --name-status 相对 base）
+    assert "删除文件" in out
+    assert "config/archived.json" in out
+    # ④ 新增文件（status 未跟踪 ?? 项）
+    assert "新增文件" in out
+    assert "data/new.txt" in out
+    # ③ 关键路径存在性：identity_map 存在 / entity_source_map 缺失 / 报告类存在
+    assert "关键路径存在性" in out
+    assert "config/identity_map.json: 存在" in out
+    assert "data/entity_source_map.json: 缺失" in out
+    assert "data/*.txt: 存在" in out
+
+
+def test_review_context_degrades_for_non_git_dir(tmp_path):
+    """非 git 目录：降级为简短提示而不是抛错（审查输入缺事实时明确告知）。"""
+    out = issue_mod._review_context(str(tmp_path / "not-a-repo"), "main")
+    assert out.startswith("（工作树事实不可用")
+    # 存在但自身非 git 工作树（无 .git）：不能放任 git 向上回溯命中外围仓库，
+    # 否则会把外层仓库的事实误报成 repo_dir 的事实。
+    plain_dir = tmp_path / "plain-dir"
+    plain_dir.mkdir()
+    out3 = issue_mod._review_context(str(plain_dir), "main")
+    assert out3 == "（工作树事实不可用: 目录不是 git 工作树）"
+    # 不存在目录同样降级
+    out2 = issue_mod._review_context(str(tmp_path / "no-such-dir"), "main")
+    assert out2.startswith("（工作树事实不可用")
+
+
+def test_review_diff_injects_worktree_context():
+    """传入 context 时 user 消息含「工作树事实」段，位于 Issue/验证轮数之后、Diff 之前。"""
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS ok")])
+    issue_mod._review_diff(mock, diff="+a\n-b\n", issue_text="issue-text",
+                           verify_rounds=1, context="变更清单:  x\n删除文件:  y")
+    user = mock.calls[0][0][1]["content"]
+    assert "工作树事实" in user
+    assert "变更清单:  x" in user
+    assert user.index("Issue:") < user.index("工作树事实") < user.index("Diff:")
+
+
+def test_review_diff_without_context_omits_section():
+    """不传 context（向后兼容）：user 消息不含「工作树事实」段。"""
+    mock = MockLLMClient([LLMMessage(role="assistant", content="PASS ok")])
+    issue_mod._review_diff(mock, diff="+a\n-b\n", issue_text="issue-text",
+                           verify_rounds=1)
+    user = mock.calls[0][0][1]["content"]
+    assert "工作树事实" not in user
+
+
+def test_run_issue_agent_passes_review_context_both_rounds(tmp_path, monkeypatch):
+    """首轮与重试轮的 _review_diff 都收到工作树上下文（临时目录非 git → 降级提示）。"""
+    _patch_github(monkeypatch)
+    seen = {"contexts": []}
+    original = issue_mod._review_diff
+
+    def spy(llm, diff, issue_text, verify_rounds, context=None, final_answer=""):
+        seen["contexts"].append(context)
+        return original(llm, diff, issue_text, verify_rounds, context, final_answer)
+
+    monkeypatch.setattr(issue_mod, "_review_diff", spy)
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复"),
+        LLMMessage(role="assistant", content="FAIL 缺少边界测试"),
+        LLMMessage(role="assistant", content=json.dumps(["补测试"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已补测试"),
+        LLMMessage(role="assistant", content="PASS 测试已补齐。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path))
+    run_issue_agent(task, MockLLMClient(script))
+    assert len(seen["contexts"]) == 2
+    assert all(c is not None for c in seen["contexts"])          # 两次调用都传了 context
+    assert all("工作树事实不可用" in c for c in seen["contexts"])  # 非 git 目录 → 降级提示
+
+
+def test_run_issue_agent_passes_final_answer_to_review_both_rounds(tmp_path, monkeypatch):
+    """两轮 _review_diff 各传本轮 result.final_answer（重试轮为轮次新结论）。"""
+    _patch_github(monkeypatch)
+    seen = {"answers": []}
+    original = issue_mod._review_diff
+
+    def spy(llm, diff, issue_text, verify_rounds, context=None, final_answer=""):
+        seen["answers"].append(final_answer)
+        return original(llm, diff, issue_text, verify_rounds, context, final_answer)
+
+    monkeypatch.setattr(issue_mod, "_review_diff", spy)
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复（首轮结论）"),
+        LLMMessage(role="assistant", content="FAIL 缺少边界测试"),
+        LLMMessage(role="assistant", content=json.dumps(["补测试"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复（重试轮结论）"),
+        LLMMessage(role="assistant", content="PASS 测试已补齐。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path))
+    run_issue_agent(task, MockLLMClient(script))
+    assert seen["answers"] == ["已修复（首轮结论）", "已修复（重试轮结论）"]
+
+
+# --- A4: 红线路径工具级拦截（_enforce_red_lines 还原 cost_log/generated_at 类改动） ---
+
+
+def _make_redline_repo(tmp_path) -> str:
+    """构造红线拦截测试仓库：基线提交后制造红线改动 + 合法改动。
+
+    基线含 output/eval/cost_log.jsonl（红线：文件名含 cost_log）、
+    data/extractions/v3_seed_db_v2.json（红线：文件内 _meta.generated_at 行，
+    文件名不含模式，靠改动行内容命中）、a.txt（合法改动）、
+    notes/other_meta.txt（env 覆盖模式的命中文件，名字含 other）。
+    """
+    repo = tmp_path / "redline-repo"
+    repo.mkdir()
+    (repo / "output" / "eval").mkdir(parents=True)
+    (repo / "data" / "extractions").mkdir(parents=True)
+    (repo / "notes").mkdir()
+    (repo / "output" / "eval" / "cost_log.jsonl").write_text(
+        '{"cost": 1}\n', encoding="utf-8")
+    (repo / "data" / "extractions" / "v3_seed_db_v2.json").write_text(
+        '{"_meta": {"generated_at": "2024-01-01"}}\n', encoding="utf-8")
+    (repo / "a.txt").write_text("base\n", encoding="utf-8")
+    (repo / "notes" / "other_meta.txt").write_text("other meta\n", encoding="utf-8")
+    _git(str(repo), "init", "-b", "main")
+    _git(str(repo), "add", "-A")
+    _git(str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-m", "base")
+    # 工作树改动：红线两文件 + 合法文件 + env 命中文件（均未暂存）
+    (repo / "output" / "eval" / "cost_log.jsonl").write_text(
+        '{"cost": 1}\n{"cost": 2}\n', encoding="utf-8")
+    (repo / "data" / "extractions" / "v3_seed_db_v2.json").write_text(
+        '{"_meta": {"generated_at": "2025-01-01"}}\n', encoding="utf-8")
+    (repo / "a.txt").write_text("base\nfixed\n", encoding="utf-8")
+    (repo / "notes" / "other_meta.txt").write_text("other meta 2\n", encoding="utf-8")
+    return str(repo)
+
+
+def test_enforce_red_lines_reverts_red_line_authored_changes(tmp_path):
+    """默认红线模式：cost_log（文件名命中）与 v3_seed（generated_at 行命中）
+    被还原为 base 版本，合法改动 a.txt 保留，返回清单恰为两条红线路径。"""
+    repo = _make_redline_repo(tmp_path)
+    reverted = issue_mod._enforce_red_lines(repo, "main")
+    assert sorted(reverted) == sorted([
+        "output/eval/cost_log.jsonl",
+        "data/extractions/v3_seed_db_v2.json",
+    ])
+    assert "a.txt" not in reverted
+    # 红线文件内容还原为 base 版本
+    assert open(os.path.join(repo, "output", "eval", "cost_log.jsonl"),
+                encoding="utf-8").read() == '{"cost": 1}\n'
+    assert open(os.path.join(repo, "data", "extractions", "v3_seed_db_v2.json"),
+                encoding="utf-8").read() == '{"_meta": {"generated_at": "2024-01-01"}}\n'
+    # 合法改动保留
+    assert open(os.path.join(repo, "a.txt"), encoding="utf-8").read() == "base\nfixed\n"
+
+
+def test_enforce_red_lines_env_override_patterns(tmp_path, monkeypatch):
+    """KA_REDLINE_PATTERNS 覆盖默认模式：仅 other 命中，默认红线不再拦截。"""
+    monkeypatch.setenv("KA_REDLINE_PATTERNS", "other")
+    repo = _make_redline_repo(tmp_path)
+    reverted = issue_mod._enforce_red_lines(repo, "main")
+    assert reverted == ["notes/other_meta.txt"]
+    # 默认模式不拦：cost_log / v3_seed 的改动保留在工作树
+    assert '{"cost": 2}' in open(os.path.join(
+        repo, "output", "eval", "cost_log.jsonl"), encoding="utf-8").read()
+    assert "2025-01-01" in open(os.path.join(
+        repo, "data", "extractions", "v3_seed_db_v2.json"),
+        encoding="utf-8").read()
+
+
+def test_enforce_red_lines_no_hits_returns_empty(tmp_path):
+    """无红线文件（仅合法改动）：返回空清单，工作树零还原。"""
+    repo = tmp_path / "clean-repo"
+    repo.mkdir()
+    (repo / "a.txt").write_text("base\n", encoding="utf-8")
+    _git(str(repo), "init", "-b", "main")
+    _git(str(repo), "add", "-A")
+    _git(str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-m", "base")
+    (repo / "a.txt").write_text("base\nfixed\n", encoding="utf-8")
+    assert issue_mod._enforce_red_lines(str(repo), "main") == []
+    assert open(os.path.join(repo, "a.txt"), encoding="utf-8").read() == "base\nfixed\n"
+
+
+def test_review_context_appends_extra_facts(tmp_path):
+    """_review_context 的 extra_facts 追加为「额外事实」段（红线还原事实面）；
+    缺省（None/空）不追加任何段。"""
+    repo = _make_worktree_repo(tmp_path)
+    out = issue_mod._review_context(
+        repo, "main",
+        extra_facts=["红线还原（2 个文件）: output/eval/cost_log.jsonl, "
+                     "data/extractions/v3_seed_db_v2.json"])
+    assert "额外事实" in out
+    assert "红线还原（2 个文件）" in out
+    assert "output/eval/cost_log.jsonl" in out
+    assert "额外事实" not in issue_mod._review_context(repo, "main")
+
+
+def test_run_issue_agent_records_red_line_reverts(tmp_path, monkeypatch):
+    """红线还原清单进入审批单 JSON，且 _review_context 调用收到红线事实
+    （Reviewer 可见）。_enforce_red_lines 打桩（集成测试不依赖真 git 仓库）。"""
+    _patch_github(monkeypatch)
+    fake_reverts = ["output/eval/cost_log.jsonl",
+                    "data/extractions/v3_seed_db_v2.json"]
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines",
+                        lambda d, b: list(fake_reverts))
+    seen = {"facts": []}
+    original_ctx = issue_mod._review_context
+
+    def spy(repo_dir, base_branch, extra_facts=None):
+        seen["facts"].append(extra_facts)
+        return original_ctx(repo_dir, base_branch, extra_facts)
+
+    monkeypatch.setattr(issue_mod, "_review_context", spy)
+    script = _graph_script() + [
+        LLMMessage(role="assistant", content="PASS 变更解决问题。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
+    result = run_issue_agent(task, MockLLMClient(script))
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert data["red_line_reverts"] == fake_reverts
+    # Reviewer 可见：reverts 非空时 _review_context 至少一次收到红线还原事实
+    assert any(f and len(f) == 1 and "红线还原（2 个文件）" in f[0]
+               for f in seen["facts"])
+
+
+def test_run_issue_agent_no_red_lines_empty_field(tmp_path, monkeypatch):
+    """无红线还原：审批单 red_line_reverts 为空清单（字段恒在）。"""
+    _patch_github(monkeypatch)
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines", lambda d, b: [])
+    script = _graph_script() + [
+        LLMMessage(role="assistant", content="PASS 变更解决问题。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
+    result = run_issue_agent(task, MockLLMClient(script))
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert data["red_line_reverts"] == []
+
+
+def test_run_issue_agent_retry_round_context_uses_merged_reverts(tmp_path, monkeypatch):
+    """重试轮红线事实用合并清单（A4 审查修复）：首轮还原 A、重试轮还原 B，
+    最终 Review Reviewer 摘要携带完整红线还原清单（而非仅本轮 B）。
+    首轮与重试轮为真实 FAIL→重试 两轮集成（_enforce_red_lines 打桩序列）。"""
+    _patch_github(monkeypatch)
+    reverts_sequence = [["a_round1.jsonl"], ["b_round2.jsonl"]]
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines",
+                        lambda d, b: reverts_sequence.pop(0))
+    seen = {"facts": []}
+    original_ctx = issue_mod._review_context
+
+    def spy(repo_dir, base_branch, extra_facts=None):
+        seen["facts"].append(extra_facts)
+        return original_ctx(repo_dir, base_branch, extra_facts)
+
+    monkeypatch.setattr(issue_mod, "_review_context", spy)
+    script = [
+        LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已修复"),
+        LLMMessage(role="assistant", content="FAIL 缺少边界测试"),
+        LLMMessage(role="assistant", content=json.dumps(["补测试"], ensure_ascii=False)),
+        LLMMessage(role="assistant", content="已补测试"),
+        LLMMessage(role="assistant", content="PASS 测试已补齐。"),
+    ]
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=_make_workdir(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
+    result = run_issue_agent(task, MockLLMClient(script))
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert data["red_line_reverts"] == ["a_round1.jsonl", "b_round2.jsonl"]
+    # 重试轮是最后一次 _review_context 调用：其 extra_facts 必须含完整合并清单
+    assert seen["facts"][-1] == ["红线还原（2 个文件）: a_round1.jsonl, b_round2.jsonl"]

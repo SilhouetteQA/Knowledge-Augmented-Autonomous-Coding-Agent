@@ -39,7 +39,36 @@ def test_save_load_roundtrip(tmp_path):
     assert path.endswith(f"{a.approval_id}.json")
     loaded = load_approval(path)
     assert loaded == a
+    assert loaded.red_line_reverts == []    # 新字段缺省为空清单（A4）
     assert loaded.to_dict() == a.to_dict()
+
+
+def test_create_approval_red_line_reverts_field(tmp_path):
+    """红线还原字段（A4）：缺省 []，显式传入时原样进入审批单。"""
+    assert _approval().red_line_reverts == []
+    a = _approval(red_line_reverts=["output/eval/cost_log.jsonl"])
+    assert a.red_line_reverts == ["output/eval/cost_log.jsonl"]
+    # 旧审批单 JSON 真缺该字段：load 回退为空清单（前向兼容，不破坏旧数据）
+    legacy = _approval().to_dict()
+    assert "red_line_reverts" in legacy
+    legacy.pop("red_line_reverts")
+    p = tmp_path / "legacy.json"
+    p.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    assert load_approval(str(p)).red_line_reverts == []
+
+
+def test_create_approval_final_answer_field(tmp_path):
+    """最终结论字段（A7）：缺省 ""，显式传入时原样进入审批单；旧 JSON 缺失字段 load 回退为空串。"""
+    assert _approval().final_answer == ""
+    a = _approval(final_answer="经核验四条候选均有 related_entities 引用，无可删条目")
+    assert a.final_answer == "经核验四条候选均有 related_entities 引用，无可删条目"
+    # 旧审批单 JSON 真缺该字段：load 回退为空串（前向兼容，不破坏旧数据）
+    legacy = _approval().to_dict()
+    assert "final_answer" in legacy
+    legacy.pop("final_answer")
+    p = tmp_path / "legacy.json"
+    p.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+    assert load_approval(str(p)).final_answer == ""
 
 
 def test_load_ignores_extra_fields(tmp_path):
