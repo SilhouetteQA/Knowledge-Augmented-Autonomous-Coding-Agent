@@ -20,6 +20,34 @@ from tools.tracing import traced
 # 单次命令输出上限（防止大输出撑爆 LLM 上下文）
 MAX_COMMAND_OUTPUT = 100 * 1024
 
+# 破坏性 git 子命令黑名单（rich#3299 实测：Agent 用 run_command 跑 git stash 自伤，
+# 之后数轮耗在恢复现场）。仓库分支/提交/同步由编排层（宿主 git 函数）管理，
+# Agent 内只需只读 git 工具；检出/回滚类需求用 write_file/edit_file 满足。
+GIT_DESTRUCTIVE_SUBCOMMANDS = (
+    "stash", "reset", "rebase", "merge", "checkout", "clean", "restore",
+    "commit", "push", "pull", "fetch", "cherry-pick", "revert", "am", "apply",
+)
+_GIT_DESTRUCTIVE_RE = re.compile(
+    r"(?:^|[;&|]\s*)\s*git\s+"
+    r"(?:(?:-{1,2}[\w-]+)(?:\s+(?:\"[^\"]*\"|'[^']*'|[\w./@+-]+))?\s+)*"
+    r"(?P<sub>" + "|".join(GIT_DESTRUCTIVE_SUBCOMMANDS) + r")\b"
+)
+
+
+def check_destructive_git(command: str) -> ToolError | None:
+    """拦截 run_command 中的破坏性 git 子命令；命中返回 ToolError，放行返回 None。
+
+    按命令词法匹配（git 后跟可选全局选项再跟子命令），不解析引号嵌套——
+    这是防 Agent 自伤的护栏而非安全边界（沙箱负责真正的隔离）。
+    """
+    match = _GIT_DESTRUCTIVE_RE.search(command)
+    if match:
+        return ToolError(
+            f"禁止执行破坏性 git 子命令: git {match.group('sub')}"
+            "（分支/提交/同步由系统编排层管理；查看变更用 git_status/git_diff/git_log，"
+            "撤销修改用 edit_file 反向编辑或重新 write_file）")
+    return None
+
 
 def _truncate(text: str) -> str:
     """截断过长的命令输出，尾部附加标记。"""
@@ -224,6 +252,9 @@ def run_command(
     workspace_root: str | None = None,
 ) -> CommandResult | ToolError:
     """在 workspace 内 cwd 执行 shell 命令；超时终止进程树置 timeout=True；输出截断。"""
+    guard = check_destructive_git(command)
+    if guard is not None:
+        return guard
     base = resolve_workspace_path(cwd or "", workspace_root)
     if isinstance(base, ToolError):
         return base

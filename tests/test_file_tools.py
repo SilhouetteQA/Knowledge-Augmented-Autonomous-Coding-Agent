@@ -190,3 +190,55 @@ def test_list_files_uses_workspace_root_env(tmp_path, monkeypatch):
     result = list_files(workspace_root=None)
     assert not isinstance(result, ToolError)
     assert [e.path for e in result] == ["a.py"]
+
+
+# ---- edit_file（局部精确替换，W8 后实测补强：write_file 全量覆盖是 rich#3299 失败根因）----
+
+from tools.file_tools import EditResult, edit_file  # noqa: E402
+
+
+def test_edit_file_replaces_single_occurrence(tmp_path):
+    (tmp_path / "mod.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    result = edit_file("mod.py", "return 1", "return 2", workspace_root=str(tmp_path))
+    assert not isinstance(result, ToolError)
+    assert result.replacements == 1
+    assert "return 2" in (tmp_path / "mod.py").read_text(encoding="utf-8")
+    assert "return 1" not in (tmp_path / "mod.py").read_text(encoding="utf-8")
+
+
+def test_edit_file_missing_old_text_errors(tmp_path):
+    (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    result = edit_file("mod.py", "不存在片段", "y", workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError)
+    assert "未找到" in result.message
+    assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
+def test_edit_file_ambiguous_requires_expected_count(tmp_path):
+    (tmp_path / "mod.py").write_text("pass\npass\npass\n", encoding="utf-8")
+    result = edit_file("mod.py", "pass", "ok", workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError)
+    assert "3 次" in result.message
+    # 显式 expected_count 确认后允许全部替换
+    ok = edit_file("mod.py", "pass", "ok", expected_count=3, workspace_root=str(tmp_path))
+    assert not isinstance(ok, ToolError)
+    assert ok.replacements == 3
+    assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "ok\nok\nok\n"
+
+
+def test_edit_file_empty_old_text_rejected(tmp_path):
+    (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    result = edit_file("mod.py", "", "y", workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError)
+
+
+def test_edit_file_missing_file(tmp_path):
+    result = edit_file("nope.py", "a", "b", workspace_root=str(tmp_path))
+    assert isinstance(result, ToolError)
+
+
+def test_edit_file_multiline_with_indent(tmp_path):
+    (tmp_path / "mod.py").write_text("if True:\n    pass\n", encoding="utf-8")
+    result = edit_file("mod.py", "    pass", "    return 0", workspace_root=str(tmp_path))
+    assert not isinstance(result, ToolError)
+    assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "if True:\n    return 0\n"

@@ -1,7 +1,7 @@
 # tests/test_loop.py
 """ReAct 循环测试：工具调用序列、错误回注、多工具一轮、迭代上限"""
 from agent.llm import LLMMessage, MockLLMClient, ToolCall
-from agent.loop import run_agent
+from agent.loop import _build_tools, _dispatch, run_agent
 from tools.file_tools import FileContent, ToolError
 
 
@@ -122,3 +122,18 @@ def test_dispatch_disabled_passthrough(tmp_path):
     assert ok.path == "a.py"
     err = _dispatch("no_such_tool", {}, str(ws))
     assert isinstance(err, ToolError)
+
+
+def test_build_tools_includes_edit_file():
+    """edit_file 暴露给 LLM（write_file 全量覆盖的互补工具）。"""
+    names = [t.name for t in _build_tools()]
+    assert "edit_file" in names
+
+
+def test_dispatch_edit_file(tmp_path):
+    """_dispatch 分发 edit_file：精确替换一次。"""
+    (tmp_path / "m.py").write_text("a = 1\n", encoding="utf-8")
+    result = _dispatch("edit_file", {"path": "m.py", "old_text": "a = 1", "new_text": "a = 2"},
+                       str(tmp_path))
+    assert not isinstance(result, ToolError)
+    assert (tmp_path / "m.py").read_text(encoding="utf-8") == "a = 2\n"
