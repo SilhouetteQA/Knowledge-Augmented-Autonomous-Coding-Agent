@@ -8,6 +8,7 @@ from agent.llm import LLMClient, ToolSpec
 from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import (
     ToolError,
+    edit_file,
     list_files,
     read_file,
     search_code,
@@ -96,7 +97,7 @@ def _build_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="write_file",
-            description="写入工作区内文件（自动创建父目录，覆盖已有内容）",
+            description="写入工作区内文件（自动创建父目录，覆盖已有内容）；新建文件用本工具",
             parameters={
                 "type": "object",
                 "properties": {
@@ -107,6 +108,26 @@ def _build_tools() -> list[ToolSpec]:
                     "content": {"type": "string", "description": "文件完整内容"},
                 },
                 "required": ["path", "content"],
+            },
+        ),
+        ToolSpec(
+            name="edit_file",
+            description="局部编辑已有文件：将 old_text 精确替换为 new_text（修改已有文件优先用本工具，"
+                        "避免整文件重写丢失内容）。old_text 必须逐字符匹配（含缩进换行）且默认恰好出现 1 次，"
+                        "出现多次时传 expected_count=<次数> 确认全部替换",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "相对工作区根的文件路径",
+                    },
+                    "old_text": {"type": "string", "description": "要被替换的原文片段（精确匹配）"},
+                    "new_text": {"type": "string", "description": "替换后的新片段"},
+                    "expected_count": {"type": "integer",
+                                       "description": "old_text 预期出现次数（多处替换时显式确认）"},
+                },
+                "required": ["path", "old_text", "new_text"],
             },
         ),
     ]
@@ -145,6 +166,19 @@ def _dispatch(name: str, args: dict, workspace_root: str | None) -> object:
         if content is None:
             return ToolError("缺少参数: content")
         return write_file(path, content, workspace_root=workspace_root)
+    if name == "edit_file":
+        path = args.get("path")
+        old_text = args.get("old_text")
+        new_text = args.get("new_text")
+        if path is None:
+            return ToolError("缺少参数: path")
+        if old_text is None:
+            return ToolError("缺少参数: old_text")
+        if new_text is None:
+            return ToolError("缺少参数: new_text")
+        return edit_file(path, old_text, new_text,
+                         expected_count=args.get("expected_count"),
+                         workspace_root=workspace_root)
     return ToolError(f"未知工具: {name}")
 
 

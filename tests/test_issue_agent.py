@@ -674,7 +674,8 @@ def test_run_issue_agent_records_red_line_reverts(tmp_path, monkeypatch):
     data = json.load(open(result.approval_path, encoding="utf-8"))
     assert data["red_line_reverts"] == fake_reverts
     # Reviewer 可见：reverts 非空时 _review_context 至少一次收到红线还原事实
-    assert any(f and len(f) == 1 and "红线还原（2 个文件）" in f[0]
+    # （F4 后 extra_facts 追加测试证据事实，故只断言清单包含红线事实）
+    assert any(f and any("红线还原（2 个文件）" in fact for fact in f)
                for f in seen["facts"])
 
 
@@ -724,4 +725,27 @@ def test_run_issue_agent_retry_round_context_uses_merged_reverts(tmp_path, monke
     data = json.load(open(result.approval_path, encoding="utf-8"))
     assert data["red_line_reverts"] == ["a_round1.jsonl", "b_round2.jsonl"]
     # 重试轮是最后一次 _review_context 调用：其 extra_facts 必须含完整合并清单
-    assert seen["facts"][-1] == ["红线还原（2 个文件）: a_round1.jsonl, b_round2.jsonl"]
+    # （F4 后首个事实仍为红线合并清单，其后可跟测试证据事实）
+    assert seen["facts"][-1][0] == "红线还原（2 个文件）: a_round1.jsonl, b_round2.jsonl"
+
+
+# ---- Reviewer 证据面补强（W8 后实测补强：jsonschema#1159 新增测试文件被误判"未并入套件"）----
+
+def test_test_evidence_facts_from_test_results():
+    from agent.issue import _test_evidence_facts
+    from tools.shell_tools import TestResult
+    facts = _test_evidence_facts([TestResult(passed=7892, failed=0, error=0, total=7892, duration=21.6, failures=[])])
+    assert facts == ["测试验证（verify 全量运行）: 7892 passed / 0 failed / 0 error（共 7892 项）"]
+
+
+def test_test_evidence_facts_empty_or_zero_total():
+    from agent.issue import _test_evidence_facts
+    from tools.shell_tools import TestResult
+    assert _test_evidence_facts([]) == []
+    assert _test_evidence_facts([TestResult(passed=0, failed=0, error=0, total=0, duration=0.0, failures=[])]) == []
+
+
+def test_review_prompt_treats_in_tree_test_files_as_merged():
+    """提示词明确：位于测试目录内的新增测试文件视为已并入套件。"""
+    from agent.issue import REVIEW_PROMPT
+    assert "已并入正式套件" in REVIEW_PROMPT

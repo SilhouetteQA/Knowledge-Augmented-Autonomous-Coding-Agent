@@ -13,6 +13,7 @@ from agent.llm import LLMClient
 from agent.loop import AgentStep
 from tools.approval import create_approval, save_approval
 from tools.file_tools import ToolError
+from tools.shell_tools import TestResult
 from tools.github_tools import (
     GitHubIssue,
     clone_repository,
@@ -34,7 +35,9 @@ REVIEW_PROMPT = (
     "2. 是否有明显错误或遗漏（语法/逻辑/回归风险）；\n"
     "3. 是否混入与 Issue 无关的改动（格式调整、文档顺手修改等无关变更应明确指出，"
     "此类改动不得进入 PR）；\n"
-    "4. 测试是否已并入仓库现有测试套件（若发现独立验证脚本而非正式测试，应指出并要求并入）。\n"
+    "4. 测试是否已并入仓库现有测试套件（若发现独立验证脚本而非正式测试，应指出并要求并入）。"
+    "注意：位于仓库测试目录（tests/、<包>/tests/ 等）内的新增测试文件会被全量测试自动收集运行，"
+    "属于已并入正式套件，不得仅以「未并入」为由判 FAIL（以工作树事实中的测试验证证据为准）。\n"
     "5. 域数据操作（extractions/seed/index 等数据文件）的删除条目须有证据可核：三条件齐备——"
     "无来源锚点（source_records/line_range/原文出现）∧ 无事件参与 ∧ 无结构化引用；"
     "存在元数据/日志等与任务无关的改动（如 _meta.generated_at、cost/日志文件）应明确指出；\n"
@@ -218,6 +221,20 @@ def _red_line_facts(reverts: list[str]) -> list[str]:
     return [f"红线还原（{len(reverts)} 个文件）: {', '.join(reverts)}"]
 
 
+def _test_evidence_facts(test_results: list) -> list[str]:
+    """测试验证事实（Reviewer 判「测试已并入套件」的证据）：取最后一次全量 verify 结果。
+
+    total=0（套件未收集到测试）不产出事实——空洞通过不作为证据。
+    """
+    if not test_results:
+        return []
+    tr = test_results[-1]
+    if not isinstance(tr, TestResult) or tr.total == 0:
+        return []
+    return [f"测试验证（verify 全量运行）: {tr.passed} passed / {tr.failed} failed / "
+            f"{tr.error} error（共 {tr.total} 项）"]
+
+
 def _review_metadata(args, kwargs, result) -> dict:
     """review span metadata：记录结论首行（PASS/FAIL）与「人工关注」标记。"""
     text = str(result or "").strip()
@@ -319,7 +336,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         raise ToolError(f"读取 diff 失败: {diff.message}")
     review = _review_diff(llm, diff, prompt, result.verify_rounds,
                           _review_context(repo_dir, repo_info.default_branch,
-                                          extra_facts=_red_line_facts(round_reverts)),
+                                          extra_facts=_red_line_facts(round_reverts)
+                                          + _test_evidence_facts(result.test_results)),
                           final_answer=result.final_answer)
 
     # Review 未通过：以审查意见为任务重跑一轮（上限 1 次）。
@@ -342,7 +360,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
         # 不再触碰的文件，其红线事件仍须对 Reviewer 可见（审查修复）。
         review = _review_diff(llm, diff, retry_prompt, result.verify_rounds,
                               _review_context(repo_dir, repo_info.default_branch,
-                                              extra_facts=_red_line_facts(red_line_reverts)),
+                                              extra_facts=_red_line_facts(red_line_reverts)
+                                              + _test_evidence_facts(result.test_results)),
                               final_answer=result.final_answer)
 
     approval_path = None

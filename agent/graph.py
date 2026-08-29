@@ -49,6 +49,11 @@ def _decide_system(plan: list[str], verify_rounds: int, max_verify_rounds: int) 
     plan_text = "\n".join(f"- {p}" for p in plan) or "- （无计划）"
     return (
         "你是编码助手。你可以调用工具查看、修改和执行工作区内的代码。\n"
+        "执行环境：所有命令在仓库（工作区）根目录内执行，python / git / pytest 可直接调用；"
+        "不存在 /testbed、/workspace 等约定目录，禁止 cd 到它们；"
+        "首次环境探测用 run_command 跑 pwd 或 python --version，以真实输出为准。\n"
+        "修改已有文件优先用 edit_file（局部精确替换），仅新建文件用 write_file（全量覆盖）——"
+        "对大文件整文件重写有丢失内容风险。\n"
         f"你的计划：\n{plan_text}\n"
         f"可用查询工具：query_code_graph（调用关系 calls / 导入 imports / 定义位置 "
         "module_of / 符号模糊搜索 symbols）、search_knowledge（领域知识检索）。"

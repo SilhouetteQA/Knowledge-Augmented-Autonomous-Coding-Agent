@@ -271,3 +271,30 @@ def test_run_tests_disabled_passthrough(tmp_path):
     r = run_tests(workspace_root=str(ws))
     assert not isinstance(r, ToolError)
     assert r.passed == 1
+
+
+# ---- 破坏性 git 拦截（W8 后实测补强：rich#3299 中 git stash 自伤耗尽预算）----
+
+def test_run_command_blocks_destructive_git(tmp_path):
+    """stash/reset/checkout/push 等破坏性 git 子命令被拦截为 ToolError。"""
+    from tools.shell_tools import run_command
+    for cmd in ("git stash", "git reset --hard HEAD",
+                "cd sub && git checkout main", "git push origin main",
+                "git -C repo stash pop"):
+        result = run_command(cmd, workspace_root=str(tmp_path))
+        assert isinstance(result, ToolError), f"{cmd} 未被拦截"
+        assert "破坏性" in result.message
+
+
+def test_run_command_allows_readonly_git(tmp_path):
+    """git 只读子命令（status/log/diff）不拦截（非 git 目录下返回命令失败而非 ToolError）。"""
+    from tools.shell_tools import run_command
+    result = run_command("git status --short", workspace_root=str(tmp_path))
+    assert not isinstance(result, ToolError)
+
+
+def test_run_command_allows_git_mention_in_text(tmp_path):
+    """仅文本中提及 git stash（如 echo）不拦截。"""
+    from tools.shell_tools import run_command
+    result = run_command('echo "git stash is forbidden"', workspace_root=str(tmp_path))
+    assert not isinstance(result, ToolError)

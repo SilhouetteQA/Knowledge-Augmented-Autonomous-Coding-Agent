@@ -185,6 +185,13 @@ class WriteResult:
     overwritten: bool
 
 
+@dataclass
+class EditResult:
+    """局部编辑结果：replacements 为实际替换次数。"""
+    path: str
+    replacements: int
+
+
 def write_file(path: str, content: str, workspace_root: str | None = None) -> WriteResult | ToolError:
     """写入工作区内文件（自动创建父目录，覆盖已有内容）；越界/写入失败返回 ToolError。"""
     target = resolve_workspace_path(path, workspace_root)
@@ -199,3 +206,42 @@ def write_file(path: str, content: str, workspace_root: str | None = None) -> Wr
     except OSError as e:
         return ToolError(f"写入失败: {path}（{e}）")
     return WriteResult(path=path, bytes_written=len(data), overwritten=overwritten)
+
+
+def edit_file(path: str, old_text: str, new_text: str,
+              expected_count: int | None = None,
+              workspace_root: str | None = None) -> EditResult | ToolError:
+    """局部编辑：将文件中 old_text 精确替换为 new_text（默认要求恰好出现 1 次）。
+
+    与 write_file 的全量覆盖互补：修改已有文件优先用本工具（避免整文件重写
+    丢失内容，rich#3299 实测失败根因）。old_text 必须逐字符精确匹配（含缩进
+    与换行）；出现多次时须传 expected_count=<次数> 显式确认全部替换。
+    """
+    target = resolve_workspace_path(path, workspace_root)
+    if isinstance(target, ToolError):
+        return target
+    p = Path(target)
+    if not p.exists():
+        return ToolError(f"文件不存在: {path}")
+    if p.is_dir():
+        return ToolError(f"{path} 是目录，不是文件")
+    if p.stat().st_size > MAX_READ_SIZE:
+        return ToolError(f"文件过大: {path}（{p.stat().st_size} 字节，上限 {MAX_READ_SIZE} 字节）")
+    if not old_text:
+        return ToolError("old_text 不能为空串（无法精确定位；新建文件请用 write_file）")
+    try:
+        text = p.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return ToolError(f"文件非 UTF-8 文本，无法局部编辑: {path}（请用 read_file 确认后用 write_file 处理）")
+    count = text.count(old_text)
+    if count == 0:
+        return ToolError(f"old_text 未找到: {path}（需精确匹配，含缩进与换行；"
+                         "可先用 read_file 查看原文）")
+    if count > 1 and expected_count != count:
+        return ToolError(f"old_text 出现 {count} 次: {path}"
+                         f"（传 expected_count={count} 确认全部替换，或提供更长的唯一片段）")
+    try:
+        p.write_text(text.replace(old_text, new_text), encoding="utf-8")
+    except OSError as e:
+        return ToolError(f"写入失败: {path}（{e}）")
+    return EditResult(path=path, replacements=count)

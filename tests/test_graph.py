@@ -432,3 +432,12 @@ def test_decide_system_contains_stage_budget_discipline():
     assert "执行" in system
     assert "交付" in system
     assert "重复探索" in system
+
+
+def test_decide_system_declares_execution_environment():
+    """decide 提示词声明执行环境（防 /testbed、/workspace 等 SWE-bench 惯性幻觉）。"""
+    from agent.graph import _decide_system
+    system = _decide_system(["步骤1"], 0, 3)
+    assert "/testbed" in system
+    assert "根目录" in system
+    assert "python --version" in system
