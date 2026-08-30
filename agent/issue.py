@@ -6,6 +6,7 @@ Get Issue → Clone → Branch → Work（LangGraph 沙箱）→ Diff → Review
 """
 import glob
 import os
+import re
 from dataclasses import dataclass
 
 from agent.graph import run_agent_graph
@@ -80,9 +81,11 @@ class IssueAgentResult:
 def auto_approve_if_eligible(approval_path: str, repo_dir: str) -> str:
     """D1 条件自动放行：满足全部条件时自动 approve（否则保持 pending 等人工）。
 
-    条件（D5 评估档位）：① Reviewer 首行 PASS；② red_line_reverts 为空；
-    ③ diff 非删除型（name-status 无 D 行——删除/知识写回类永久人工终审）；
-    ④ 审批单仍为 pending。返回动作描述（approved 自动放行 / pending 保持人工+原因）。
+    条件（D5 评估档位 + IM-1 测试证据硬条件）：① Reviewer 首行 PASS；
+    ② red_line_reverts 为空；③ diff 非删除型（name-status 无 D 行——删除/
+    知识写回类永久人工终审）；④ 测试摘要 total>0 且 failed=0 且 error=0
+    （total=0 无测试仓库与 error 异常形态均不自动放行）；⑤ 审批单仍为 pending。
+    返回动作描述（approved 自动放行 / pending 保持人工+原因）。
     显式入口：仅 main.py --auto-approve 调用，默认链路行为不变。
     """
     approval = load_approval(approval_path)
@@ -99,10 +102,26 @@ def auto_approve_if_eligible(approval_path: str, repo_dir: str) -> str:
     deletions = [line for line in ns.splitlines() if line.startswith("D")]
     if deletions:
         return f"pending（删除型变更 {len(deletions)} 项，永久人工终审）"
-    approval.decision_comment = "[自动放行] Reviewer PASS + 红线 0 + 测试验证 + 非删除型"
+    if not _test_summary_allows_auto_approve(approval.test_summary):
+        return (f"pending（测试证据不足或未全部通过: "
+                f"{approval.test_summary[:60] or '无测试摘要'}，需人工确认）")
+    approval.decision_comment = "[自动放行] Reviewer PASS + 红线 0 + 测试全部通过 + 非删除型"
     approved = approve_request(approval, "approve", approval.decision_comment, repo_dir)
-    save_approval(approved, os.path.dirname(approval_path))
+    save_approval(approved, os.path.dirname(os.path.abspath(approval_path)))
     return f"approved {approved.pr_url or ''}".strip()
+
+
+def _test_summary_allows_auto_approve(summary: str) -> bool:
+    """测试摘要是否满足自动放行（IM-1 硬条件）：total>0 且 failed=0 且 error=0。
+
+    解析 _test_summary_line 产出的计数串；旧审批单无摘要（""）与异常形态
+    （"error: ..."）均不满足——自动化推送必须有真实且全绿的测试证据。
+    """
+    m = re.search(r"passed=(\d+) failed=(\d+) error=(\d+) total=(\d+)", summary or "")
+    if not m:
+        return False
+    _, failed, err, total = (int(g) for g in m.groups())
+    return total > 0 and failed == 0 and err == 0
 
 
 def repo_dir_name(repository: str) -> str:
@@ -258,15 +277,21 @@ def _enforce_red_lines(repo_dir: str, base_branch: str) -> list[str]:
 
 def _is_red_line_path(repo_dir: str, base_branch: str, path: str,
                       patterns: tuple[str, ...]) -> bool:
-    """红线命中判定：路径含模式，或该文件 diff 新增行含模式（内容级通道）。"""
+    """红线命中判定：路径含模式，或该文件 diff 新增/删除行含模式（内容级通道）。
+
+    IM-2：删除行同查——整体删掉 generated_at 行时 diff 只有 - 行，仅查 +
+    行会漏拦（删除与修改对数据完整性是同等风险）。
+    """
     if any(p in path for p in patterns):
         return True
     frag = run_host(["git", "diff", base_branch, "--", path], cwd=repo_dir)
     if isinstance(frag, ToolError):
         raise ToolError(f"红线检查失败（读取 {path} 的 diff）: {frag.message}")
-    return any(line.startswith("+") and not line.startswith("+++")
-               and any(p in line for p in patterns)
-               for line in frag.splitlines())
+    return any(
+        ((line.startswith("+") and not line.startswith("+++"))
+         or (line.startswith("-") and not line.startswith("---")))
+        and any(p in line for p in patterns)
+        for line in frag.splitlines())
 
 
 def _red_line_facts(reverts: list[str]) -> list[str]:
@@ -287,7 +312,11 @@ def _test_evidence_facts(test_results: list) -> list[str]:
         return []
     tr = test_results[-1]
     if not isinstance(tr, TestResult):
-        return []
+        # IM-3：测试基础设施失败（run_tests 超时/执行器故障返回 ToolError 类）——
+        # 此前证据面一字不出，Reviewer 只能看到验证轮数，极易在无测试证据时判 PASS
+        detail = str(getattr(tr, "message", "") or "")[:120]
+        return [f"测试未能运行（最后验证轮返回 {type(tr).__name__}）: "
+                f"diff 未经过任何测试验证，请人工核验{('（' + detail + '）') if detail else ''}"]
     if tr.total == 0 and tr.error == 0:
         # G4 口径决策：不翻转 pass 语义（无测试仓库合法），但 0 收集对 Reviewer 可见
         return ["测试验证（verify 全量运行）未收集到任何测试: "
@@ -297,6 +326,21 @@ def _test_evidence_facts(test_results: list) -> list[str]:
                 "diff 未经过任何测试验证，请人工核验"]
     return [f"测试验证（verify 全量运行）: {tr.passed} passed / {tr.failed} failed / "
             f"{tr.error} error（共 {tr.total} 项）"]
+
+
+def _test_summary_line(test_results: list) -> str:
+    """最后一次全量 verify 的测试结果摘要（审批单 test_summary 字段，IM-1）。
+
+    TestResult → 机器可解析计数串（条件自动放行据此核验）；非 TestResult →
+    "error: ..." 异常形态；无验证历史 → ""（旧审批单/未验证均不自动放行）。
+    """
+    if not test_results:
+        return ""
+    tr = test_results[-1]
+    if not isinstance(tr, TestResult):
+        return f"error: 测试未能运行（{type(tr).__name__}）"
+    return (f"passed={tr.passed} failed={tr.failed} error={tr.error} "
+            f"total={tr.total}")
 
 
 def _review_metadata(args, kwargs, result) -> dict:
@@ -438,7 +482,8 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
             diff=diff, review=review,
             verify_rounds=result.verify_rounds, retry_count=1 if retried else 0,
             red_line_reverts=red_line_reverts,
-            final_answer=result.final_answer)
+            final_answer=result.final_answer,
+            test_summary=_test_summary_line(result.test_results))
         approval_path = save_approval(approval, task.approval_dir)
 
     return IssueAgentResult(

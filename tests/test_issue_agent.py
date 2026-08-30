@@ -830,13 +830,15 @@ def _make_eligible_repo(tmp_path):
     return repo
 
 
-def _write_pending_approval(path, review="PASS 变更解决问题。"):
+def _write_pending_approval(path, review="PASS 变更解决问题。",
+                            test_summary="passed=5 failed=0 error=0 total=5"):
     from tools.approval import create_approval, save_approval
     approval = create_approval(
         action_type="pr_push", repository="o/r", issue_number=1,
         branch="fix/issue-1", base_branch="main",
         commit_message="fix: x", diff="diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-a\n+b\n",
-        review=review, verify_rounds=1, retry_count=0)
+        review=review, verify_rounds=1, retry_count=0,
+        test_summary=test_summary)
     return save_approval(approval, path)
 
 
@@ -937,3 +939,63 @@ def test_approval_diff_includes_untracked_content(tmp_path, monkeypatch):
     data = json.load(open(result.approval_path, encoding="utf-8"))
     assert "diff --git a/new_mod.py b/new_mod.py" in data["diff"]
     assert "+agent_wrote = True" in data["diff"]
+
+
+def test_auto_approve_rejects_on_test_failure(tmp_path):
+    """IM-1：测试摘要含失败（failed>0）→ 不自动放行，转人工。"""
+    from agent.issue import auto_approve_if_eligible
+    repo = _make_eligible_repo(tmp_path)
+    path = _write_pending_approval(str(tmp_path / "ap"),
+                                   test_summary="passed=3 failed=1 error=0 total=5")
+    action = auto_approve_if_eligible(path, str(repo))
+    assert action.startswith("pending（测试证据不足")
+
+
+def test_auto_approve_rejects_on_missing_test_evidence(tmp_path):
+    """IM-1：无测试摘要（旧单/空历史）或异常形态（测试未能运行）→ 不自动放行。"""
+    from agent.issue import auto_approve_if_eligible
+    repo = _make_eligible_repo(tmp_path)
+    p1 = _write_pending_approval(str(tmp_path / "ap1"), test_summary="")
+    assert auto_approve_if_eligible(p1, str(repo)).startswith("pending（测试证据不足")
+    p2 = _write_pending_approval(str(tmp_path / "ap2"),
+                                 test_summary="error: 测试未能运行（ToolError）")
+    assert auto_approve_if_eligible(p2, str(repo)).startswith("pending（测试证据不足")
+    p3 = _write_pending_approval(str(tmp_path / "ap3"),
+                                 test_summary="passed=2 failed=0 error=0 total=0")
+    assert auto_approve_if_eligible(p3, str(repo)).startswith("pending（测试证据不足")
+
+
+def test_evidence_facts_non_testresult_emits_fact():
+    """IM-3：最后验证轮非 TestResult（run_tests 超时/执行器故障）→ 产出「测试未能运行」事实。"""
+    from tools.file_tools import ToolError
+    facts = issue_mod._test_evidence_facts([ToolError("测试超时")])
+    assert len(facts) == 1
+    assert "测试未能运行" in facts[0]
+    assert "ToolError" in facts[0]
+    assert "测试超时" in facts[0]
+
+
+def test_test_summary_line_builder():
+    """IM-1：审批单测试摘要行——TestResult 计数串 / 异常形态 / 空历史。"""
+    from tools.shell_tools import TestResult
+    tr = TestResult(passed=5, failed=0, error=0, total=5, duration=1.0, failures=[])
+    assert issue_mod._test_summary_line([tr]) == "passed=5 failed=0 error=0 total=5"
+    assert issue_mod._test_summary_line([ToolError("超时")]).startswith("error:")
+    assert issue_mod._test_summary_line([]) == ""
+
+
+def test_enforce_red_lines_deleted_line_hit(tmp_path):
+    """IM-2：红线内容通道覆盖删除行——整体删掉 generated_at 行同样命中还原。"""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(str(repo), "init", "-b", "main")
+    (repo / "v3_seed.json").write_text("a: 1\ngenerated_at: 2026-01-01\nb: 2\n",
+                                       encoding="utf-8")
+    _git(str(repo), "add", "-A")
+    _git(str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "commit", "-m", "base")
+    (repo / "v3_seed.json").write_text("a: 1\nb: 2\n", encoding="utf-8")  # 仅删行
+    reverts = issue_mod._enforce_red_lines(str(repo), "main")
+    assert reverts == ["v3_seed.json"]
+    content = open(os.path.join(repo, "v3_seed.json"), encoding="utf-8").read()
+    assert "generated_at" in content   # 工作树已还原

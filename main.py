@@ -182,7 +182,8 @@ def _run_approve_mode(args: argparse.Namespace) -> int:
         repo_dir = os.path.join(args.workspace,
                                 repo_dir_name(approval.repository))
         approval = approve_request(approval, args.decision, args.comment, repo_dir)
-        saved = save_approval(approval, os.path.dirname(path))
+        # abspath 归一：裸相对文件名的 dirname 为空串，save_approval 需非空目录（IM-4）
+        saved = save_approval(approval, os.path.dirname(os.path.abspath(path)))
     except ApprovalError as e:
         print(f"审批失败: {e}")
         return 1

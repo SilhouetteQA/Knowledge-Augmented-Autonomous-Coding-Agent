@@ -258,3 +258,10 @@ def test_approve_invalid_decision(tmp_path, monkeypatch):
     approval = _approval_for_repo(workdir)
     with pytest.raises(ApprovalError, match="非法审批决定"):
         approval_mod.approve_request(approval, "maybe", None, workdir)
+
+def test_save_approval_empty_dir_falls_back_to_cwd(tmp_path, monkeypatch):
+    """IM-4：空 directory（--approve 裸文件名的 dirname）回退当前目录，不崩溃。"""
+    import os
+    monkeypatch.chdir(tmp_path)
+    path = save_approval(_approval(), "")
+    assert os.path.isfile(path)
