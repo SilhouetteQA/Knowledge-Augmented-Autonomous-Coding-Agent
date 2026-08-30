@@ -192,11 +192,19 @@ def build_reference_map(entries: list[KnowledgeEntry]) -> dict[str, list[tuple[s
 
 
 def check_reliability(entry: KnowledgeEntry, stories_dir: str) -> dict:
-    """来源可靠性：Pass1 对照章节文件行数；Pass3 检查 source_records / timeline source。"""
+    """来源可靠性：Pass1 对照章节文件行数；Pass3 检查 source_records / timeline source。
+
+    IM-16：line_range 先做类型/长度校验（list 且末元素为 int 才有效）——畸形
+    形态（1 元素 list / dict 等 schema 漂移，docstring 自认真实数据存在）降级
+    为无锚点走 elif 链，不再 IndexError/KeyError 中断整场审计。
+    """
     issues: list[str] = []
     has_source = False
     verdict = "reliable"
-    if entry.line_range:
+    line_range = entry.line_range if (
+        isinstance(entry.line_range, list) and len(entry.line_range) >= 2
+        and isinstance(entry.line_range[1], int)) else None
+    if line_range:
         has_source = True
         # stories 布局：stories/{category}/{chapter}.json（单文件）或 stories/{category}/{chapter}/（目录）
         chap_file = Path(stories_dir) / (entry.category or "") / f"{entry.chapter}.json"
@@ -210,7 +218,7 @@ def check_reliability(entry: KnowledgeEntry, stories_dir: str) -> dict:
             issues.append(f"章节文件不存在: stories/{entry.category}/{entry.chapter}")
             verdict = "unreliable"
             return {"has_source": has_source, "issues": issues, "verdict": verdict}
-        if entry.line_range[1] > n_lines:
+        if line_range[1] > n_lines:
             issues.append(f"line_range 越界 {entry.line_range}（超出文件行数 {n_lines}）")
             verdict = "unreliable"
     elif entry.kind == "character" and entry.chapter:

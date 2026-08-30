@@ -89,26 +89,38 @@ def _fetch_via_clickhouse(trace_id: str, env_file: str | None) -> TraceSummary:
 
 
 def _summarize_trace(trace_id: str, trace: object) -> TraceSummary:
-    """SDK trace 对象 → 摘要（实施时按 SDK 4.14 实际字段打点）。"""
+    """SDK trace 对象 → 摘要（实施时按 SDK 4.14 实际字段打点）。
+
+    IM-14：总耗时与 ClickHouse 路径同口径 = trace 全跨度（max end - min start），
+    嵌套 span 不再父子双计（此前直接累加每条 latency，totals 偏大且与 CH 路径
+    不可比）；SDK 读口无时间戳字段时诚实记 0。
+    """
     obs = getattr(trace, "observations", None) or []
     steps = []
     tool_calls = errors = retries = 0
     tokens_prompt = tokens_completion = 0
     test_results: list[dict] = []
-    latency = 0.0
+    starts: list = []
+    ends: list = []
     task = getattr(trace, "name", "") or trace_id
     for o in obs:
         name = getattr(o, "name", "") or ""
         d = getattr(o, "latency", None)
         steps.append({"name": name,
                       "latency_s": float(d) if d is not None else 0.0})
-        if latency is None or (d or 0) > 0:
-            latency += float(d or 0.0)
+        st = getattr(o, "start_time", None) or getattr(o, "startTime", None)
+        en = getattr(o, "end_time", None) or getattr(o, "endTime", None)
+        if st is not None and en is not None:
+            starts.append(st)
+            ends.append(en)
         if name.startswith("tool"):
             tool_calls += 1
         meta = getattr(o, "metadata", None) or {}
         if isinstance(meta, dict) and meta.get("retry"):
             retries += 1
+    latency = 0.0
+    if starts and ends:
+        latency = (max(ends) - min(starts)).total_seconds()
     return TraceSummary(
         trace_id=trace_id, task=task, total_latency_s=latency,
         tokens_prompt=tokens_prompt, tokens_completion=tokens_completion,

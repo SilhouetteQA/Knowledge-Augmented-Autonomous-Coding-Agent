@@ -179,3 +179,24 @@ def test_utility_event_refs_validity():
     # 事件实用性 = 引用实体有效性（甲/乙/龙门 均存在索引）
     assert u["dead"] is False
     assert u["invalid_refs"] == []
+
+def test_check_reliability_malformed_line_range_no_crash(tmp_path):
+    """IM-16：畸形 line_range（1 元素 list / dict）不再 IndexError/KeyError 中断审计。
+
+    章节文件必须存在（否则在越界检查前提前 return，测不到崩溃点）。
+    """
+    import json as _json
+    from tools.knowledge_audit import KnowledgeEntry, check_reliability
+
+    stories = tmp_path / "main"
+    stories.mkdir()
+    (stories / "chap.json").write_text(_json.dumps([1, 2]), encoding="utf-8")
+    base = dict(id="x", kind="event", name="畸形", aliases=[], source_records=[],
+                chapter="chap", category="main",
+                origin_file="v1_events/main/chap.json", raw={})
+    r1 = check_reliability(
+        KnowledgeEntry(line_range=[3], **base), str(tmp_path))
+    assert isinstance(r1, dict) and r1["verdict"] in ("reliable", "unreliable")
+    r2 = check_reliability(
+        KnowledgeEntry(line_range={"start": 1}, **base), str(tmp_path))
+    assert isinstance(r2, dict)

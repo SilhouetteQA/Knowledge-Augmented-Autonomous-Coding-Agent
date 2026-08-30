@@ -64,3 +64,22 @@ def test_save_report(tmp_path):
     assert data["trace_id"] == "abc123"
     md = Path(path).read_text(encoding="utf-8")
     assert "abc123" in md and "Tool Calls" in md and "12" in md
+
+def test_sdk_summary_no_nested_double_count():
+    """IM-14：SDK 路径总耗时 = trace 全跨度（max end - min start），嵌套 span 不双计。"""
+    import datetime as dt
+    from types import SimpleNamespace
+
+    from tools.report_trace import _summarize_trace
+
+    t0 = dt.datetime(2026, 8, 30, 0, 0, 0)
+    obs = [
+        SimpleNamespace(name="issue.run", latency=10.0,
+                        start_time=t0, end_time=t0 + dt.timedelta(seconds=10),
+                        metadata=None),
+        SimpleNamespace(name="graph.execute", latency=6.0,
+                        start_time=t0 + dt.timedelta(seconds=2),
+                        end_time=t0 + dt.timedelta(seconds=8), metadata=None),
+    ]
+    s = _summarize_trace("t", SimpleNamespace(name="task", observations=obs))
+    assert s.total_latency_s == 10.0   # 而非父子相加的 16.0

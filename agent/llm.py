@@ -161,6 +161,13 @@ class OpenAICompatClient:
 
     @traced("llm.chat", as_type="generation")
     def chat(self, messages: list[dict], tools: list[ToolSpec]) -> LLMMessage:
+        """单次对话补全（含 Langfuse generation 埋点）。
+
+        观测取舍（IM-17，有意设计）：generation 只记录模型/用量/成本，**不写入
+        input/output 消息文本**——对话内容可能携带仓库代码与任务细节，避免落入
+        观测存储；代价是 Langfuse 面板看不到对话内容，调试需依赖 span 结构与
+        本地日志。如需内容级观测，可临时在本地部署中打开（需改代码，无开关）。
+        """
         params: dict = {"model": self.model, "messages": messages}
         if tools:
             params["tools"] = [

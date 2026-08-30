@@ -77,7 +77,7 @@ def _module_name_from_path(path: Path, root: Path) -> str:
     return ".".join(parts) if parts else "<root>"
 
 
-def _parse_function(node: ast.FunctionDef, module_name: str,
+def _parse_function(node: ast.FunctionDef | ast.AsyncFunctionDef, module_name: str,
                     class_name: str | None = None) -> FunctionInfo:
     """解析函数定义：静态收集调用名（ast.walk 覆盖嵌套调用）。"""
     calls = []
@@ -104,15 +104,17 @@ def parse_python_file(path: str, module_name: str) -> ModuleInfo:
             if node.module:
                 imports.append(node.module)
         elif isinstance(node, ast.ClassDef):
-            methods = [n.name for n in node.body if isinstance(n, ast.FunctionDef)]
+            # IM-15：async def 与同步同收集（异步函数/方法此前静默缺报）
+            methods = [n.name for n in node.body
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
             classes.append(ClassInfo(
                 name=node.name, module=module_name,
                 bases=[_base_name(b) for b in node.bases],
                 methods=methods))
             for sub in node.body:
-                if isinstance(sub, ast.FunctionDef):
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     functions.append(_parse_function(sub, module_name, node.name))
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions.append(_parse_function(node, module_name))
     return ModuleInfo(name=module_name, path=path, imports=imports,
                       classes=classes, functions=functions)

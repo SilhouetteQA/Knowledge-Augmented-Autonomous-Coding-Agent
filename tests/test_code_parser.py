@@ -113,3 +113,28 @@ def test_build_metadata_skips_unreadable_file(tmp_path, monkeypatch):
 def test_build_metadata_missing_workspace(tmp_path):
     result = build_metadata(str(tmp_path / "nonexistent"))
     assert isinstance(result, ToolError)
+
+
+def test_parse_async_functions(tmp_path):
+    """IM-15：async def 函数/方法及调用纳入元数据（不再静默缺报）。"""
+    import textwrap
+
+    from tools.code_parser import parse_python_file
+
+    src = textwrap.dedent("""
+        async def fetch():
+            await helper()
+
+        class Svc:
+            async def run(self):
+                await fetch()
+        """)
+    p = tmp_path / "async_mod.py"
+    p.write_text(src, encoding="utf-8")
+    m = parse_python_file(str(p), "async_mod")
+    fn_names = [f.name for f in m.functions]
+    assert "fetch" in fn_names and "run" in fn_names
+    all_calls = [c for f in m.functions for c in f.calls]
+    assert "helper" in all_calls and "fetch" in all_calls
+    svc = [c for c in m.classes if c.name == "Svc"][0]
+    assert svc.methods == ["run"]
