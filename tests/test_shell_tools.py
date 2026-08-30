@@ -304,3 +304,62 @@ def test_run_command_allows_git_mention_in_text(tmp_path):
     # 引号内分号前缀形态（Test-C2 误报）：剥离引号段后不得命中
     assert check_destructive_git('echo "done; git reset --hard"') is None
     assert check_destructive_git('pip download "pkg; git apply"') is None
+
+
+def test_run_command_post_kill_bounded(monkeypatch, tmp_path):
+    """IM-5：二次超时后的收尾有硬预算——不再无界 read 永久阻塞 Agent 循环。"""
+    import subprocess
+    import time
+
+    import tools.shell_tools as st
+
+    monkeypatch.setattr(st, "_POST_KILL_GRACE_S", 1)
+
+    class StubProc:
+        pid = 1234
+        stdout = None
+        stderr = None
+        returncode = None
+
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired(cmd="x", timeout=timeout or 0)
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(st.subprocess, "Popen", lambda *a, **k: StubProc())
+    monkeypatch.setattr(st, "_kill_process_tree", lambda proc: None)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    start = time.monotonic()
+    r = run_command("hang", workspace_root=str(ws))
+    elapsed = time.monotonic() - start
+    assert isinstance(r, st.CommandResult) and r.timeout is True
+    assert elapsed < 30
+
+
+def test_run_tests_pytest_crash_returns_toolerror(tmp_path, monkeypatch):
+    """IM-6：pytest 本身失败（如 exit 3 内部错误，stdout 无汇总行）→ ToolError 而非全 0。"""
+    import subprocess
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 3, stdout="", stderr="internal error")
+
+    monkeypatch.setattr("tools.shell_tools.subprocess.run", fake_run)
+    r = run_tests(workspace_root=str(tmp_path))
+    assert isinstance(r, ToolError)
+    assert "pytest 运行失败" in r.message
+
+
+def test_run_tests_exit5_no_collection_keeps_g4(tmp_path, monkeypatch):
+    """IM-6：exit 5（无测试收集）保持 G4 口径——total=0 的 TestResult 而非 ToolError。"""
+    import subprocess
+
+    from tools.shell_tools import TestResult
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 5, stdout="no tests ran in 0.01s", stderr="")
+
+    monkeypatch.setattr("tools.shell_tools.subprocess.run", fake_run)
+    r = run_tests(workspace_root=str(tmp_path))
+    assert isinstance(r, TestResult) and r.total == 0

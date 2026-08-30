@@ -315,3 +315,91 @@ def test_sandbox_executor_destroys_on_create_failure(monkeypatch, tmp_path):
         with sandbox_executor(str(ws), docker_runner=fake.runner):
             pass
     assert any(c[:3] == ["docker", "rm", "-f"] for c in fake.calls)
+
+
+def test_run_docker_timeout_param(monkeypatch):
+    """IM-7：_run_docker 支持超时覆盖（exec 随命令预算自适应）。"""
+    from tools import docker_sandbox as ds
+    seen = {}
+
+    def fake_run(args, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(ds.subprocess, "run", fake_run)
+    ds._run_docker(["docker", "ps"], timeout=660)
+    assert seen["timeout"] == 660
+
+
+def test_cli_budget():
+    """IM-7：docker CLI 预算 = max(300, 命令超时 + 60)。"""
+    from tools.docker_sandbox import _cli_budget
+    assert _cli_budget(60) == 300
+    assert _cli_budget(600) == 660
+
+
+def test_exec_returns_toolerror_on_cli_failure(tmp_path):
+    """IM-7：docker CLI 调用失败时 exec 返回 ToolError 而非异常冒泡（模块契约）。"""
+    from tools.docker_sandbox import SandboxConfig
+
+    def failing_runner(args):
+        raise ToolError("docker 命令超时（300 秒）")
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    manager = SandboxManager(SandboxConfig(), str(ws), docker_runner=failing_runner)
+    manager._created = True
+    r = manager.exec("echo hi")
+    assert isinstance(r, ToolError)
+
+
+def test_exec_passes_cli_budget(tmp_path, monkeypatch):
+    """IM-7：exec 的 docker CLI 预算随命令超时自适应（600s 命令 → 660s 预算）。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    manager = SandboxManager(
+        SandboxConfig(), str(ws),
+        docker_runner=lambda args: subprocess.CompletedProcess(args, 0, "", ""))
+    manager._created = True
+    captured = {}
+    orig = manager._run
+
+    def spy(*args, **kwargs):
+        captured["cli_timeout"] = kwargs.get("cli_timeout")
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_run", spy)
+    manager.exec("echo hi", timeout=600)
+    assert captured["cli_timeout"] == 660
+
+
+def test_docker_run_tests_none_workspace_root_toolerror():
+    """IM-9：workspace_root=None 时 run_tests(path) 返回 ToolError 而非 TypeError。"""
+    ex = DockerExecutor(object())
+    r = ex.run_tests(path="tests/test_x.py", workspace_root=None)
+    assert isinstance(r, ToolError)
+
+
+def test_sandbox_executor_reuses_on_relative_path(tmp_path, monkeypatch):
+    """IM-8：嵌套复用按归一化路径比较——相对路径写法不误判新建容器。"""
+    import os
+    from types import SimpleNamespace
+
+    from tools import docker_sandbox as ds
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.chdir(str(ws))
+    monkeypatch.setenv("KA_EXECUTOR", "docker")
+    stub = SimpleNamespace(_manager=SimpleNamespace(workspace_root=os.path.abspath(".")))
+
+    def _no_manager(*args, **kwargs):
+        raise AssertionError("不应新建容器（应复用外层执行器）")
+
+    monkeypatch.setattr(ds, "SandboxManager", _no_manager)
+    token = ds._CURRENT_EXECUTOR.set(stub)
+    try:
+        with sandbox_executor(".") as ex:
+            assert ex is stub
+    finally:
+        ds._CURRENT_EXECUTOR.reset(token)

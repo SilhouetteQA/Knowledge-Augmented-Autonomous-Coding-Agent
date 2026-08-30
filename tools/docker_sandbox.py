@@ -7,6 +7,7 @@
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
+import re
 import shlex
 import subprocess
 import time
@@ -73,19 +74,31 @@ def _sh_quote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def _run_docker(args: list[str]) -> subprocess.CompletedProcess:
-    """调用 docker CLI；启动失败/超时抛 ToolError。"""
+def _run_docker(args: list[str],
+                timeout: int = DOCKER_CLI_TIMEOUT) -> subprocess.CompletedProcess:
+    """调用 docker CLI；启动失败/超时抛 ToolError。
+
+    timeout 可由调用方按命令预算覆盖（IM-7：exec 随命令超时自适应，默认仍 300s）。
+    """
     try:
         return subprocess.run(
             args, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=DOCKER_CLI_TIMEOUT,
+            encoding="utf-8", errors="replace", timeout=timeout,
         )
     except FileNotFoundError:
         raise ToolError("docker 不可用: 未找到 docker 命令（请安装 Docker Desktop）")
     except subprocess.TimeoutExpired:
-        raise ToolError(f"docker 命令超时（{DOCKER_CLI_TIMEOUT} 秒）: {' '.join(args[:2])}")
+        raise ToolError(f"docker 命令超时（{timeout} 秒）: {' '.join(args[:2])}")
     except OSError as e:
         raise ToolError(f"docker 执行失败: {e}")
+
+
+def _cli_budget(command_timeout: int | None) -> int:
+    """docker CLI 预算（IM-7）：随命令超时自适应——max(默认 300, 命令超时 + 60s 缓冲）。
+
+    KA_TEST_TIMEOUT_S>300 时容器内测试仍能跑完，docker CLI 不再先行误杀。
+    """
+    return max(DOCKER_CLI_TIMEOUT, int(command_timeout or 0) + 60)
 
 
 class SandboxManager:
@@ -105,9 +118,17 @@ class SandboxManager:
 
     # -- 内部辅助 ----------------------------------------------------------
 
-    def _run(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-        """执行 docker 命令；check=True 时非零退出抛 ToolError。"""
-        proc = self._runner(list(args))
+    def _run(self, *args: str, check: bool = True,
+             cli_timeout: int | None = None) -> subprocess.CompletedProcess:
+        """执行 docker 命令；check=True 时非零退出抛 ToolError。
+
+        cli_timeout 仅对真实 _run_docker 生效（注入的测试 runner 签名固定为 (args)，
+        IM-7：exec 按命令超时传预算，build 按构建预算传）。
+        """
+        if cli_timeout is not None and self._runner is _run_docker:
+            proc = _run_docker(list(args), timeout=cli_timeout)
+        else:
+            proc = self._runner(list(args))
         if check and proc.returncode != 0:
             raise ToolError(
                 f"docker {' '.join(args[:2])} 失败: {(proc.stderr or '').strip()[:200]}")
@@ -118,7 +139,9 @@ class SandboxManager:
         inspect = self._run("docker", "image", "inspect", self.config.image, check=False)
         if inspect.returncode == 0:
             return
-        build = self._run("docker", "build", "-t", self.config.image, ".", check=False)
+        # IM-7：构建预算按 600s 命令折算（镜像冷构建可超默认 300s，误判为失败）
+        build = self._run("docker", "build", "-t", self.config.image, ".", check=False,
+                          cli_timeout=_cli_budget(600))
         if build.returncode != 0:
             raise ToolError(
                 f"沙箱镜像 {self.config.image} 构建失败: {(build.stderr or '').strip()[:200]}")
@@ -182,8 +205,13 @@ class SandboxManager:
         if container_cwd != "/workspace":
             wrapped = f"cd {_sh_quote(container_cwd)} && {wrapped}"
         start = time.monotonic()
-        proc = self._run("docker", "exec", self.name, "bash", "-lc",
-                         wrapped, check=False)
+        try:
+            proc = self._run("docker", "exec", self.name, "bash", "-lc",
+                             wrapped, check=False, cli_timeout=_cli_budget(timeout))
+        except ToolError as e:
+            # IM-7：CLI 层失败（超时/不可用）返回结构化 ToolError 而非异常冒泡
+            # （模块契约：exec 的错误形态是返回值，不是异常）
+            return ToolError(f"docker exec 失败: {e.message}")
         duration = round(time.monotonic() - start, 3)
         timeout_hit = proc.returncode == 124
         return CommandResult(
@@ -206,7 +234,10 @@ class SandboxManager:
                           timeout=30)
             except Exception:  # noqa: BLE001 — 清理尽力而为，销毁不受影响
                 pass
-            self._run("docker", "rm", "-f", self.name, check=False)
+            try:
+                self._run("docker", "rm", "-f", self.name, check=False)
+            except ToolError:
+                pass  # IM-7：销毁尽力而为，CLI 层失败（超时等）不再打断任务收尾
             self._created = False
 
     def __enter__(self) -> "SandboxManager":
@@ -233,6 +264,11 @@ class DockerExecutor:
         """在容器内 /workspace 运行 pytest，解析结果（与 LocalExecutor 同格式）。"""
         cmd = "python -m pytest -q --tb=no"
         if path:
+            # IM-9：workspace_root=None 时按协议签名可能为 None——显式报错而非
+            # os.path.abspath(None) TypeError 裸崩（模块契约：错误返回 ToolError）
+            if not workspace_root:
+                return ToolError(
+                    "docker 模式 run_tests(path) 需要 workspace_root（按其换算容器路径）")
             # 与 LocalExecutor 同语义：path 按 workspace 相对解析（I3：此前按进程
             # cwd 解析，docker 模式 run_tests(path=...) 必报越界；反斜杠归一 POSIX）
             target = resolve_workspace_path(path, workspace_root)
@@ -245,6 +281,14 @@ class DockerExecutor:
         r = self._manager.exec(cmd, timeout=test_timeout_s())
         if isinstance(r, ToolError):
             return r
+        if r.timeout:
+            return ToolError(f"测试超时（{test_timeout_s()} 秒）")
+        # IM-6：与 LocalExecutor 同检查——pytest 自身失败（无汇总行）不得返回全 0 结果
+        has_summary = re.search(r"\d+ (?:passed|failed|error)|no tests ran", r.stdout or "")
+        if r.exit_code not in (0, 5) and not has_summary:
+            return ToolError(
+                f"pytest 运行失败（容器内 exit={r.exit_code}）: "
+                f"{(r.stderr or '').strip()[:300]}")
         return _parse_pytest_output(r.stdout)
 
     def run_git(self, args: list[str], workspace_root: str | None = None) -> str | ToolError:
@@ -269,8 +313,11 @@ def sandbox_executor(workspace_root: str, config: SandboxConfig | None = None,
         yield LocalExecutor()
         return
     existing = _CURRENT_EXECUTOR.get()
-    if existing is not None and getattr(getattr(existing, "_manager", None),
-                                        "workspace_root", None) == workspace_root:
+    # IM-8：归一化路径比较——manager 内已是 abspath，内层传入的相对/带尾分隔符
+    # 写法归一后再比，避免同容器被误判为不同 workspace 而重复 run（名称冲突）
+    existing_root = getattr(getattr(existing, "_manager", None), "workspace_root", None)
+    if existing is not None and existing_root \
+            and os.path.abspath(workspace_root) == existing_root:
         # 嵌套复用（审查 I2）：外层上下文持有容器，内层不新建/不销毁——
         # benchmark setup 的环境级安装因此在基线/判定阶段可见（docker 下此前蒸发）
         yield existing

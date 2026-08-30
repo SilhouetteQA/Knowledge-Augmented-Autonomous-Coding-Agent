@@ -20,6 +20,10 @@ from tools.tracing import traced
 # 单次命令输出上限（防止大输出撑爆 LLM 上下文）
 MAX_COMMAND_OUTPUT = 100 * 1024
 
+# 超时击杀后的收尾预算（秒，IM-5）：预算内反复杀+收，超预算放弃读取——
+# 快照与击杀间新生的孙进程可能长期占住管道，无界 read 会永久阻塞 Agent 循环
+_POST_KILL_GRACE_S = 10
+
 # 破坏性 git 子命令黑名单（rich#3299 实测：Agent 用 run_command 跑 git stash 自伤，
 # 之后数轮耗在恢复现场）。仓库分支/提交/同步由编排层（宿主 git 函数）管理，
 # Agent 内只需只读 git 工具；检出/回滚类需求用 write_file/edit_file 满足。
@@ -191,9 +195,19 @@ class LocalExecutor:
             try:
                 out, err = proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                # 二次超时后管道可能仍是文件对象（text=False 路径），统一读串
-                out = proc.stdout.read() if hasattr(proc.stdout, "read") else (proc.stdout or "")
-                err = proc.stderr.read() if hasattr(proc.stderr, "read") else (proc.stderr or "")
+                # IM-5：收尾有硬预算——不再无界 read（孤儿孙进程占住管道会永久
+                # 阻塞整个 Agent 循环）。预算内反复杀+收，超预算放弃读取。
+                deadline = time.monotonic() + _POST_KILL_GRACE_S
+                out, err = "", ""
+                while time.monotonic() < deadline:
+                    try:
+                        out, err = proc.communicate(timeout=2)
+                        break
+                    except subprocess.TimeoutExpired:
+                        try:
+                            _kill_process_tree(proc)
+                        except Exception:
+                            pass
         except OSError as e:
             return ToolError(f"命令执行失败: {e}")
         return CommandResult(
@@ -225,6 +239,12 @@ class LocalExecutor:
             return ToolError(f"测试超时（{test_timeout_s()} 秒）")
         except OSError as e:
             return ToolError(f"pytest 执行失败: {e}")
+        # IM-6：pytest 本身失败（未安装→exit 1 无汇总、收集期崩溃→exit 2/3、用法
+        # 错误→exit 4）——stdout 无汇总行时全 0 结果与「无失败」不可区分，必须显式报错
+        has_summary = re.search(r"\d+ (?:passed|failed|error)|no tests ran", proc.stdout)
+        if proc.returncode not in (0, 5) and not has_summary:
+            detail = (proc.stderr or proc.stdout or "").strip()[:300]
+            return ToolError(f"pytest 运行失败（exit={proc.returncode}）: {detail}")
         return _parse_pytest_output(proc.stdout)
 
     def run_git(self, args: list[str], workspace_root: str | None = None) -> str | ToolError:
