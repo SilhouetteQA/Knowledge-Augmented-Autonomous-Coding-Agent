@@ -216,6 +216,12 @@ def edit_file(path: str, old_text: str, new_text: str,
     与 write_file 的全量覆盖互补：修改已有文件优先用本工具（避免整文件重写
     丢失内容，rich#3299 实测失败根因）。old_text 必须逐字符精确匹配（含缩进
     与换行）；出现多次时须传 expected_count=<次数> 显式确认全部替换。
+
+    行尾双向对齐（IM-10）：匹配与替换统一在 \\n 空间进行——CRLF 文件的
+    old_text 归一后可命中（此前含 \\r\\n 的 old_text 永远匹配失败）；写回时
+    按原文件行尾物化（LF 文件不再被整文件改写为 CRLF，Windows 下
+    write_text 默认 newline=None 的平台换行翻译是根因）。混合行尾文件按
+    CRLF 处理（罕见，可接受）。
     """
     target = resolve_workspace_path(path, workspace_root)
     if isinstance(target, ToolError):
@@ -230,18 +236,29 @@ def edit_file(path: str, old_text: str, new_text: str,
     if not old_text:
         return ToolError("old_text 不能为空串（无法精确定位；新建文件请用 write_file）")
     try:
-        text = p.read_text(encoding="utf-8")
+        raw = p.read_bytes()
+        text = raw.decode("utf-8")
     except UnicodeDecodeError:
         return ToolError(f"文件非 UTF-8 文本，无法局部编辑: {path}（请用 read_file 确认后用 write_file 处理）")
-    count = text.count(old_text)
+    except OSError as e:
+        return ToolError(f"读取失败: {path}（{e}）")
+    crlf = "\r\n" in text
+    norm = text.replace("\r\n", "\n")
+    old_norm = old_text.replace("\r\n", "\n")
+    new_norm = new_text.replace("\r\n", "\n")
+    count = norm.count(old_norm)
     if count == 0:
         return ToolError(f"old_text 未找到: {path}（需精确匹配，含缩进与换行；"
                          "可先用 read_file 查看原文）")
     if count > 1 and expected_count != count:
         return ToolError(f"old_text 出现 {count} 次: {path}"
                          f"（传 expected_count={count} 确认全部替换，或提供更长的唯一片段）")
+    result_text = norm.replace(old_norm, new_norm)
+    if crlf:
+        result_text = result_text.replace("\n", "\r\n")
     try:
-        p.write_text(text.replace(old_text, new_text), encoding="utf-8")
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            f.write(result_text)
     except OSError as e:
         return ToolError(f"写入失败: {path}（{e}）")
     return EditResult(path=path, replacements=count)

@@ -101,6 +101,25 @@ class LLMClient(Protocol):
     def chat(self, messages: list[dict], tools: list[ToolSpec]) -> LLMMessage: ...
 
 
+def _parse_tool_call(tc) -> ToolCall:
+    """OpenAI tool_call → ToolCall（IM-12：arguments 非法 JSON 不再击穿整任务）。
+
+    JSON 截断/畸形（thinking 端点实测偶发）或合法 JSON 但非对象（如 list）时，
+    构造保留原文的哨兵错误型 ToolCall（__unparsed_arguments__）；dispatch 层
+    返回结构化错误作工具观察值，模型下一轮自行重试（对话不终止为 llm_error）。
+    """
+    raw = tc.function.arguments or ""
+    try:
+        args = json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return ToolCall(id=tc.id, name=tc.function.name,
+                        arguments={"__unparsed_arguments__": raw})
+    if not isinstance(args, dict):
+        return ToolCall(id=tc.id, name=tc.function.name,
+                        arguments={"__unparsed_arguments__": raw})
+    return ToolCall(id=tc.id, name=tc.function.name, arguments=args)
+
+
 class OpenAICompatClient:
     """OpenAI 兼容实现（按 KA_LLM_PROVIDER 选择供应商与模型）。
 
@@ -166,14 +185,7 @@ class OpenAICompatClient:
         msg = resp.choices[0].message
         tool_calls = None
         if msg.tool_calls:
-            tool_calls = [
-                ToolCall(
-                    id=tc.id,
-                    name=tc.function.name,
-                    arguments=json.loads(tc.function.arguments or "{}"),
-                )
-                for tc in msg.tool_calls
-            ]
+            tool_calls = [_parse_tool_call(tc) for tc in msg.tool_calls]
         reasoning = getattr(msg, "reasoning_content", None)
         return LLMMessage(role="assistant", content=msg.content, tool_calls=tool_calls,
                           reasoning_content=reasoning)

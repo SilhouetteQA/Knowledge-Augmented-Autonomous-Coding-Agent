@@ -274,3 +274,21 @@ def test_edit_file_expected_count_mismatch_errors(tmp_path):
     (tmp_path / "m.py").write_text("pass\npass\npass\n", encoding="utf-8")
     result = edit_file("m.py", "pass", "ok", expected_count=2, workspace_root=str(tmp_path))
     assert isinstance(result, ToolError) and "3 次" in result.message
+
+
+def test_edit_file_preserves_lf_endings(tmp_path):
+    """IM-10：LF 文件局部编辑不再整文件改写为 CRLF（未触及行行尾保持原样）。"""
+    p = tmp_path / "mod.py"
+    p.write_bytes(b"x = 1\ny = 2\n")
+    r = edit_file("mod.py", "y = 2", "y = 3", workspace_root=str(tmp_path))
+    assert isinstance(r, EditResult) and r.replacements == 1
+    assert p.read_bytes() == b"x = 1\ny = 3\n"
+
+
+def test_edit_file_crlf_old_text_matches(tmp_path):
+    """IM-10：CRLF 文件用含 \r\n 的 old_text 可命中（匹配侧归一），写回保持 CRLF。"""
+    p = tmp_path / "mod.py"
+    p.write_bytes(b"x = 1\r\ny = 2\r\n")
+    r = edit_file("mod.py", "y = 2\r\n", "y = 3\r\n", workspace_root=str(tmp_path))
+    assert isinstance(r, EditResult) and r.replacements == 1
+    assert p.read_bytes() == b"x = 1\r\ny = 3\r\n"

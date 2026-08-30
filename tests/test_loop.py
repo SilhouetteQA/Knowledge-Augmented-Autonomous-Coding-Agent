@@ -137,3 +137,28 @@ def test_dispatch_edit_file(tmp_path):
                        str(tmp_path))
     assert not isinstance(result, ToolError)
     assert (tmp_path / "m.py").read_text(encoding="utf-8") == "a = 2\n"
+
+
+def test_loop_tool_exception_becomes_toolerror(monkeypatch, tmp_path):
+    """IM-11：工具执行异常转 ToolError 观察值回注（与 graph 防护对齐），不再击穿整任务。"""
+
+    def boom(*args, **kwargs):
+        raise OSError("bad symlink")
+
+    monkeypatch.setattr("agent.loop.list_files", boom)
+    script = [
+        LLMMessage(role="assistant", tool_calls=[
+            ToolCall(id="1", name="list_files", arguments={})]),
+        LLMMessage(role="assistant", content="已完成（异常已观察）"),
+    ]
+    result = run_agent("任务", MockLLMClient(script), workspace_root=str(tmp_path))
+    assert result.final_answer == "已完成（异常已观察）"
+    assert isinstance(result.steps[0].result, ToolError)
+    assert "OSError" in result.steps[0].result.message
+
+
+def test_dispatch_unparsed_arguments_toolerror(tmp_path):
+    """IM-12：畸形 arguments 哨兵 → 结构化错误回注（模型可重试），不静默缺参。"""
+    r = _dispatch("read_file", {"__unparsed_arguments__": "{bad json"}, str(tmp_path))
+    assert isinstance(r, ToolError)
+    assert "JSON" in r.message and "bad json" in r.message

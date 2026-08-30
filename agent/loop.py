@@ -138,9 +138,26 @@ def _tool_metadata(args, kwargs, result) -> dict:
     return {"tool": args[0] if args else ""}
 
 
+def _guard_unparsed_args(args: dict) -> ToolError | None:
+    """IM-12：llm 层无法解析 arguments JSON 时以哨兵键保留原文——分发前显式报错。
+
+    返回结构化 ToolError（模型可据此用合法 JSON 重新调用），而非按缺参处理
+    掩盖真实原因。loop 与 graph 共用 _dispatch，一处守卫两路径同受益。
+    """
+    if isinstance(args, dict) and "__unparsed_arguments__" in args:
+        raw = str(args.get("__unparsed_arguments__") or "")[:200]
+        return ToolError(
+            f"tool arguments 不是合法 JSON（原文已保留: {raw}）；"
+            "请用合法 JSON 对象重新调用本工具")
+    return None
+
+
 @traced("tool.execute", as_type="span", metadata_fn=_tool_metadata)
 def _dispatch(name: str, args: dict, workspace_root: str | None) -> object:
     """工具调用分发：返回成功数据或 ToolError。"""
+    unparsed = _guard_unparsed_args(args)
+    if unparsed is not None:
+        return unparsed
     if name == "list_files":
         return list_files(root=args.get("root"), workspace_root=workspace_root)
     if name == "read_file":
@@ -229,7 +246,12 @@ def run_agent(task: str, llm: LLMClient, max_iterations: int = DEFAULT_MAX_ITERA
                 )
             results = []
             for tc in msg.tool_calls:
-                result = _dispatch(tc.name, tc.arguments, workspace_root)
+                try:
+                    result = _dispatch(tc.name, tc.arguments, workspace_root)
+                except Exception as e:  # noqa: BLE001
+                    # IM-11：与 graph 路径同型守卫（Arch-C1）——工具执行异常转
+                    # ToolError 观察值回注，模型可观察自愈，不再击穿整任务
+                    result = ToolError(f"工具执行异常: {type(e).__name__}: {e}")
                 steps.append(AgentStep(tool_name=tc.name, arguments=tc.arguments, result=result))
                 results.append(result)
             # OpenAI 格式：先回注 assistant 的 tool_calls 消息，再逐条回注 tool 结果

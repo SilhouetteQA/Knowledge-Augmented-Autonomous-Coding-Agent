@@ -298,3 +298,21 @@ def test_replayed_history_passes_reasoning_content_back(tmp_path):
     second_call_messages = llm.calls[1][0]
     assistant_msgs = [m for m in second_call_messages if m.get("role") == "assistant"]
     assert any(m.get("reasoning_content") == "需要先看目录" for m in assistant_msgs)
+
+
+def test_parse_tool_call_malformed_arguments_keeps_raw():
+    """IM-12：arguments JSON 畸形/非对象 → 保留原文的哨兵错误型 ToolCall（不抛异常）。"""
+    from agent.llm import _parse_tool_call
+
+    def stub(raw_args):
+        return SimpleNamespace(
+            id="t1", function=SimpleNamespace(name="read_file", arguments=raw_args))
+
+    tc = _parse_tool_call(stub("{bad json"))
+    assert tc.arguments == {"__unparsed_arguments__": "{bad json"}
+    tc2 = _parse_tool_call(stub('["not","object"]'))
+    assert tc2.arguments == {"__unparsed_arguments__": '["not","object"]'}
+    tc3 = _parse_tool_call(stub('{"path": "a.py"}'))
+    assert tc3.arguments == {"path": "a.py"}
+    tc4 = _parse_tool_call(stub(None))
+    assert tc4.arguments == {}

@@ -43,8 +43,12 @@ def check_destructive_git(command: str) -> ToolError | None:
 
     按命令词法匹配（git 后跟可选全局选项再跟子命令）；匹配前先剥离引号段
     （Test-C2：echo "done; git reset" 类文本误报）。已知漏拦形态（显式记录，
-    防误判为 bug）：反引号内嵌 git、git 前置环境变量赋值（FOO=1 git stash）、
-    `git -c k=v stash`——本护栏防 Agent 自伤而非对抗安全边界（沙箱负责隔离）。
+    防误判为 bug；2026-08-30 审查实测补充）：反引号内嵌 git、git 前置环境变量
+    赋值（FOO=1 git stash）、`git -c k=v stash`、**换行分隔命令**（"echo a\\n
+    git reset --hard"——正则锚点不含换行）、**引号包裹的子命令**（git "reset"
+    --hard——剥引号防误报机制把引号内子命令一并删除而自绕）、**git.exe 前缀**
+    （词法锚定 git 后的 \\s+）、**黑名单外的破坏性子命令**（branch -D、worktree
+    remove 等）。本护栏防 Agent 自伤而非对抗安全边界（沙箱负责隔离）。
     """
     stripped = re.sub(r'"[^"\n]*"|\'[^\'\n]*\'', "", command)
     match = _GIT_DESTRUCTIVE_RE.search(stripped)
