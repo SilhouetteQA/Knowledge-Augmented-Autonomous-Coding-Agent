@@ -1,0 +1,18 @@
+{
+  "id": "arknights-4",
+  "category": "domain",
+  "repository": "SilhouetteQA/Arknights-LLM-wiki",
+  "issue": {
+    "number": 4,
+    "title": "【知识纠错】试点三：剩余 3 条候选清理 + PR #3 前序生效验证（含 bridge 与回归）",
+    "body": "## 背景\n\n试点二（Issue #2）五条候选经五轮迭代：核验确认 5 条全部三条件满足，其中 2 条（阮先生（画家）、玉门望烽节）经人工审批后已通过 PR #3 完成真实删除（v3_seed_db_v3_final.json 移除条目 + md 文件删除）。本试点处理**剩余 3 条候选**，沿用同一核验标准，并要求验证前序删除与命名 bridge 的生效情况。\n\n## 候选（前序全量审计死数据清单 + 控制器精确引用核查通过）\n\n以下 3 条候选：审计 utility.dead=true（双源入度 0）、reliability=unreliable（无来源锚点）、md 页存在；前序已用精确字符串匹配核查无任何 related_*/participants 引用：\n\n1. 万顷研究\n2. 忘水坪（取江峰）\n3. 神农（历史人物）\n\n**核验后仅删除三条件真实全满足者**（① 无来源锚点（source_records/line_range/原文出现）② 无事件参与 ③ 无结构化引用（v1_events 与 v3_seed 双源精确匹配入度 0））；任一条件不满足则保留并说明理由。\n\n## 任务\n\n1. **核验与清理**：对上述 3 条候选逐一核验三条件，删除真实全满足者（v3_seed_db_v3_final.json 移除条目 + 删除对应 md 文件），逐条记录依据；其余候选说明保留理由。范围仅限这 3 条候选。\n2. **前序生效验证**：确认 PR #3 已删除的 2 条（阮先生（画家）、玉门望烽节）在当前数据中不存在（v3_seed 与 md 双删干净），如有残留一并报告。\n3. **命名 bridge**：核对 config/identity_map.json 既有映射，用 scripts/build_entity_index.py 构建索引验证应用后受影响条目入度 0→>0；仅在核验发现确缺映射时新增（附清单）。\n4. **回归**：运行仓库索引构建脚本与既有测试，附结果。\n5. **交付**：删除/保留清单（逐条三条件证据）+ 前序生效验证结论 + bridge 清单；**清单与实际 diff 一致**。若核验结论为「无合规候选」，必须在最终回答中给出完整核验结论（每条候选的判定与证据），不得只报「没有变更」。\n\n## 红线\n\n- 不得修改 _meta.generated_at 等元数据、cost/日志类文件；\n- 不得删除含剧情事件/来源章节的条目；\n- 不得在 scripts/、output/ 下新增分析脚本或中间产物（分析用一次性命令）。\n\n## 验收\n\n- 3 条候选全部给出核验结论（删除或保留+理由，双源入度证据）；\n- 删除条目逐条满足三条件（可核）；PR #3 两条前序删除无残留；bridge 应用后受影响条目入度>0；索引重建+测试全绿；交付清单与实际 diff 一致。\n",
+    "labels": [],
+    "state": "closed"
+  },
+  "must_pass": [
+    "tests/"
+  ],
+  "max_iterations": 20,
+  "notes": "类别 domain；兄弟项目真实 Issue #4（试点三：剩余 3 条候选清理 + PR #3 前序生效验证，已以「保留 0 删除」结论关闭，题面原样保留供重放/回归）。判定走 E9 规则检查器 domain_check=deletions（三判据 + BM-1 基线对比），无 gold_patch（BM-2 放宽校验）。已知前提（A13）：兄弟项目测试套件容器内 pytest 0 collected——基线预检将标 environment_error 直至 A13 修复；本案例当前用于 schema/判定链路占位与 A13 修复后的真实验证。",
+  "domain_check": "deletions"
+}

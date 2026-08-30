@@ -115,12 +115,14 @@ def test_invalid_setup_command_element_reports_index(tmp_path):
 
 
 def test_real_cases_loaded():
-    """真实基准案例库可全量加载（纯本地文件校验）。"""
+    """真实基准案例库可全量加载（纯本地文件校验；C2 补域案例后共 6 个）。"""
     cases = load_cases("benchmark/cases")
-    assert len(cases) == 5
+    assert len(cases) == 6
     cats = {c.category for c in cases}
-    assert {"bug", "feature", "test", "refactor"} <= cats
-    assert all(c.gold_patch.endswith(".diff") for c in cases)
+    assert {"bug", "feature", "test", "refactor", "domain"} <= cats
+    # 非域 case 均带 gold diff；域 case（BM-2）无 gold 文件
+    assert all(c.gold_patch.endswith(".diff") for c in cases if not c.domain_check)
+    assert all(c.domain_check for c in cases if c.category == "domain")
 
 
 # --- E7（P2-7）：task_type 校验与按任务类型的默认迭代上限 ---
@@ -190,10 +192,13 @@ def test_explicit_max_iterations_wins_over_task_type_default(tmp_path):
 
 
 def test_real_cases_explicit_max_iterations_unaffected():
-    """既有 5 个 case 均显式配 max_iterations → 不受新默认值影响；无 task_type → 取 category。"""
+    """既有 schedule 5 case 显式配 max_iterations=30 不受默认值影响；域案例走 domain 默认 20。"""
     cases = load_cases("benchmark/cases")
-    assert all(c.max_iterations == 30 for c in cases)
-    assert all(c.task_type == c.category for c in cases)
+    schedule = [c for c in cases if c.id.startswith("schedule-")]
+    assert all(c.max_iterations == 30 for c in schedule)
+    assert all(c.task_type == c.category for c in schedule)
+    dom = [c for c in cases if c.category == "domain"]
+    assert all(c.max_iterations == 20 and c.task_type == "domain" for c in dom)
 
 
 # --- E9：domain_check 域判定配置（deletions / bridge，缺省无） ---
