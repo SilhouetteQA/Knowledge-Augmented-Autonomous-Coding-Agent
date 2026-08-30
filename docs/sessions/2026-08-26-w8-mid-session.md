@@ -49,21 +49,21 @@
 1. 读本归档 + 三份账本（含 Minor 台账，最终全分支审查时三选）。
 2. **A3 收尾**：若 A3 已落账（见 agent-fixes 账本/`git log`）：生成审查包 → 任务审查 → Approved 后 ledger 登记。
 3. **agent-fixes 全量回归**：`$env:RIPGREP_BIN=...; .venv\Scripts\python.exe -m pytest tests/ -q`（期望 330+ passed / 14 skipped / 1 已知环境性失败 test_sync_repository_fetch_and_reset）。
-4. **重测（同题新数据）**：用户已同意用兄弟项目「知识纠错」同题、**换新数据**再跑。方案：在兄弟项目建新 Issue（或复用 #1 已拒绝的教训改写 scope——删除目标改为真正的《三山谈》类三条件全满足条目 + bridge 补全 + 交付清单），跑 `python main.py "SilhouetteQA/Arknights-LLM-wiki#N" --issue --max-iterations 30`（deepseek 模型下），整理审批单给用户 → **批准** → 临时 unset 全局 insteadOf 后 `--approve --decision approve` → 真实 PR → 远端验证。
+4. **重测（同题新数据）**：用户已同意用兄弟项目「知识纠错」同题、**换新数据**再跑。方案：在兄弟项目建新 Issue（或复用 #1 已拒绝的教训改写 scope——删除目标改为真正的《三山谈》类三条件全满足条目 + bridge 补全 + 交付清单），跑 `python main.py "qa-account/Arknights-LLM-wiki#N" --issue --max-iterations 30`（deepseek 模型下），整理审批单给用户 → **批准** → 临时 unset 全局 insteadOf 后 `--approve --decision approve` → 真实 PR → 远端验证。
    - 注意：批准前检查 Agent 是否还改元数据/日志（A2 红线）与交付清单（E10 口径）；A1 后触顶也应有 verify 证据。
 5. **收尾（全部验证后）**：W8 分支 Task 6（D5 自动化可行性评估写入 roadmap/devlog + readme 状态行）→ 依次合并 W8 → eval-fixes → agent-fixes（从主仓库 main 执行，`git merge feature/xxx`，删分支与 worktree）→ 更新主仓库 docs/roadmap.md / docs/devlog.md / readme.md。
 6. **遗留提醒**：知识纠错第二阶段（--apply 写回）已具备门禁通道（action_type=knowledge_apply 预留）待排期；评估 P2-5 单价表待用户提供 mimo-v2.5 单价；E3-a 建议真实 docker 运行验证 environment_error 计数。
 
 ## 五、环境备忘
 
-- gh 已登录（SilhouetteQA，repo scope）；git 全局 insteadOf=ghfast.top 镜像（clone 通道）；沙箱内需 `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.sslBackend GIT_CONFIG_VALUE_0=openssl` 注入（schannel 沙箱限制）。
+- gh 已登录（qa-account，repo scope）；git 全局 insteadOf=ghfast.top 镜像（clone 通道）；沙箱内需 `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.sslBackend GIT_CONFIG_VALUE_0=openssl` 注入（schannel 沙箱限制）。
 - `.env`（三个 worktree）：`KA_LLM_PROVIDER=deepseek` + `NO_PROXY=opencode.ai,api.deepseek.com`；deepseek_api 为机器用户环境变量（勿写入任何文件/提交）。
 - 本会话沙箱：docker npipe 不可用（容器级验证留非沙箱）；`test_sync_repository_fetch_and_reset` 已知环境性失败。
-- 兄弟项目克隆：`.worktrees/w8-human-in-the-loop/workspace/SilhouetteQA__Arknights-LLM-wiki`（#1 干跑工作树保留，含 agent 分析产物 data/*.txt 与 scripts/analyze_*.py 供人工查证）。
+- 兄弟项目克隆：`.worktrees/w8-human-in-the-loop/workspace/qa-account__Arknights-LLM-wiki`（#1 干跑工作树保留，含 agent 分析产物 data/*.txt 与 scripts/analyze_*.py 供人工查证）。
 
 ## 六、审批单与产物
 
 - `output/approvals/dbader__schedule-646-20260826-154553.json`（pending，schedule 无写权限建议拒绝收口）
-- `output/approvals/SilhouetteQA__Arknights-LLM-wiki-1-20260826-171612.json`（rejected + 原因，防重放已实测）
+- `output/approvals/qa-account__Arknights-LLM-wiki-1-20260826-171612.json`（rejected + 原因，防重放已实测）
 - eval 报告产物在 eval-fixes worktree `output/benchmark/`（如有）
 - 审查包：各 worktree `.superpowers/sdd/reviews/*.txt`；简报/报告：`.superpowers/sdd/briefs|reports/`

@@ -1,6 +1,6 @@
 # W8 真实远程修复里程碑 + 会话总结（2026-08-28）
 
-> 状态：**真实 PR 已交付**（https://github.com/SilhouetteQA/Arknights-LLM-wiki/pull/3）——W8 Human-in-the-loop 全链路「干跑产单 → 人工审批 → 真实远程修复」首次完整走通。本归档为**新会话继续优化的入口**。
+> 状态：**真实 PR 已交付**（https://github.com/qa-account/Arknights-LLM-wiki/pull/3）——W8 Human-in-the-loop 全链路「干跑产单 → 人工审批 → 真实远程修复」首次完整走通。本归档为**新会话继续优化的入口**。
 > 前序归档：`docs/sessions/2026-08-26-w8-mid-session.md`（分支地图/裁决/环境备忘仍有效）。
 > 任务级账本（各 worktree `.superpowers/sdd/progress.md`）：W8 主线 / eval-fixes / agent-fixes 三份，含全部任务状态与 Minor 台账。
 
@@ -28,12 +28,12 @@
 
 ## 三、新会话待办（继续优化）
 
-1. **PR #3 收尾**：审阅/合并 PR（SilhouetteQA 决定）；剩余 3 条候选（万顷研究/忘水坪（取江峰）/神农（历史人物））核验结论 + bridge 生效验证 + 回归文档 → 新 issue 续跑（建议题面带「前序已删除 2 条」上下文并复用 v4 候选论证）。
+1. **PR #3 收尾**：审阅/合并 PR（qa-account 决定）；剩余 3 条候选（万顷研究/忘水坪（取江峰）/神农（历史人物））核验结论 + bridge 生效验证 + 回归文档 → 新 issue 续跑（建议题面带「前序已删除 2 条」上下文并复用 v4 候选论证）。
 2. **W8 Task 6（未做）**：D5 完全自动化可行性评估（素材：五轮真实运行数据——正确执行率/红线违反率/A4 拦截次数/审批裁决记录）+ roadmap W8 [x] 完成记录 + devlog W8 全量条目 + readme 状态行。
 3. **合并收尾**：全量回归（agent-fixes 基线 345 passed，A6/A7 后 +11 预计 ≈356）→ 双轴全分支审查（含三份账本 Minor 台账三选）→ 依次合并三分支 → 删 worktree。
 4. **知识纠错第二阶段解冻**：`--apply` 写回经审批单通道（action_type=knowledge_apply 预留），排期待定。
 5. **评估遗留**：P2-5 单价表（待用户提供 mimo-v2.5 单价）；E3-a 真实 docker 环境验证（environment_error 计数）；A7-2 补 task-A7-brief.md 档（追责/复现用）。
-6. **环境备忘**：gh 登录（SilhouetteQA, repo scope）；git 镜像 insteadOf=ghfast.top（clone 用，push 需临时 unset 走直连——**沙箱无法写 ~/.gitconfig**，直连 push 需 danger-full-access）；沙箱需 GIT_CONFIG_* sslBackend=openssl 注入；`.pytest_tmp` 坑见一-4；模型 = mimo-v2.5（default）。
+6. **环境备忘**：gh 登录（qa-account, repo scope）；git 镜像 insteadOf=ghfast.top（clone 用，push 需临时 unset 走直连——**沙箱无法写 ~/.gitconfig**，直连 push 需 danger-full-access）；沙箱需 GIT_CONFIG_* sslBackend=openssl 注入；`.pytest_tmp` 坑见一-4；模型 = mimo-v2.5（default）。
 7. **审批单/产物位置**：output/approvals/ 共 4 份（schedule-646 pending 待收口建议拒绝、#1 rejected、#2 R2/R3/R4 rejected、#2 R5 approved+pr_url）；全量审计产物 W8 worktree output/correction_full/（11072 条，死数据 3199，死+不可靠 concept 1058，v3_seed 死+不可靠 134——新候选池）。
 
 ## 四、关键规则与记录

@@ -56,7 +56,7 @@ coding-agent/
 - [x] 实现 `read_file(path)`（带行号读取，限制大小）
 - [x] 实现 `search_code(query)`（ripgrep 语义搜索，返回文件/行号/摘要）
 - [x] 实现 `write_file(path, content)`（写入 + 安全校验：路径在 workspace 内）
-- [x] 搭建 demo-project（真实项目：`D:\AI project\camera man` 复制至 workspace/demo-project，7 模块 + 6 测试）
+- [x] 搭建 demo-project（真实项目：`<local-path>` 复制至 workspace/demo-project，7 模块 + 6 测试）
 - [x] TDD：每个工具先写失败测试 → 最小实现 → 通过（23 项测试）
 - [x] 验证：Agent 能读 demo-project 代码、定位函数、修改、再读取确认（真实 LLM 演示：定位 storage.py 的 EventStore.record() 并添加中文注释，闭环成功）
 - [x] Review（requesting-code-review）→ 修复 → 合并回 main → 更新路线图状态

@@ -242,5 +242,5 @@ python main.py --compare <run_id>
 python main.py --trace-report <trace_id> --trace-out output/trace
 
 # 知识抽查（纯规则层，无需 LLM Key）
-python main.py --correct --wiki-dir "D:\AI project\Arknights LLM Wiki" --audit-ratio 0.02
+python main.py --correct --wiki-dir "<sibling-project-dir>" --audit-ratio 0.02
 ```

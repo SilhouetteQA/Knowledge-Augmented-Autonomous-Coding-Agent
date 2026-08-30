@@ -58,8 +58,8 @@
 ## 五、环境备忘（W8 会话前置检查）
 
 - LLM：opencode_go_api / OPENCODE_GO_BASE_URL / OPENCODE_GO_MODEL=mimo-v2.5 / NO_PROXY（主仓库 .env）。
-- Docker daemon：`D:\Docker\Docker Desktop.exe`（沙箱需提权启动；服务 com.docker.service）。
-- git 镜像：`url.https://ghfast.top/https://github.com/.insteadOf` 已全局生效（github.com 主站 SNI 阻断）；git 全局死代理（127.0.0.1:7892）已清除。
+- Docker daemon：`<local-disk-path>\Docker Desktop.exe`（沙箱需提权启动；服务 com.docker.service）。
+- git 镜像：`url.https://ghfast.top/https://github.com/.insteadOf` 已全局生效（github.com 主站 SNI 阻断）；git 全局死代理（<local-proxy>）已清除。
 - Langfuse：兄弟项目栈 6 容器在跑（http://localhost:3000，v4 events_only）；ClickHouse 8123（口令仅运行时注入）。
 - venv：主仓库 `.venv` 共享（含 langfuse 4.14.4 / clickhouse-connect 1.7.1）。
 - 已知环境性测试失败：`test_docker_integration::test_clone_repo_when_empty`（容器内 github TLS）。

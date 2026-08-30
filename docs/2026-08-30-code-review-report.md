@@ -270,6 +270,6 @@
 - C1 单价表 MODEL_PRICE_USD_PER_1K（待用户提供 mimo/deepseek 单价）
 - C2 domain 类基准案例补位（可复用兄弟项目 Issue #4 题面）
 - D2 知识纠错第二阶段 `--apply`（LLM 事实核查 → 删真死数据/补 bridge → 重建索引 → 写回）：**D1 已落地，冻结可解除，待排期**（action_type=knowledge_apply 通道已预留）
-- D3 PR #3 处置（SilhouetteQA 审阅/合并决定）+ 剩余 3 条死数据候选续跑 + 兄弟项目 Issue #4 凭"保留 0 删除"结论关闭
+- D3 PR #3 处置（qa-account 审阅/合并决定）+ 剩余 3 条死数据候选续跑 + 兄弟项目 Issue #4 凭"保留 0 删除"结论关闭
 - D4 模型策略：mimo 订阅周限 vs deepseek（G8 修复后 v4 已能完整通过，预算纪律仍弱于 mimo）——建议按任务类型分流
 - 台账文件刷新（将 9.2 中已完成的 12 项标记关闭，并入本次审查新发现）

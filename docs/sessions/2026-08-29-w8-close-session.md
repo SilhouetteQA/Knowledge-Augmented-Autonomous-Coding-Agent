@@ -20,4 +20,4 @@
 2. 评估遗留：P2-5 单价表（待 mimo-v2.5 单价）；E3-a 真实 docker 验证 environment_error；A7-2 补 task-A7-brief.md 档。
 3. 知识纠错第二阶段 --apply（action_type=knowledge_apply 通道已预留）排期。
 4. 可选小任务：条件自动放行档实现（判定字段审批单已具备）。
-5. 环境备忘沿用 2026-08-28 归档第六节：gh 登录 SilhouetteQA、git 镜像 insteadOf=ghfast.top（push 需临时 unset 直连）、沙箱 GIT_CONFIG_* sslBackend=openssl、每轮 run 前查克隆根 .pytest_tmp/ 残留、模型 mimo-v2.5。
+5. 环境备忘沿用 2026-08-28 归档第六节：gh 登录 qa-account、git 镜像 insteadOf=ghfast.top（push 需临时 unset 直连）、沙箱 GIT_CONFIG_* sslBackend=openssl、每轮 run 前查克隆根 .pytest_tmp/ 残留、模型 mimo-v2.5。

@@ -14,7 +14,7 @@
 
 - Python 3.12+；中文注释；UTF-8；无 emoji；精准修改（保留原逻辑）；不写 fallback。
 - TDD：red → green；垂直切片；测试用 Mock/关闭态隔离（不触网）。
-- 测试命令：`pytest tests/`（worktree 根）；解释器 `D:\AI project\Knowledge-Augmented Autonomous Coding Agent\.venv\Scripts\python.exe`（共享主 venv）。
+- 测试命令：`pytest tests/`（worktree 根）；解释器 `<project-root>\.venv\Scripts\python.exe`（共享主 venv）。
 - tracing 关闭态行为与现状一致（零开销零网络）；仅同步函数埋点（traced 限定）。
 - 密钥零写入；.env 不入库；LANGFUSE 三键仅运行时注入。
 - 已知环境性失败（不阻塞）：`test_docker_integration.py::test_clone_repo_when_empty`（容器内 clone github.com TLS 中断）。
@@ -608,7 +608,7 @@ Expected: PASS（3 项）
 
 - [ ] **Step 5: clickhouse-connect 安装（offline）**
 
-Run: `python -c "import clickhouse_connect"`——若缺失，从 `D:\CodexPython312\Lib\site-packages` 复制 `clickhouse_connect*` 到主 venv site-packages（W1 经验）；再跑测试确认无回归
+Run: `python -c "import clickhouse_connect"`——若缺失，从 `<local-python>\Lib\site-packages` 复制 `clickhouse_connect*` 到主 venv site-packages（W1 经验）；再跑测试确认无回归
 
 - [ ] **Step 6: 真实冒烟（可选，若 Langfuse/ClickHouse 可用）**
 

@@ -57,4 +57,4 @@
 1. 刷线：readme → docs/devlog.md（W6 条目 + 遗留）→ docs/roadmap.md（W7 待开始）。
 2. worktree 已就绪：`.worktrees/w7-observability` / 分支 `feature/w7-observability`（spec 草稿已在：`docs/specs/2026-08-25-w7-observability.md`，brainstorming 三项决策已确认：Langfuse 为主+OTLP 验证 / 完整链路埋点 / 本地汇总报告+UI）。
 3. W7 spec §11 待完善项：核对 W6 实际 tracing.py 接口与埋点清单匹配、graph 节点函数名与行号、CLI 命名、与 W6 报告联动。
-4. 环境备忘：LLM 配置（opencode_go_api + OPENCODE_GO_BASE_URL + mimo-v2.5 + NO_PROXY）；Docker daemon 需启动（`D:\Docker\Docker Desktop.exe`）；git 镜像 insteadOf 仍生效（github.com 不可直连）；评测命令须 `--executor docker`。
+4. 环境备忘：LLM 配置（opencode_go_api + OPENCODE_GO_BASE_URL + mimo-v2.5 + NO_PROXY）；Docker daemon 需启动（`<local-disk-path>\Docker Desktop.exe`）；git 镜像 insteadOf 仍生效（github.com 不可直连）；评测命令须 `--executor docker`。

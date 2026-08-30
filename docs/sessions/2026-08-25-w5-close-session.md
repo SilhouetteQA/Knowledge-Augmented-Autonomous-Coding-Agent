@@ -25,8 +25,8 @@
 
 ## 环境备忘（下会话直接用）
 
-- gh 已登录（SilhouetteQA，scopes read:org/repo/workflow）；`NO_PROXY=opencode.ai` 已在 .env（系统代理 Clash 直连问题）。
-- 兄弟项目：`D:\AI project\Arknights LLM Wiki`（无 .venv，PATH python 可用）；kg 集成测试需 `ARKNIGHTS_WIKI_DIR`。
+- gh 已登录（qa-account，scopes read:org/repo/workflow）；`NO_PROXY=opencode.ai` 已在 .env（系统代理 Clash 直连问题）。
+- 兄弟项目：`<sibling-project-dir>`（无 .venv，PATH python 可用）；kg 集成测试需 `ARKNIGHTS_WIKI_DIR`。
 - 抽查产物：`output/correction/audit_report_*.md` + `audit_samples_*.jsonl`（本仓库，gitignore 忽略输出目录）。
 
 ## 下会话入口（W6）

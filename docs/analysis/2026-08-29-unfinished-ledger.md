@@ -53,5 +53,5 @@
 |---|----|------|
 | D1 | D5 条件自动放行档（Reviewer PASS + 红线 0 + 测试绿 + 非删除型） | 排期：小任务，判定字段齐备 |
 | D2 | 知识纠错第二阶段 --apply（action_type=knowledge_apply） | 冻结中：等 D1 落地后解冻排期 |
-| D3 | PR #3 审阅/合并 + 剩余候选续跑 | 用户项：SilhouetteQA 决定；#4 运行结果出来后一并处理 |
+| D3 | PR #3 审阅/合并 + 剩余候选续跑 | 用户项：qa-account 决定；#4 运行结果出来后一并处理 |
 | D4 | 模型选型：mimo 周限 / deepseek thinking+预算纪律问题 | 待评估：G8 修复后 deepseek 复测；预算纪律执行层强制是前置 |

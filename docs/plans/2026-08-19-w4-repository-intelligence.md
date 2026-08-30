@@ -17,7 +17,7 @@
 - 不写 fallback：兄弟项目不可用必须返回结构化 `ToolError`，绝不静默降级
 - 既有 79 项测试必须保持全绿（非 docker 项）
 - 设计依据：`docs/specs/2026-08-19-w4-repository-intelligence.md`（已批准）
-- 兄弟项目路径：`D:\AI project\Arknights LLM Wiki`（含 `.venv\Scripts\python.exe` 与 `arknights_wiki` 包）
+- 兄弟项目路径：`<sibling-project-dir>`（含 `.venv\Scripts\python.exe` 与 `arknights_wiki` 包）
 
 ## 文件结构
 
@@ -1111,7 +1111,7 @@ markers = [
 ```text
 # W4 Repository Intelligence（可选）
 # ARKNIGHTS_USE_MCP=1                              # 启用域知识检索（Arknights Wiki）
-# ARKNIGHTS_WIKI_DIR=D:\AI project\Arknights LLM Wiki   # 兄弟项目根目录
+# ARKNIGHTS_WIKI_DIR=<sibling-project-dir>   # 兄弟项目根目录
 # KA_CODE_INDEX=1                                 # 任务启动时自动构建代码索引（0 关闭）
 ```
 
@@ -1184,7 +1184,7 @@ def test_search_story_live():
 
 - [ ] **Step 2: 条件运行**
 
-Run: `$env:ARKNIGHTS_USE_MCP = "1"; $env:ARKNIGHTS_WIKI_DIR = "D:\AI project\Arknights LLM Wiki"; .venv\Scripts\python.exe -m pytest tests/test_mcp_integration.py -v`
+Run: `$env:ARKNIGHTS_USE_MCP = "1"; $env:ARKNIGHTS_WIKI_DIR = "<sibling-project-dir>"; .venv\Scripts\python.exe -m pytest tests/test_mcp_integration.py -v`
 Expected: PASS（3 passed；未配置时 3 skipped）
 
 - [ ] **Step 3: 提交**
@@ -1208,14 +1208,14 @@ Expected: 全部通过（79 原有 + W4 新增 26 项）
 准备演示 workspace（兄弟项目代码副本，排除 .git/.venv 等大目录）：
 
 ```powershell
-robocopy "D:\AI project\Arknights LLM Wiki" "workspace\w4-demo" /E /XD .git .venv .cache data output /NFL /NDL /NJH /NJS
+robocopy "<sibling-project-dir>" "workspace\w4-demo" /E /XD .git .venv .cache data output /NFL /NDL /NJH /NJS
 ```
 
 运行：
 
 ```powershell
 $env:ARKNIGHTS_USE_MCP = "1"
-$env:ARKNIGHTS_WIKI_DIR = "D:\AI project\Arknights LLM Wiki"
+$env:ARKNIGHTS_WIKI_DIR = "<sibling-project-dir>"
 .venv\Scripts\python.exe main.py "定位创建角色 Entity 的函数，并确认同一角色在不同章节是否会被重复创建。先使用 query_code_graph 查询 Entity/实体 相关符号与调用关系，再用 search_knowledge 查询具体角色（如阿米娅）的章节信息，最后阅读相关代码给出结论" --workspace workspace/w4-demo --graph
 ```
 

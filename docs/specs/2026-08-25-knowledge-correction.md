@@ -167,7 +167,7 @@ def run_knowledge_correction(task, llm) -> CorrectionResult
 ### 4.4 main.py
 
 ```
-python main.py --correct [--wiki-dir D:\AI project\Arknights LLM Wiki] [--apply] [--audit-limit 20]
+python main.py --correct [--wiki-dir <sibling-project-dir>] [--apply] [--audit-limit 20]
 ```
 
 - `--correct` 读 `ARKNIGHTS_WIKI_DIR`（缺省同 knowledge_client）；`--apply` 或 `KA_CORRECT_APPLY=1` 才写回。

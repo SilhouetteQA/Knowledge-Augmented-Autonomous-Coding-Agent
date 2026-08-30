@@ -42,7 +42,7 @@
   - `agent/loop.py`：最小 ReAct 循环 run_agent（10 轮上限、OpenAI tool-call 消息回注、错误注入不中断）。
   - `main.py` CLI + `.env.example` 模板。
 - **测试**：23 项全绿（14 工具 + 3 LLM + 4 循环 + 2 CLI）。
-- **真实演示**：`D:\AI project\camera man` 复制到 workspace/demo-project；真实 LLM（deepseek-v4-flash）闭环：list_files → read_file → write_file → 总结，在 storage.py 的 EventStore.record() 正确添加中文注释。
+- **真实演示**：`<local-path>` 复制到 workspace/demo-project；真实 LLM（deepseek-v4-flash）闭环：list_files → read_file → write_file → 总结，在 storage.py 的 EventStore.record() 正确添加中文注释。
 
 ### 关键决策与经验
 
@@ -102,13 +102,13 @@
 
 ### 完成内容
 
-- **Docker Desktop 4.86.0 安装到 `D:\Docker`**（`--installation-dir=D:\Docker --backend=wsl-2 --quiet --accept-license`），验证通过：`docker --version`（Client/Server 29.7.2）、`docker info`（12 CPU / 8GB 内存 / Linux/WSL2 引擎）、`docker run hello-world` 成功。
+- **Docker Desktop 4.86.0 安装到 `<local-disk-path>`**（`--installation-dir=<local-disk-path> --backend=wsl-2 --quiet --accept-license`），验证通过：`docker --version`（Client/Server 29.7.2）、`docker info`（12 CPU / 8GB 内存 / Linux/WSL2 引擎）、`docker run hello-world` 成功。
 - **WSL2 环境修复**：本机原本缺 WSL2 内核且 VirtualMachinePlatform 未启用；已启用 `Microsoft-Windows-Subsystem-Linux` + `VirtualMachinePlatform`（dism，无重启需求），安装 WSL2 内核（wsl_update_x64.msi，内核 6.6.87.2-1），WSL 2.6.3.0。Ubuntu（WSL2）发行版实测可用。
 - **坑 1（孤儿注册表项）**：4 月曾安装过 Docker Desktop 4.68.0 但目录已删除（当时无 WSL2 内核，从未正常运行），残留 `HKLM\...\Uninstall\Docker Desktop` 注册项导致新安装器 4.86 直接退出 -5（0xFFFFFFFB，检测到已安装）。删除残留项后安装成功。
 - **坑 2（沙箱网络限制）**：DSH 沙箱阻断出站网络，且 Docker CDN 单连接仅 ~250KB/s。解法：提权（danger-full-access）后 curl 6 连接分块并行下载（`-r` Range 分段，~5MB/s），个别分块 SSL 中断用 `--retry-all-errors` 重试后合并（SHA256 校验一致）。
-- **坑 3（WSL 数据迁移，重要）**：Docker Desktop 4.86 的 WSL 数据目录设置键为 **`CustomWslDistroDir`**（settings-store.json）。直接改配置文件写 `vm.resources.wslDataFolder` / `dataFolder` / `DataFolder` 均无效（后端日志标记 unknown 或被默认值覆盖）；**唯一可靠方式是通过 GUI**：Settings → Resources → Advanced → Disk image location → 选目标目录 → Apply & Restart（确认 Move disk image?）。迁移后：程序在 `D:\Docker`，数据在 `D:\Docker\data\DockerDesktopWSL`（WSL 注册 BasePath 指向 D 盘，hello-world 镜像完整保留）。
-- **W3 窗口已就绪**：worktree `.worktrees/w3-docker-sandbox`（分支 `feature/w3-docker-sandbox`）已创建；`.env` 已重建；venv 从 W1 残留 worktree 复制 + 从 `D:\CodexPython312` vendoring langgraph 1.2.6 家族（含 langsmith/requests 等传递依赖，jsonpatch 为单文件模块需单独复制）；**48 项测试全绿**。
-- 安装脚本与日志留存在 `D:\DockerInstall\`（prepare-wsl.ps1 / install-docker3.ps1 / 各 .log）。
+- **坑 3（WSL 数据迁移，重要）**：Docker Desktop 4.86 的 WSL 数据目录设置键为 **`CustomWslDistroDir`**（settings-store.json）。直接改配置文件写 `vm.resources.wslDataFolder` / `dataFolder` / `DataFolder` 均无效（后端日志标记 unknown 或被默认值覆盖）；**唯一可靠方式是通过 GUI**：Settings → Resources → Advanced → Disk image location → 选目标目录 → Apply & Restart（确认 Move disk image?）。迁移后：程序在 `<local-disk-path>`，数据在 `<local-disk-path>\data\DockerDesktopWSL`（WSL 注册 BasePath 指向 D 盘，hello-world 镜像完整保留）。
+- **W3 窗口已就绪**：worktree `.worktrees/w3-docker-sandbox`（分支 `feature/w3-docker-sandbox`）已创建；`.env` 已重建；venv 从 W1 残留 worktree 复制 + 从 `<local-python>` vendoring langgraph 1.2.6 家族（含 langsmith/requests 等传递依赖，jsonpatch 为单文件模块需单独复制）；**48 项测试全绿**。
+- 安装脚本与日志留存在 `<local-disk-path>\`（prepare-wsl.ps1 / install-docker3.ps1 / 各 .log）。
 
 ### 下一步
 
@@ -236,7 +236,7 @@
 
 ### 演示记录（真实环境）
 
-- **环境**：gh 已登录（SilhouetteQA，scopes read:org/repo/workflow）；LLM=mimo-v2.5（opencode go，NO_PROXY 直连）；local 执行器；`--issue` 模式 dry-run。
+- **环境**：gh 已登录（qa-account，scopes read:org/repo/workflow）；LLM=mimo-v2.5（opencode go，NO_PROXY 直连）；local 执行器；`--issue` 模式 dry-run。
 - **链路实测**：get_issue（真 gh api）→ 仓库已存在走 sync（fetch+reset 幂等生效）→ create_branch fix/issue-646 → Agent 自主分析 → 修改 `schedule/__init__.py`（`__repr__` 两处 `self.unit is not None and self.interval == 1` 守卫，与社区 PR #651/#652 方案一致）→ 自写验证脚本运行通过 → LLM Review **PASS** → dry-run 停在 review，远端零副作用。
 - **QA 复核**：修复逻辑与社区未合并 PR #652 一致（同方案），正确。
 
@@ -246,7 +246,7 @@
 2. **顺手改动风险**：Agent 顺带改坏 `every()` docstring（`:meth:`every <Scheduler.every` 丢失 `>`），LLM Review 未发现——文档/格式回归是当前 Review 盲区。
 3. **验证脚本非正式测试**：未把回归测试写入仓库既有 test_schedule.py，而是留下 test_fix.py / test_fix_verification.py 两个独立脚本；push 模式 `git add -A` 会将其带进 PR（待改进：Review 提示词要求「测试并入现有套件」）。
 4. **宿主环境失真**：dbader/schedule 的 test_schedule.py 导入时无条件 `time.tzset()`（仅 Unix），Windows local 模式收集即崩——真实项目测试应跑 `KA_EXECUTOR=docker`（Linux 容器）；本次 Agent 未能跑仓库自带测试即属此因。
-5. **LLM 链路稳定性**：本机系统代理（127.0.0.1:7892 Clash）访问 opencode.ai 偶发 TLS 握手超时（两次 APITimeoutError 整单崩溃），已在 .env 加 `NO_PROXY=opencode.ai` 直连解决；graph 内 LLM 异常无重试仍会冒泡终止任务（后续可给 OpenAICompatClient 配 timeout/max_retries）。
+5. **LLM 链路稳定性**：本机系统代理（<local-proxy> Clash）访问 opencode.ai 偶发 TLS 握手超时（两次 APITimeoutError 整单崩溃），已在 .env 加 `NO_PROXY=opencode.ai` 直连解决；graph 内 LLM 异常无重试仍会冒泡终止任务（后续可给 OpenAICompatClient 配 timeout/max_retries）。
 6. **仓库选择经验**：演示应选小型 Python 库（dbader/schedule 4 py 文件 2517 行、★12k、77+ 测试）——clone/探索/验证轻量；大仓库会放大第 1 条问题。
 
 ### 遗留（本次演示后）
@@ -319,7 +319,7 @@
 - **测试**：全量回归 **185 passed / 14 skipped / 1 failed**（唯一失败 `test_sync_repository_fetch_and_reset`，控制器预声明为已知环境性：git clone 需 cygwin sh 信号管道、被会话沙箱拒绝——与 docker 引擎 npipe 受限同源，非本窗口变更导致；14 skipped = docker 集成 + kg/mcp 条件跳过）。
 - **真实验收尝试（docker 执行器）**：实跑 5 case（run_id `20260826-002247`）——
   - 环境注入全成功：主仓库 .env 四键（opencode_go_api / OPENCODE_GO_BASE_URL / OPENCODE_GO_MODEL / NO_PROXY）+ 兄弟项目 langfuse .env 的 headless 初始化键 LANGFUSE_INIT_PROJECT_PUBLIC_KEY/SECRET_KEY 运行时映射为 SDK 键（BASE_URL=http://localhost:3000），`is_enabled()=True`；
-  - **5 case 全部 error、0/5**：根因 = 宿主 git 全局 http.proxy=127.0.0.1:7892（Clash）未运行（TCP 主动拒绝）+ 本会话沙箱禁止 named pipe（docker 引擎 npipe `permission denied`、git sh 信号管道 Win32 error 5）→ `gh repo clone` 全部失败；**本 run 是环境性失败证据，不作为 Agent 能力结论**（零 LLM token 消耗，iteration=0）；
+  - **5 case 全部 error、0/5**：根因 = 宿主 git 全局 http.proxy=<local-proxy>（Clash）未运行（TCP 主动拒绝）+ 本会话沙箱禁止 named pipe（docker 引擎 npipe `permission denied`、git sh 信号管道 Win32 error 5）→ `gh repo clone` 全部失败；**本 run 是环境性失败证据，不作为 Agent 能力结论**（零 LLM token 消耗，iteration=0）；
   - `--compare 20260826-002247` 单 run 对比表验证通过（exit 0）；`report.json`（metadata/逐 case 字段完整）/ `report.md`（核心指标/分类/明细/Judge 理由）结构正确。
 
 ### Langfuse 落库验证（v4 events 通道）
@@ -331,7 +331,7 @@
 
 - **执行器硬约束**：dbader/schedule 的 test_schedule.py 在 Windows 宿主因 time.tzset() 崩溃（W5 遗留），评测必须 `--executor docker` / `KA_EXECUTOR=docker`；本会话沙箱限制使 docker 评测不可行 → 全量真实评测留待非沙箱环境执行，命令已记录（见遗留）。
 - **密钥边界**：SDK 三键仅运行时从兄弟项目 `.env` 映射注入（headless 初始化键即项目 API 键），不写入任何代码/文档/提交；评测产物（output/、workspace/*）均 gitignore。
-- **代理是评测前置条件**：git 全局 http.proxy 指向 127.0.0.1:7892（Clash）；运行评测前须确认代理在线（或临时 `git config --global http.proxy ""` 并确保直连可行）。
+- **代理是评测前置条件**：git 全局 http.proxy 指向 <local-proxy>（Clash）；运行评测前须确认代理在线（或临时 `git config --global http.proxy ""` 并确保直连可行）。
 - **事件模型兼容**：Langfuse v4 events_only 下经典观测 API 不可用但 SDK 摄取正常——`traced`/`record_usage` 无需改动即可落库；W7 接入时以 events_core 为数据真实层。
 
 ### 遗留问题
@@ -345,7 +345,7 @@
 
 ### 控制器修复（git/网络层）
 
-- 根因补充：本机网络对 github.com 主站 443 做 SNI 阻断（Connection reset），但 api.github.com / codeload.github.com / 镜像 ghfast.top 可达；且 git 全局残留 `http.proxy=http://127.0.0.1:7892`（W5 时代 Clash，已不在）。
+- 根因补充：本机网络对 github.com 主站 443 做 SNI 阻断（Connection reset），但 api.github.com / codeload.github.com / 镜像 ghfast.top 可达；且 git 全局残留 `http.proxy=http://<local-proxy>`（W5 时代 Clash，已不在）。
 - 控制器已执行：`git config --global --unset http.proxy`、`--unset https.proxy`（清除死代理）+ `git config --global url."https://ghfast.top/https://github.com/".insteadOf "https://github.com/"`（github 统一走镜像重写）。
 
 ### 本会话补一发：schannel → OpenSSL 后端
@@ -455,7 +455,7 @@
 ### 项目级状态
 
 - **W0-W8 全部完成**，roadmap W8 标 [x]，readme 状态行更新。
-- 遗留/下一步：① PR #3 审阅合并（SilhouetteQA 决定）+ 剩余 3 条死数据候选新 issue 续跑；② 评估问题 P0-P2 收尾（P2-5 单价表待用户提供 mimo-v2.5 单价）；③ 知识纠错第二阶段 --apply 解冻排期（action_type=knowledge_apply 已预留）；④ A7-2 补 task-A7-brief.md 档；⑤ E3-a 真实 docker 环境验证 environment_error 计数。
+- 遗留/下一步：① PR #3 审阅合并（qa-account 决定）+ 剩余 3 条死数据候选新 issue 续跑；② 评估问题 P0-P2 收尾（P2-5 单价表待用户提供 mimo-v2.5 单价）；③ 知识纠错第二阶段 --apply 解冻排期（action_type=knowledge_apply 已预留）；④ A7-2 补 task-A7-brief.md 档；⑤ E3-a 真实 docker 环境验证 environment_error 计数。
 
 ## 真实 Issue 能力实测（2026-08-29，W8 后追加）
 
@@ -499,7 +499,7 @@
 - 前序验证（诚实发现）：PR #3 从未合并 → 阮先生（画家）/玉门望烽节在 v3_seed 与 md 双残留，Agent 如实报告（Reviewer 列人工关注请人工核对——与实际一致）。
 - 回归如实：索引重建 5188 实体成功；兄弟项目测试套件容器内外均不可运行（pytest 0 collected + scripts/test_extraction.py SystemExit）——A13 兄弟侧问题再次暴露，Reviewer 如实区分"非本次变更引入"。
 - 复证映射：A12 预算 nudge（探索未失控、按期交付）；G5 上下文压缩（43 轮无超时）；G8 reasoning_content（43 轮无 400）；A7 结论交付（空 diff + PASS 的结论审查模式实战 PASS）。
-- 待办联动：Issue #4 的人工决策 = 保留 0 删除结论认可即可关闭；PR #3 处置（合并则 #4 背景变化）待 SilhouetteQA。
+- 待办联动：Issue #4 的人工决策 = 保留 0 删除结论认可即可关闭；PR #3 处置（合并则 #4 背景变化）待 qa-account。
 
 ## 全量代码审查修复日（2026-08-30，逐项裁决 + 27 项清偿）
 
@@ -522,7 +522,7 @@
 
 ### 外部动作（用户授权）
 
-- **PR #3（SilhouetteQA/Arknights-LLM-wiki）已合并**（2026-08-30T07:52Z，3 文件：seed -14 行 + 阮先生（画家）/玉门望烽节 md 删除）——双残留问题随之清偿。
+- **PR #3（qa-account/Arknights-LLM-wiki）已合并**（2026-08-30T07:52Z，3 文件：seed -14 行 + 阮先生（画家）/玉门望烽节 md 删除）——双残留问题随之清偿。
 - **兄弟项目 Issue #4 已关闭**（带结论评论：3 候选全部保留 0 删除，43 迭代完整通过，证据齐备）。
 
 ### 用户裁决记录
@@ -532,5 +532,5 @@
 ### 环境备忘
 
 - 主仓 .venv 为非 editable vendoring 副本：src 改动不反映到 .venv 内 import，测试/校验用全局 `python -m pytest`（pythonpath=.）或重建 venv。
-- Docker Desktop 位于 D:\Docker，本会话实测可启动（daemon 就绪 ~5s）；沙箱镜像 ka-sandbox:py312-v1 与派生 v1x 均在。
+- Docker Desktop 位于 <local-disk-path>，本会话实测可启动（daemon 就绪 ~5s）；沙箱镜像 ka-sandbox:py312-v1 与派生 v1x 均在。
 - 下会话入口：实施 D2-a 事实核查报告（spec §4 接口草图），随后按需排期 --apply。

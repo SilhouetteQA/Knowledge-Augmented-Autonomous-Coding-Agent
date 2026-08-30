@@ -17,7 +17,7 @@
 - 不写 fallback：`KA_EXECUTOR` 默认 `local`，`docker` 模式下 Docker 不可用必须返回结构化 `ToolError`，绝不静默降级
 - 既有 48 项测试必须保持全绿（LocalExecutor 行为不变）
 - 集成测试（`@pytest.mark.docker`）需要 Docker Desktop 运行中 + docker CLI 在 PATH
-  （本机 docker CLI：`D:\Docker\resources\bin\docker.exe`；执行前刷新 PATH：`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')`）
+  （本机 docker CLI：`<local-disk-path>\resources\bin\docker.exe`；执行前刷新 PATH：`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')`）
 - 测试环境沿用现有 `.venv`（不可重建）；venv 内已 vendoring langgraph 1.2.6 家族
 - 设计依据：`docs/specs/2026-08-16-w3-docker-sandbox.md`（已批准）
 
@@ -1451,7 +1451,7 @@ git commit -m "test(tools): Docker 沙箱集成测试（生命周期/超时/OOM/
 
 - [ ] **Step 1: 准备演示工作区**
 
-将真实 Python 项目复制到 `workspace/demo-project`（如 `D:\AI project\camera man`，W1 用过），确认含可运行 pytest 测试。
+将真实 Python 项目复制到 `workspace/demo-project`（如 `<local-path>`，W1 用过），确认含可运行 pytest 测试。
 
 - [ ] **Step 2: 容器化 Agent 演示**
 

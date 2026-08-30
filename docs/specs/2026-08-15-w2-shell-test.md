@@ -120,7 +120,7 @@ W1 的 `run_agent` 不动（回归保障）；W2 图复用其 `_dispatch` / `_re
 
 | 依赖 | 说明 | 方案 |
 |---|---|---|
-| langgraph 1.2.6 | 图编排 | 断网 vendoring：从 `D:\CodexPython312\Lib\site-packages` 复制 langgraph + langgraph_checkpoint + langgraph_prebuilt + langgraph_sdk + langchain_core（含 dist-info）进 `.venv`（已确认存在，Python 3.12 同版本） |
+| langgraph 1.2.6 | 图编排 | 断网 vendoring：从 `<local-python>\Lib\site-packages` 复制 langgraph + langgraph_checkpoint + langgraph_prebuilt + langgraph_sdk + langchain_core（含 dist-info）进 `.venv`（已确认存在，Python 3.12 同版本） |
 | pytest 9.1.1 | 测试与 run_tests 后端 | 已在 venv（W1 安装） |
 
 ## 6. 测试策略（TDD）
@@ -140,7 +140,7 @@ W1 的 `run_agent` 不动（回归保障）；W2 图复用其 `_dispatch` / `_re
 ## 7. 验证计划
 
 1. `pytest tests/` 全绿（W1 27 项回归 + W2 新增）。
-2. 重新复制 `D:\AI project\camera man` 到 `workspace/demo-project`（用户上次选择不入库，演示时再放）。
+2. 重新复制 `<local-path>` 到 `workspace/demo-project`（用户上次选择不入库，演示时再放）。
 3. 真实任务演示（deepseek-v4-flash）：如「为 demo-project 的 storage.py 补充一个边界测试（如空 events 查询）并跑通全量测试」——观察 Agent：计划 → 搜索/读取 → 写测试 → verify 失败/通过 → 反思修复 → 最终全绿。
 4. 人工核对：修改正确、测试真实有效、未越界。
 

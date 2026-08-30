@@ -1291,7 +1291,7 @@ git commit -m "docs: W1 完成，更新 README/devlog/路线图"
 - [ ] **Step 5: Review 后合并（退出窗口）**
 
 - 使用 requesting-code-review 审查全部变更，修复问题后再提交。
-- 合并回 main 并清理（以下命令在**仓库根** `D:\AI project\Knowledge-Augmented Autonomous Coding Agent` 执行）：
+- 合并回 main 并清理（以下命令在**仓库根** `<project-root>` 执行）：
 
 ```bash
 git checkout main

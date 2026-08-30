@@ -37,7 +37,7 @@
 
 **待外部输入**
 - [ ] C1/P2-5 单价表：待用户提供 mimo-v2.5 / deepseek-v4-flash 单价
-- [ ] D3 PR #3 审阅/合并 + Issue #4 续跑策略：SilhouetteQA 决定
+- [ ] D3 PR #3 审阅/合并 + Issue #4 续跑策略：qa-account 决定
 
 **随任务顺手清偿**
 - [x] B12 A7-2 task-A7-brief.md 档案补全（docs/analysis/2026-08-29-a7-brief-archive.md）

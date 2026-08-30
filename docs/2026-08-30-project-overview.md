@@ -106,7 +106,7 @@ Reviewer 为独立审查角色（四要点：正确性/域操作/产物残留/�
 | 08-15 | **W0 项目初始化** | AGENTS/README/路线图、git 初始化、脚手架 |
 | 08-15 | **W1 本地 Workspace** | 文件四件套 + LLM 客户端 + 最小 ReAct 循环 + CLI；23 测试；真实演示（camera man 注释闭环）；模型定为 opencode go deepseek-v4-flash |
 | 08-15 | **W2 Shell + Test** | run_command/run_tests/git 只读三件套 + LangGraph 显式状态图（plan→decide⇄execute→verify→reflect→finalize）；47 测试；真实演示（bilibili defect-repo 79 测试修复闭环） |
-| 08-16 | **W3 前置：Docker 环境** | Docker Desktop 4.86 安装至 D:\Docker、WSL2 内核修复启用、数据盘迁移至 D 盘（三踩坑：孤儿注册表项、CDN 限速并行下载、CustomWslDistroDir 仅 GUI 可改） |
+| 08-16 | **W3 前置：Docker 环境** | Docker Desktop 4.86 安装至 <local-disk-path>、WSL2 内核修复启用、数据盘迁移至 D 盘（三踩坑：孤儿注册表项、CDN 限速并行下载、CustomWslDistroDir 仅 GUI 可改） |
 | 08-17 | **W3 Docker Sandbox** | SandboxConfig/SandboxManager/DockerExecutor、镜像 ka-sandbox:py312-v1（python3.12-slim + git + node22 + pytest）、六维资源限制、创建期有网运行期断网；88 测试（含 10 项真实容器集成）；camera man 容器化闭环 |
 | 08-19 | **W4 Repository Intelligence** | Python AST 选型（Tree-sitter 否决）→ CodeParser → 内存 CodeGraph 五类查询 → MCP 子进程接入 Arknights KG → 双知识工具注入图；113 测试；领域 Issue 定位演示（跨章节实体去重结论） |
 | 08-25 | **模型依赖统一迁移** | 收敛回 opencode_go_api 单一入口，模型定为 **mimo-v2.5**（修正下划线/连字符 ID 陷阱），废弃 arkcode 遗留配置 |
@@ -167,7 +167,7 @@ Reviewer 为独立审查角色（四要点：正确性/域操作/产物残留/�
 |------|------|------|
 | schedule#646（W5 dry-run） | 修复成功 | `__repr__` unit=None 崩溃，方案与社区 PR #652 一致；QA 复核确认 |
 | W6 基准评测（docker） | Resolution Rate 20%（1/5） | schedule-608 resolved（25 迭代）；646/99 Judge 确认等价但基线缺 pytz（已修）；602/622 无有效变更 |
-| 兄弟项目 Issue #2→PR #3（W8） | 交付真实 PR | 五轮远程修复 → 人工批准 → PR #3（3 文件纯删除 2 条死数据）；rejected 单零副作用实测；**PR 本身尚未合并（待 SilhouetteQA 决定）** |
+| 兄弟项目 Issue #2→PR #3（W8） | 交付真实 PR | 五轮远程修复 → 人工批准 → PR #3（3 文件纯删除 2 条死数据）；rejected 单零副作用实测；**PR 本身尚未合并（待 qa-account 决定）** |
 | jsonschema#1159（第一轮实测） | 实质解决 | 27 迭代，7892 测试全绿 + 独立复现通过；Reviewer 误判 FAIL（修法已记录） |
 | rich#3299（第一轮实测） | 触顶失败 | 41 迭代两轮全触顶；暴露四瓶颈（环境幻觉/write_file 覆盖/git 自伤/Reviewer 机械套规则），均已修复 |
 | markdown-it-py#415（第二轮实测） | 9 迭代完整解决 | edit_file 实战验证、981 测试全绿、Reviewer PASS |

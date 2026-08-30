@@ -1548,8 +1548,8 @@ gh pr diff 653 --repo dbader/schedule > benchmark/cases/gold/schedule-646.diff
 
 ```bash
 # 从兄弟项目复制（compose 为官方 v4：web+worker+postgres+clickhouse+redis+minio 6 容器）
-Copy-Item "D:\AI project\Arknights LLM Wiki\docker\langfuse\docker-compose.yml" .worktrees\w6-evaluation\docker\langfuse\
-Copy-Item "D:\AI project\Arknights LLM Wiki\docker\langfuse\.env.example" .worktrees\w6-evaluation\docker\langfuse\
+Copy-Item "<sibling-project-dir>\docker\langfuse\docker-compose.yml" .worktrees\w6-evaluation\docker\langfuse\
+Copy-Item "<sibling-project-dir>\docker\langfuse\.env.example" .worktrees\w6-evaluation\docker\langfuse\
 ```
 
 - [ ] **Step 2: 启动 + 冒烟**

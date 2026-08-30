@@ -39,11 +39,11 @@
 在 worktree 根执行：
 
 ```powershell
-Copy-Item "D:\AI project\Knowledge-Augmented Autonomous Coding Agent\.worktrees\w1-local-workspace\.venv" ".venv" -Recurse -Force -ErrorAction SilentlyContinue
+Copy-Item "<project-root>\.worktrees\w1-local-workspace\.venv" ".venv" -Recurse -Force -ErrorAction SilentlyContinue
 .venv\Scripts\python.exe -m pytest --version
 ```
 
-Expected: pytest 9.1.1 可用（sitecustomize 补丁随目录复制保留，`.venv_tmp` 会自动重建）。若复制不完整（个别包缺失），从 `D:\CodexPython312\Lib\site-packages` 补复制缺失包（pytest / openai / python-dotenv / pluggy / iniconfig / packaging / pygments / exceptiongroup / colorama，含 dist-info）。
+Expected: pytest 9.1.1 可用（sitecustomize 补丁随目录复制保留，`.venv_tmp` 会自动重建）。若复制不完整（个别包缺失），从 `<local-python>\Lib\site-packages` 补复制缺失包（pytest / openai / python-dotenv / pluggy / iniconfig / packaging / pygments / exceptiongroup / colorama，含 dist-info）。
 
 - [ ] **Step 2: 写失败测试**
 
@@ -540,7 +540,7 @@ git commit -m "feat(tools): 新增 git 只读三件套（status/diff/log）"
 
 ```powershell
 # 从基础解释器复制 langgraph 全家 + langchain 基础包
-$base = "D:\CodexPython312\Lib\site-packages"
+$base = "<local-python>\Lib\site-packages"
 $pkgs = @("langgraph", "langgraph_checkpoint", "langgraph_prebuilt", "langgraph_sdk",
           "langchain", "langchain_core", "langchain_protocol")
 foreach ($p in $pkgs) {
@@ -1092,7 +1092,7 @@ Expected: main 全绿；worktree 已解除登记；W2 窗口关闭。
 
 ## 已知环境备忘（实施时遵守）
 
-- 沙箱禁止 `python -m venv`（0o700 目录锁）与出站网络：venv 用复制重建；依赖 vendoring 从 `D:\CodexPython312\Lib\site-packages` 复制（含 dist-info）。
+- 沙箱禁止 `python -m venv`（0o700 目录锁）与出站网络：venv 用复制重建；依赖 vendoring 从 `<local-python>\Lib\site-packages` 复制（含 dist-info）。
 - 沙箱子进程 PATH 无 rg：search_code/涉及 rg 的测试命令前设置 `$env:RIPGREP_BIN="C:\Users\Silhouette\AppData\Local\Programs\rg\rg.exe"`。
 - review package 生成用 UTF-8（`Out-File -Encoding utf8`），避免 UTF-16 问题。
 - 测试中 `subprocess` 启动 git 需要 `git config user.name/email`（测试设施内配置）。

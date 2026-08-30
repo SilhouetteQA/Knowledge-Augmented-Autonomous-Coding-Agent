@@ -32,8 +32,8 @@
 - [ ] **Step 1: 复制 venv 与 .env 到 W8 worktree**
 
 ```powershell
-roboCopy.exe "D:\AI project\Knowledge-Augmented Autonomous Coding Agent\.venv" ".venv" /E /NFL /NDL /NJH /NJS /NC /NS
-Copy-Item "D:\AI project\Knowledge-Augmented Autonomous Coding Agent\.env" ".env" -Force
+roboCopy.exe "<project-root>\.venv" ".venv" /E /NFL /NDL /NJH /NJS /NC /NS
+Copy-Item "<project-root>\.env" ".env" -Force
 Test-Path ".venv\Scripts\python.exe"; Test-Path ".env"
 ```
 
@@ -1068,7 +1068,7 @@ gh auth status
 git config --global --get-regexp "url\..*insteadof"   # 预期 ghfast.top 镜像重写存在
 ```
 
-Expected: gh 已登录（SilhouetteQA）；镜像重写存在（W6 配置）。若 gh 未登录：`gh auth login`（需用户参与）。
+Expected: gh 已登录（qa-account）；镜像重写存在（W6 配置）。若 gh 未登录：`gh auth login`（需用户参与）。
 
 - [ ] **Step 3: 真实 dry-run 停等演示（dbader/schedule#646）**
 

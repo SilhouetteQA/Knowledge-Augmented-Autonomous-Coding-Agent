@@ -10,7 +10,7 @@
 |---|--------------|------|------|------|------|------|
 | 1 | executablebooks/markdown-it-py #415（blockquote 尾表格 IndexError） | 中 | mimo | **完整解决** | **9** | PASS |
 | 2 | dateutil/dateutil #1545（isoparse 截断小数秒，应四舍五入） | 中 | mimo→deepseek | 3 轮未收敛（v1 环境污染 / v2 触顶但源码修复正确 / v3 预算纪律失效） | 41/35/41 | PASS(v2 误判)/FAIL |
-| 3 | SilhouetteQA/Arknights-LLM-wiki #4（试点三：3 条死数据候选） | 域任务 | mimo(超时崩溃)→deepseek(400 阻断) | 未交付（v3 重跑中） | 45+/39 | FAIL(准确) |
+| 3 | qa-account/Arknights-LLM-wiki #4（试点三：3 条死数据候选） | 域任务 | mimo(超时崩溃)→deepseek(400 阻断) | 未交付（v3 重跑中） | 45+/39 | FAIL(准确) |
 
 ## 二、案例 1：markdown-it-py#415 —— 修复后的标杆样本
 
