@@ -1,0 +1,267 @@
+# tools/file_tools.py
+"""文件工具：list_files / read_file / search_code / write_file。
+
+所有工具以 workspace 根为安全边界；错误返回 ToolError（结构化、面向 LLM），不抛异常。
+"""
+import json
+import os
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+# 遍历时跳过的目录（与 .gitignore 保持一致）
+IGNORED_DIRS = {
+    ".git", "__pycache__", ".venv", "venv", "node_modules",
+    ".worktrees", ".pytest_cache", ".cache",
+}
+
+
+@dataclass
+class ToolError(Exception):
+    """工具错误：message 面向 LLM，Agent 可观察并自我纠正。
+
+    继承 Exception 以便在生命周期类方法（如沙箱 create）中可 raise；
+    既有 "return ToolError(...)" 与 isinstance 用法向后兼容。
+    """
+    message: str
+
+
+@dataclass
+class FileEntry:
+    """目录项：path 为相对 workspace 根的正斜杠路径。"""
+    path: str
+    is_dir: bool
+    size: int
+
+
+def resolve_workspace_path(path: str, workspace_root: str | None = None) -> str | ToolError:
+    """将相对/绝对路径解析为 workspace 内的绝对路径；越界或工作区缺失返回 ToolError。
+
+    工作区根解析顺序：调用方显式传入 > 环境变量 WORKSPACE_ROOT > 当前目录下 workspace。
+    注意：缺省依赖 Path.cwd()，调用方应显式传入 workspace_root 以避免歧义（review 发现）。
+    """
+    if workspace_root:
+        root = Path(workspace_root)
+    else:
+        env_root = os.environ.get("WORKSPACE_ROOT")
+        root = Path(env_root) if env_root else (Path.cwd() / "workspace")
+    root = root.resolve()
+    if not root.exists():
+        return ToolError(f"工作区不存在: {root}")
+    target = (root / path).resolve()
+    if not target.is_relative_to(root):
+        return ToolError(f"路径越界: {path}（仅允许操作工作区内的文件）")
+    return str(target)
+
+
+def list_files(root: str | None = None, workspace_root: str | None = None) -> list[FileEntry] | ToolError:
+    """递归列出工作区（或其中子目录）的文件与目录，跳过 IGNORED_DIRS。
+
+    FileEntry.path 相对 workspace 根（与 read_file/write_file 一致）。
+    """
+    root_path = resolve_workspace_path("", workspace_root)
+    if isinstance(root_path, ToolError):
+        return root_path
+    base = resolve_workspace_path(root or "", workspace_root)
+    if isinstance(base, ToolError):
+        return base
+    root_path = Path(root_path)
+    base_path = Path(base)
+    entries: list[FileEntry] = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
+        for name in dirnames:
+            p = Path(dirpath) / name
+            entries.append(FileEntry(path=p.relative_to(root_path).as_posix(), is_dir=True, size=0))
+        for name in filenames:
+            p = Path(dirpath) / name
+            try:
+                size = p.stat().st_size
+            except OSError:
+                continue  # IM-18：坏符号链接/竞态删除/权限拒绝——跳过该条目，不中断遍历
+            entries.append(FileEntry(path=p.relative_to(root_path).as_posix(), is_dir=False, size=size))
+    entries.sort(key=lambda e: e.path)
+    return entries
+
+
+# 单文件读取大小上限（防止大文件撑爆 LLM 上下文）
+MAX_READ_SIZE = 500 * 1024
+
+
+@dataclass
+class FileContent:
+    """文件内容：content 为带行号全文，lines 为原始行列表。"""
+    path: str
+    content: str
+    lines: list[str]
+    size: int
+
+
+def read_file(path: str, workspace_root: str | None = None) -> FileContent | ToolError:
+    """读取工作区内文本文件，返回带行号内容；大小超限/不存在/是目录/越界时返回 ToolError。"""
+    target = resolve_workspace_path(path, workspace_root)
+    if isinstance(target, ToolError):
+        return target
+    p = Path(target)
+    if not p.exists():
+        return ToolError(f"文件不存在: {path}")
+    if p.is_dir():
+        return ToolError(f"{path} 是目录，不是文件")
+    size = p.stat().st_size
+    if size > MAX_READ_SIZE:
+        return ToolError(f"文件过大: {path}（{size} 字节，上限 {MAX_READ_SIZE} 字节）")
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    content = "\n".join(f"{i + 1:4d} | {line}" for i, line in enumerate(lines))
+    return FileContent(path=path, content=content, lines=lines, size=size)
+
+
+@dataclass
+class SearchResult:
+    """搜索结果：path 相对 workspace 根，line/column 为 1-based。"""
+    path: str
+    line: int
+    column: int
+    text: str
+
+
+def _rg_path() -> str:
+    """ripgrep 可执行文件路径：默认 rg，可用 RIPGREP_BIN 覆盖（沙箱场景）。"""
+    return os.environ.get("RIPGREP_BIN", "rg")
+
+
+def search_code(
+    query: str,
+    root: str | None = None,
+    ignore_case: bool = False,
+    workspace_root: str | None = None,
+) -> list[SearchResult] | ToolError:
+    """调用 ripgrep 搜索工作区代码，返回命中列表；rg 缺失/超时/失败返回 ToolError。"""
+    root_path = resolve_workspace_path("", workspace_root)
+    if isinstance(root_path, ToolError):
+        return root_path
+    base = resolve_workspace_path(root or "", workspace_root)
+    if isinstance(base, ToolError):
+        return base
+    cmd = [_rg_path(), "--json", "--column"]
+    if ignore_case:
+        cmd.append("-i")
+    cmd += ["--", query, base]
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=30,
+        )
+    except FileNotFoundError:
+        return ToolError(f"ripgrep 不可用: 未找到 {_rg_path()}（请安装或设置 RIPGREP_BIN）")
+    except subprocess.TimeoutExpired:
+        return ToolError("搜索超时（30 秒）")
+    if proc.returncode not in (0, 1):
+        return ToolError(f"ripgrep 执行失败: {proc.stderr.strip()}")
+    results: list[SearchResult] = []
+    for line in proc.stdout.splitlines():
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "match":
+            continue
+        data = obj["data"]
+        rel = os.path.relpath(data["path"]["text"], root_path).replace("\\", "/")
+        submatch = data["submatches"][0]
+        results.append(SearchResult(
+            path=rel,
+            line=data["line_number"],
+            column=submatch["start"] + 1,
+            text=data["lines"]["text"].rstrip("\n"),
+        ))
+    results.sort(key=lambda r: (r.path, r.line))
+    return results
+
+
+@dataclass
+class WriteResult:
+    """写入结果：path 相对 workspace 根，overwritten 标记是否覆盖已有文件。"""
+    path: str
+    bytes_written: int
+    overwritten: bool
+
+
+@dataclass
+class EditResult:
+    """局部编辑结果：replacements 为实际替换次数。"""
+    path: str
+    replacements: int
+
+
+def write_file(path: str, content: str, workspace_root: str | None = None) -> WriteResult | ToolError:
+    """写入工作区内文件（自动创建父目录，覆盖已有内容）；越界/写入失败返回 ToolError。"""
+    target = resolve_workspace_path(path, workspace_root)
+    if isinstance(target, ToolError):
+        return target
+    p = Path(target)
+    overwritten = p.exists()
+    data = content.encode("utf-8")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+    except OSError as e:
+        return ToolError(f"写入失败: {path}（{e}）")
+    return WriteResult(path=path, bytes_written=len(data), overwritten=overwritten)
+
+
+def edit_file(path: str, old_text: str, new_text: str,
+              expected_count: int | None = None,
+              workspace_root: str | None = None) -> EditResult | ToolError:
+    """局部编辑：将文件中 old_text 精确替换为 new_text（默认要求恰好出现 1 次）。
+
+    与 write_file 的全量覆盖互补：修改已有文件优先用本工具（避免整文件重写
+    丢失内容，rich#3299 实测失败根因）。old_text 必须逐字符精确匹配（含缩进
+    与换行）；出现多次时须传 expected_count=<次数> 显式确认全部替换。
+
+    行尾双向对齐（IM-10）：匹配与替换统一在 \\n 空间进行——CRLF 文件的
+    old_text 归一后可命中（此前含 \\r\\n 的 old_text 永远匹配失败）；写回时
+    按原文件行尾物化（LF 文件不再被整文件改写为 CRLF，Windows 下
+    write_text 默认 newline=None 的平台换行翻译是根因）。混合行尾文件按
+    CRLF 处理（罕见，可接受）。
+    """
+    target = resolve_workspace_path(path, workspace_root)
+    if isinstance(target, ToolError):
+        return target
+    p = Path(target)
+    if not p.exists():
+        return ToolError(f"文件不存在: {path}")
+    if p.is_dir():
+        return ToolError(f"{path} 是目录，不是文件")
+    if p.stat().st_size > MAX_READ_SIZE:
+        return ToolError(f"文件过大: {path}（{p.stat().st_size} 字节，上限 {MAX_READ_SIZE} 字节）")
+    if not old_text:
+        return ToolError("old_text 不能为空串（无法精确定位；新建文件请用 write_file）")
+    try:
+        raw = p.read_bytes()
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return ToolError(f"文件非 UTF-8 文本，无法局部编辑: {path}（请用 read_file 确认后用 write_file 处理）")
+    except OSError as e:
+        return ToolError(f"读取失败: {path}（{e}）")
+    crlf = "\r\n" in text
+    norm = text.replace("\r\n", "\n")
+    old_norm = old_text.replace("\r\n", "\n")
+    new_norm = new_text.replace("\r\n", "\n")
+    count = norm.count(old_norm)
+    if count == 0:
+        return ToolError(f"old_text 未找到: {path}（需精确匹配，含缩进与换行；"
+                         "可先用 read_file 查看原文）")
+    if count > 1 and expected_count != count:
+        return ToolError(f"old_text 出现 {count} 次: {path}"
+                         f"（传 expected_count={count} 确认全部替换，或提供更长的唯一片段）")
+    result_text = norm.replace(old_norm, new_norm)
+    if crlf:
+        result_text = result_text.replace("\n", "\r\n")
+    try:
+        with open(p, "w", encoding="utf-8", newline="") as f:
+            f.write(result_text)
+    except OSError as e:
+        return ToolError(f"写入失败: {path}（{e}）")
+    return EditResult(path=path, replacements=count)

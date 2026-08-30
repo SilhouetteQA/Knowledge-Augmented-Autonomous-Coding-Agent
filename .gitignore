@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+*.pyc
+
+# 缓存
+.cache/
+
+# 数据产物 (体积大, 可重新生成) —— 仅忽略仓库根级目录（fixtures 内的 data/output 需入库）
+/data/
+/output/
+*.db
+*.sqlite3
+
+# IDE & 工具
+.zed/
+.superpowers/
+.scratch/
+.idea/
+.vscode/
+
+# macOS / Windows
+__MACOSX/
+.DS_Store
+Thumbs.db
+
+# 临时输出
+.venv_tmp/
+*.tmp
+*.log
+
+# 环境
+.env
+.venv/
+venv/
+
+# Agent 本地配置 (含权限/API key，不进版本控制)
+.claude/settings*.json
+
+# Git worktrees（窗口任务制工作区）
+.worktrees/
+
+# 演示克隆仓库（Issue 模式产物，不入库）
+workspace/*/
+
+# 内部需求文档（项目作为独立项目处理，不入库；本地保留）
+/03_*.md

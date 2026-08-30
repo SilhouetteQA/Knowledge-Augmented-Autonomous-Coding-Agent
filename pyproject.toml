@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowledge-augmented-coding-agent"
+version = "0.1.0"
+description = "领域知识增强的自主编程 Agent：基于 LangGraph、MCP、Knowledge Graph、Docker Sandbox 与 GitHub Workflow 的 Autonomous Software Engineering Agent"
+readme = "readme.md"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.40",
+    "python-dotenv>=1.0",
+    "langgraph>=1.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+eval = [
+    "langfuse>=4.0",
+    "clickhouse-connect>=1.7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "docker: 需要 Docker 守护进程的集成测试（无 Docker 时跳过）",
+    "mcp: 需要 MCP 知识服务配置（KA_KNOWLEDGE_MCP*，见 .env.example）的集成测试（无配置时跳过）",
+]

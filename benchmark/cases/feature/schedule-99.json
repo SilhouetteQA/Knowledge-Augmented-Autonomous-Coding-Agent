@@ -1,0 +1,20 @@
+{
+  "id": "schedule-99",
+  "category": "feature",
+  "repository": "dbader/schedule",
+  "issue": {
+    "number": 99,
+    "title": "Schedule task on weekends or workweek",
+    "body": "That's would be very useful and I believe it's pretty common case \n",
+    "labels": [
+      "enhancement"
+    ],
+    "state": "open"
+  },
+  "gold_patch": "gold/schedule-99.diff",
+  "must_pass": [
+    "test_schedule.py"
+  ],
+  "max_iterations": 30,
+  "notes": "类别 feature；issue #99 Schedule task on weekends or workweek（open，enhancement）；gold 取 PR #656（已合并），单文件 schedule/__init__.py 新增 .workday()/.weekend() 属性与 weekday_constraints 工作日调度逻辑。"
+}
