@@ -30,7 +30,7 @@ def _patch_github(monkeypatch):
     monkeypatch.setattr(issue_mod, "get_repository", lambda repo: _fake_repo())
     monkeypatch.setattr(issue_mod, "clone_repository", lambda d, r: None)
     monkeypatch.setattr(issue_mod, "create_branch", lambda d, b, base: None)
-    monkeypatch.setattr(issue_mod, "git_diff_since",
+    monkeypatch.setattr(issue_mod, "worktree_full_diff",
                         lambda d, base: "+fixed\n-fixed\n")
     # A4 红线拦截：干跑 workdir 非 git 仓库，默认无红线（红线语义由专门集成测试覆盖）
     monkeypatch.setattr(issue_mod, "_enforce_red_lines", lambda d, b: [],
@@ -91,7 +91,7 @@ def test_dry_run_no_changes_review_fail(tmp_path, monkeypatch):
     任何一次 LLM 调用都不是审查（REVIEW_PROMPT）调用。
     """
     _patch_github(monkeypatch)
-    monkeypatch.setattr(issue_mod, "git_diff_since", lambda d, base: "")
+    monkeypatch.setattr(issue_mod, "worktree_full_diff", lambda d, base: "")
     script = [
         LLMMessage(role="assistant", content=json.dumps(["修复"], ensure_ascii=False)),
         LLMMessage(role="assistant", content="   "),      # 首轮图结论为空白（无实质内容）
@@ -900,3 +900,40 @@ def test_auto_approve_eligible_pushes(tmp_path, monkeypatch):
     from tools.approval import load_approval
     assert load_approval(path).status == "approved"
     assert load_approval(path).pr_url == "https://github.com/o/r/pull/9"
+
+
+def test_approval_diff_includes_untracked_content(tmp_path, monkeypatch):
+    """CR-1 接线：产单 diff 走 worktree_full_diff——Agent 新建文件内容进入审批单。"""
+    from types import SimpleNamespace
+    _patch_github(monkeypatch)
+    # 恢复真实 worktree_full_diff（_patch_github 的 mock 会覆盖它；本测试验证接线）
+    from tools.github_tools import worktree_full_diff as real_full_diff
+    monkeypatch.setattr(issue_mod, "worktree_full_diff", real_full_diff)
+    monkeypatch.setattr(issue_mod, "_enforce_red_lines", lambda d, b: [])
+    monkeypatch.setattr(issue_mod, "_review_diff", lambda *a, **k: "PASS ok")
+
+    def fake_graph(prompt, llm, max_iterations=20, workspace_root=None, **kw):
+        with open(os.path.join(workspace_root, "new_mod.py"), "w",
+                  encoding="utf-8") as f:
+            f.write("agent_wrote = True\n")
+        return SimpleNamespace(steps=[], final_answer="已新建模块",
+                               verify_rounds=1, stopped_by_limit=False,
+                               iteration_count=1, test_results=[])
+
+    monkeypatch.setattr(issue_mod, "run_agent_graph", fake_graph)
+
+    def fake_clone(repo_dir, repo):
+        os.makedirs(repo_dir, exist_ok=True)
+        issue_mod.run_host(["git", "init", "-b", "main"], cwd=repo_dir)
+        issue_mod.run_host(["git", "-c", "user.name=t", "-c", "user.email=t@t",
+                            "commit", "--allow-empty", "-m", "base"], cwd=repo_dir)
+        return None
+
+    monkeypatch.setattr(issue_mod, "clone_repository", fake_clone)
+    task = IssueTask(repository="test/arc-wiki", issue_number=123,
+                     workspace_root=str(tmp_path),
+                     approval_dir=str(tmp_path / "approvals"))
+    result = run_issue_agent(task, MockLLMClient([]))
+    data = json.load(open(result.approval_path, encoding="utf-8"))
+    assert "diff --git a/new_mod.py b/new_mod.py" in data["diff"]
+    assert "+agent_wrote = True" in data["diff"]

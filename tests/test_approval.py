@@ -7,6 +7,7 @@ import pytest
 from tools.approval import (
     ApprovalError, create_approval, load_approval, save_approval,
 )
+from tools.github_tools import worktree_full_diff
 
 
 def _approval(**kw):
@@ -171,6 +172,40 @@ def test_approve_executes_push_and_pr(tmp_path, monkeypatch):
     assert calls["commit"] == ["fix: 修复 #123 修复重复创建实体"]
     assert calls["push"] == ["fix/issue-123"]
     assert calls["pr"][0][:2] == ("fix/issue-123", "main")
+
+
+def _approval_for_repo_full(workdir):
+    """CR-1：按完整工作树 diff（含 untracked 内容）生成审批单。"""
+    diff = worktree_full_diff(workdir, "main")
+    assert isinstance(diff, str)
+    return _approval(diff=diff, base_branch="main")
+
+
+def test_approve_commits_untracked_in_approval(tmp_path, monkeypatch):
+    """CR-1 正例：未跟踪新文件随审批 diff 入指纹，未篡改时 approve 正常执行。"""
+    workdir = _init_repo_with_change(tmp_path)
+    with open(os.path.join(workdir, "new_mod.py"), "w", encoding="utf-8") as f:
+        f.write("agent_wrote = True\n")
+    approval = _approval_for_repo_full(workdir)
+    calls = _patch_github_ops(monkeypatch)
+    result = approval_mod.approve_request(approval, "approve", None, workdir)
+    assert result.status == "approved"
+    assert result.pr_url
+
+
+def test_drift_detects_untracked_content_change(tmp_path, monkeypatch):
+    """CR-1：产单后未跟踪文件内容被篡改 → 完整 diff 指纹不一致 → 拒绝执行。"""
+    workdir = _init_repo_with_change(tmp_path)
+    new_file = os.path.join(workdir, "new_mod.py")
+    with open(new_file, "w", encoding="utf-8") as f:
+        f.write("agent_wrote = True\n")
+    approval = _approval_for_repo_full(workdir)
+    calls = _patch_github_ops(monkeypatch)
+    with open(new_file, "w", encoding="utf-8") as f:
+        f.write("agent_wrote = True  # tampered\n")
+    with pytest.raises(ApprovalError, match="仓库状态与审批时不一致"):
+        approval_mod.approve_request(approval, "approve", None, workdir)
+    assert calls["commit"] == [] and calls["push"] == []
 
 
 def test_approve_drift_detected(tmp_path, monkeypatch):

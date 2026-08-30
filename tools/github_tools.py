@@ -2,11 +2,16 @@
 
 凭据边界：gh 与 git 写操作全部在宿主执行（凭据不进沙箱容器）。
 """
+import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 
 from tools.file_tools import ToolError
+
+# 未跟踪文件内容内联上限（超限按指纹行处理，防审批单膨胀）
+_UNTRACKED_INLINE_LIMIT = 1 << 20
 
 
 @dataclass
@@ -122,6 +127,48 @@ def sync_repository(repo_dir: str, base: str) -> ToolError | None:
 def git_diff_since(repo_dir: str, base: str) -> str | ToolError:
     """工作区相对 base 的未提交变更 diff（宿主执行）。"""
     return _run(["git", "diff", base], cwd=repo_dir)
+
+
+def worktree_full_diff(repo_dir: str, base: str) -> str | ToolError:
+    """工作区相对 base 的完整变更 diff（git diff + 未跟踪新文件伪 diff）。
+
+    git diff 语义不含 untracked 文件，而 approve 的 git add -A 会将其提交进
+    PR（CR-1 审批盲区）：审批 diff 必须与实际提交内容一致。本函数 = git diff
+    <base> + 每个未跟踪文件的 new-file 伪 diff（文本内容内联为 + 行；二进制
+    或超 1MB 文件以 sha256 指纹行占位——内容变化仍改变指纹文本，漂移检查可
+    检出）。产单（agent/issue.py）、Reviewer 输入与 approve 漂移检查
+    （tools/approval.py）共用本函数，保证「审批看到的就是将要提交的」。
+    """
+    diff = _run(["git", "diff", base], cwd=repo_dir)
+    if isinstance(diff, ToolError):
+        return diff
+    others = _run(["git", "ls-files", "--others", "--exclude-standard"], cwd=repo_dir)
+    if isinstance(others, ToolError):
+        return others
+    blocks = [_untracked_diff_block(repo_dir, p.strip())
+              for p in others.splitlines() if p.strip()]
+    if not blocks:
+        return diff
+    if diff and not diff.endswith("\n"):
+        diff += "\n"
+    return diff + "\n".join(blocks)
+
+
+def _untracked_diff_block(repo_dir: str, rel: str) -> str:
+    """单个未跟踪文件 → new-file 伪 diff 块（rel 为 ls-files 输出的正斜杠路径）。"""
+    header = f"diff --git a/{rel} b/{rel}\nnew file mode 100644\n"
+    try:
+        with open(os.path.join(repo_dir, rel), "rb") as f:
+            raw = f.read()
+    except OSError as e:
+        return f"{header}+（读取失败: {e}）\n"
+    if len(raw) > _UNTRACKED_INLINE_LIMIT or b"\0" in raw[:8192]:
+        digest = hashlib.sha256(raw).hexdigest()
+        return f"{header}+++ b/{rel}（二进制/超限文件不内联，sha256={digest}）\n"
+    text = raw.decode("utf-8", errors="replace")
+    lines = [f"+{ln}" for ln in text.splitlines()]
+    body = f"--- /dev/null\n+++ b/{rel}\n" + ("\n".join(lines) + "\n" if lines else "")
+    return header + body
 
 
 def commit_changes(repo_dir: str, message: str) -> ToolError | None:

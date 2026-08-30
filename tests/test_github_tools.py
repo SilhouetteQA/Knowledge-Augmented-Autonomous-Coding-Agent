@@ -18,6 +18,7 @@ from tools.github_tools import (
     git_diff_since,
     push_branch,
     sync_repository,
+    worktree_full_diff,
 )
 
 
@@ -112,6 +113,46 @@ def test_git_diff_since(tmp_path):
 def test_git_diff_since_failure(tmp_path):
     repo = _init_repo(tmp_path)
     assert isinstance(git_diff_since(repo, "nope-branch"), ToolError)
+
+
+def test_worktree_full_diff_includes_untracked(tmp_path):
+    """CR-1：完整 diff = git diff + 未跟踪新文件伪 diff（内容内联可审查）。"""
+    repo = _init_repo(tmp_path)
+    create_branch(repo, "fix/issue-1", "main")
+    (Path(repo) / "a.py").write_text("x = 2\n", encoding="utf-8")
+    (Path(repo) / "new_mod.py").write_text("agent_wrote = True\n", encoding="utf-8")
+    diff = worktree_full_diff(repo, "main")
+    assert isinstance(diff, str)
+    assert "-x = 1" in diff and "+x = 2" in diff           # tracked 变更保留
+    assert "diff --git a/new_mod.py b/new_mod.py" in diff   # untracked 入 diff
+    assert "new file mode" in diff
+    assert "+agent_wrote = True" in diff
+
+
+def test_worktree_full_diff_untracked_binary_hashed(tmp_path):
+    """二进制 untracked：不内联内容，以 sha256 指纹行占位（内容变化仍改变指纹）。"""
+    repo = _init_repo(tmp_path)
+    (Path(repo) / "blob.bin").write_bytes(b"ab\x00cd")
+    diff = worktree_full_diff(repo, "main")
+    assert "blob.bin" in diff and "sha256=" in diff
+
+
+def test_worktree_full_diff_untracked_drift_changes_text(tmp_path):
+    """untracked 内容变化 → 完整 diff 文本变化（sha256 漂移检查可检出篡改）。"""
+    repo = _init_repo(tmp_path)
+    p = Path(repo) / "new_mod.py"
+    p.write_text("v = 1\n", encoding="utf-8")
+    d1 = worktree_full_diff(repo, "main")
+    p.write_text("v = 2\n", encoding="utf-8")
+    d2 = worktree_full_diff(repo, "main")
+    assert d1 != d2
+
+
+def test_worktree_full_diff_no_untracked_matches_git_diff(tmp_path):
+    """无 untracked：与 git diff 输出逐字节一致（既有审批单兼容）。"""
+    repo = _init_repo(tmp_path)
+    (Path(repo) / "a.py").write_text("x = 2\n", encoding="utf-8")
+    assert worktree_full_diff(repo, "main") == git_diff_since(repo, "main")
 
 
 def test_clone_repository_passes_through(monkeypatch):

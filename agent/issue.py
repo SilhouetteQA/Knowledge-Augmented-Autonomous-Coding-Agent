@@ -21,9 +21,9 @@ from tools.github_tools import (
     create_branch,
     get_issue,
     get_repository,
-    git_diff_since,
     run_host,      # 宿主只读执行器（统一编码/超时/ToolError 语义，A3 复用；公开 API）
     sync_repository,
+    worktree_full_diff,   # 完整 diff（含 untracked，CR-1）：产单/Reviewer/漂移检查共用
 )
 from tools.tracing import traced
 
@@ -395,7 +395,7 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
     red_line_reverts: list[str] = []
     round_reverts = _enforce_red_lines(repo_dir, repo_info.default_branch)
     red_line_reverts += [p for p in round_reverts if p not in red_line_reverts]
-    diff = git_diff_since(repo_dir, repo_info.default_branch)
+    diff = worktree_full_diff(repo_dir, repo_info.default_branch)
     if isinstance(diff, ToolError):
         raise ToolError(f"读取 diff 失败: {diff.message}")
     review = _review_diff(llm, diff, prompt, result.verify_rounds,
@@ -415,7 +415,7 @@ def run_issue_agent(task: IssueTask, llm: LLMClient,
                                  knowledge_client=knowledge_client)
         round_reverts = _enforce_red_lines(repo_dir, repo_info.default_branch)
         red_line_reverts += [p for p in round_reverts if p not in red_line_reverts]
-        diff = git_diff_since(repo_dir, repo_info.default_branch)
+        diff = worktree_full_diff(repo_dir, repo_info.default_branch)
         if isinstance(diff, ToolError):
             raise ToolError(f"读取 diff 失败: {diff.message}")
         # 重试轮同样携带工作树事实：diff 已在重试后重新计算，context 也取

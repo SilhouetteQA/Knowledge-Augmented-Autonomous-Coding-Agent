@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from tools.file_tools import ToolError
 from tools.github_tools import (
-    commit_changes, create_pull_request, git_diff_since, push_branch,
+    commit_changes, create_pull_request, push_branch, worktree_full_diff,
 )
 
 # 已知动作类型（扩展点：知识纠错 --apply 解冻后注册并实现执行逻辑）
@@ -138,11 +138,15 @@ def _branch_exists(repo_dir: str, branch: str) -> bool:
 
 
 def _check_drift(approval: ApprovalRequest, repo_dir: str) -> None:
-    """执行前漂移检查：分支存在 + 当前 diff 与审批时指纹一致。"""
+    """执行前漂移检查：分支存在 + 当前完整 diff 与审批时指纹一致。
+
+    完整 diff = worktree_full_diff（含未跟踪新文件内容，CR-1）：产单后新建
+    文件、或未跟踪文件内容被篡改，指纹均不一致 → 拒绝执行。
+    """
     if not _branch_exists(repo_dir, approval.branch):
         raise ApprovalError(
             f"分支不存在: {approval.branch}（仓库状态变化，请重新运行 --issue 生成新审批单）")
-    current = git_diff_since(repo_dir, approval.base_branch)
+    current = worktree_full_diff(repo_dir, approval.base_branch)
     if isinstance(current, ToolError):
         raise ApprovalError(f"读取当前 diff 失败: {current.message}")
     if _sha256(current) != approval.diff_sha256:
