@@ -4,14 +4,11 @@
 >
 > 基于 LangGraph、MCP、Knowledge Graph、Docker Sandbox 与 GitHub Workflow 的 Autonomous Software Engineering Agent
 
-基于现有的《明日方舟》全量剧情结构化知识库、Knowledge Graph 与 LangGraph ReAct Agent，进一步构建能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，最终产出 GitHub Pull Request。
+一个能够**自主完成真实 GitHub Issue** 的编程 Agent：理解真实代码仓库、调用工具、操作隔离环境、执行代码、观察结果、根据反馈迭代修复，经独立审查与人工审批后产出 GitHub Pull Request。在通用 Coding Agent 能力之上，核心特色是**双知识检索**——同时调用代码知识（AST 代码图）与可插拔的领域知识源（经 MCP 接入的知识服务）。
 
-> 项目状态：W0-W8 全部完成 —— W1 本地 Workspace、W2 Shell + Test、W3 Docker Sandbox（容器化执行 + 六维资源限制 + 一个任务一个沙箱）、W4 Repository Intelligence（代码图 + Arknights 域知识双检索）、W5 GitHub Issue Agent（Issue → 沙箱工作 → Review → push 门禁的 PR 全链路；真实演示 dbader/schedule#646 修复与社区方案一致）+ 知识抽查扩展（三次提取产物 2% 抽查：来源可靠性 96.88% / 内容实用性 70.98%，main.py --correct）、W6 Evaluation（Issue Benchmark 案例库五类 + Issue Resolution Rate 核心指标 + LLM-as-a-Judge 双判定 + `--benchmark/--compare` CLI + Langfuse 部署文件与可开关 tracing，评测执行器须 docker）、W7 Observability（graph 七节点 + tool.execute/test.run + issue.run retry 指标全链路 Trace；`--trace-report` 经 ClickHouse 直查导出 JSON+Markdown 报告——真实 W6 trace 与 W7 新 trace 均验证通过；SDK 4.14.4 经 OTel 上报落库）、W8 Human-in-the-loop（两段式 --approve 审批门禁 + 独立 Reviewer + 红线机械拦截；真实远程修复里程碑：五轮迭代 → 人工批准 → 真实 PR #3；D5 评估：完全自动 PR 暂不推荐，建议条件自动放行档）。全量回归 440 passed / 4 skipped / 0 failed（2026-08-30 全量代码审查修复 21 项后，见 docs/analysis/2026-08-30-unfinished-ledger-v2.md 与 docs/2026-08-30-code-review-report.md）。三轮真实 GitHub Issue 实测（rich/jsonschema/markdown-it-py/dateutil + 兄弟项目 Issue #4）驱动的补强已全部落地（edit_file/环境声明/G1 降级/G3 钩子/G8 回传/untracked 红线等，见 docs/analysis/2026-08-29-unfinished-ledger.md）。下一步：知识纠错第二阶段——死数据事实核查报告（范围已批，spec 见 docs/specs/2026-08-30-fact-check-stage2.md，待实施），其后 --apply 审批写回（action_type=knowledge_apply 已预留）。模型分流：默认 mimo-v2.5，长预算任务可显式切 deepseek-v4-flash（G8 修复后可用，预算纪律弱需预算提醒）。
-> 开发规范见 [agents.md](agents.md)，窗口路线图见 [docs/roadmap.md](docs/roadmap.md)。
+> 项目状态：W0-W8 窗口全部完成；2026-08-30 完成全量代码审查并修复 2 Critical / 18 Important / 35 Minor。全量回归 391 passed / 3 skipped / 0 failed。能力边界与实测战绩见 [docs/2026-08-30-project-overview.md](docs/2026-08-30-project-overview.md)。
 
----
-
-## 最终目标
+## 最终目标链路
 
 ```text
 GitHub Issue
@@ -22,75 +19,50 @@ GitHub Issue
 → Test
 → Failure Analysis
 → Iterative Repair
-→ Code Review
+→ Code Review (独立 Reviewer)
+→ Human Approval (审批门禁)
 → GitHub Pull Request
 ```
 
-核心不是做"AI 写代码工具"，而是证明 Agent 能在真实软件工程环境中自主完成端到端任务。
+## 能力等级（Level 1-4 全部达成）
 
-## 能力等级（目标：做到第四阶段）
-
-| 等级 | 名称 | 能力 | 完成标志 |
+| 等级 | 名称 | 能力 | 达成证据 |
 |------|------|------|----------|
-| Level 1 | Code Tool Agent | list_files / read_file / search_code / write_file / run_command / run_tests | 读取 → 理解 → 修改代码 → 执行测试 |
-| Level 2 | Autonomous Coding Loop | Planner / Agent Loop / Observation / Retry / Reflection / Git Diff | Task → Analyze → Plan → Tool → Observe → Test → Debug → Review |
-| Level 3 | Sandbox + Repository | Docker Sandbox / Git Clone / 独立 Workspace / 资源限制 | Agent → Tool → Docker Sandbox → Repository → Code / Test / Git |
-| Level 4 | GitHub Issue → PR | GitHub API 全链路 | Issue → Clone → Branch → 修改 → 测试 → Review → Commit → Push → PR |
+| L1 | Code Tool Agent | list_files / read_file / search_code / write_file / edit_file / run_command / run_tests | 真实 LLM 读取-理解-修改-确认闭环 |
+| L2 | Autonomous Coding Loop | LangGraph 显式规划/执行/验证/反思/重试 | 真实缺陷任务修复闭环（含失败重试与因果验证） |
+| L3 | Sandbox + Repository | Docker 沙箱 / Git Clone / 独立 Workspace / 六维资源限制 | 任务全程容器化，容器内测试全绿，无残留 |
+| L4 | GitHub Issue → PR | GitHub API 全链路 + 审批门禁 | 多个真实仓库 Issue 修复；真实 PR 交付 |
 
-## 核心特色：领域知识增强
+## 核心特色：双知识检索
 
-与普通 Coding Agent 的关键区别——同时调用代码知识与领域知识：
+Agent 在决策阶段同时持有两类知识工具：
 
-```text
-GitHub Issue
-     │
-     ↓
-  Planner
-     │
- ┌───┴───┐
- ↓       ↓
-Repository Agent   Domain Knowledge Agent
- ↓       ↓
-Code Knowledge     Arknights KG
- └───┬───┘
-     ↓
- Task Context
-     ↓
-   Coder
-```
+- **代码知识**：Python AST 解析（module/class/function/import/calls，支持 async）→ 内存 CodeGraph → 五类查询（calls / inheritance / imports / module_of / symbols）；
+- **领域知识**：`search_knowledge` 经 stdio MCP 子进程接入**可插拔知识服务**（`KA_KNOWLEDGE_MCP*` 配置化；未配置时优雅降级为工具级提示，不阻塞任务）。
 
-Agent 同时调用 `search_code()` 与 `search_knowledge()`，得到 Code Context + Domain Context 后再决定如何修改。最自然的落地方式：**把现有 Arknights LLM Wiki 项目本身作为真实代码仓库**，让 Agent 完成领域逻辑类 Issue（如实体去重）。
-
-## 最终架构
+## 架构
 
 ```mermaid
 graph TD
     GH[GitHub] --> IO[Issue / Repository]
-    IO --> API[API / Agent UI]
-    API --> AO[Agent Orchestrator]
-    AO --> P[Planner]
-    AO --> R[Researcher]
-    AO --> C[Coder]
-    P --> TE[Tool Executor]
-    R --> TE
-    C --> TE
+    IO --> API[CLI main.py]
+    API --> AO[LangGraph Orchestrator]
+    AO --> P[plan]
+    AO --> D[decide]
+    D --> E[execute]
+    E --> V[verify 强制测试]
+    V --> R[reflect]
+    R --> D
+    V --> F[finalize]
+    E --> TE[Tool Executor]
     TE --> FT[File Tools]
     TE --> GT[Git Tools]
     TE --> ST[Shell Tools]
-    FT --> SB[Docker Sandbox]
-    GT --> SB
-    ST --> SB
-    SB --> REPO[Repository]
-    REPO --> CODE[Code]
-    REPO --> TST[Tests]
-    CODE --> RES[Results]
-    TST --> RES
-    RES --> CR[Critic]
-    CR --> RT[Retry]
-    CR --> OK[Pass]
-    RT --> TE
-    OK --> RV[Review]
-    RV --> HA[Human Approval]
+    TE --> KG[Code Graph]
+    TE --> KN[Knowledge MCP]
+    TE --> SB[Docker Sandbox]
+    AO --> RV[Reviewer Agent]
+    RV --> HA[Human Approval / 条件自动放行]
     HA --> PR[GitHub PR]
 ```
 
@@ -98,94 +70,89 @@ graph TD
 
 | 层级 | 方案 |
 |------|------|
-| Agent | Python 3.12+ / LangGraph / OpenAI 兼容 LLM / Pydantic |
-| Code Understanding | Tree-sitter / Python AST / ripgrep |
-| Tools | Filesystem / Shell / Git / GitHub API / MCP |
-| Runtime | Docker / Redis / PostgreSQL |
-| Evaluation | 自定义 Benchmark（GitHub Issue） / LLM-as-a-Judge / 回归测试 |
-| Observability | OpenTelemetry / Langfuse |
-| Web | FastAPI / React / Next.js |
-| 测试 | pytest（TDD，red → green） |
+| Agent | Python 3.12+ / LangGraph / OpenAI 兼容 LLM（双供应商可切换） |
+| Code Understanding | Python AST + ripgrep（代码图五类查询） |
+| Tools | Filesystem / Shell / Git / GitHub API（gh CLI）/ MCP |
+| Runtime | Docker（一个任务一个沙箱，cap-drop 硬化） |
+| Evaluation | 自定义 Benchmark（六类案例） / LLM-as-a-Judge / 基线预检 / 双口径 Resolution Rate |
+| Observability | OpenTelemetry / Langfuse v4（events 通道 + ClickHouse 直查导出） |
+| 测试 | pytest（TDD：red → green） |
 
 ## 目录结构
 
 ```
-Knowledge-Augmented Autonomous Coding Agent/
-├── agents.md                     # Agent 工作规范（Superpowers 流程 / 窗口任务制 / Git 规则）
-├── readme.md                     # 本文件
-├── docs/
-│   ├── roadmap.md                # W0-W8 实现路径路线图（窗口任务制）
-│   ├── specs/                    # 设计规格（brainstorming 产出）
-│   ├── plans/                    # 实施计划（writing-plans 产出）
-│   └── devlog.md                 # 开发日志（架构决策 / 指标 / 遗留问题）
-├── agent/                        # Agent 核心（LangGraph 图、节点、状态）
-├── tools/                        # 工具层（File / Shell / Git / GitHub / MCP）
-├── workspace/                    # 沙箱工作区（demo-project 等被操作仓库）
-├── tests/                        # 测试套件
-├── config/                       # 配置文件
-└── pyproject.toml                # 项目元数据与依赖
+├── main.py                # CLI：--graph / --issue / --approve / --benchmark / --compare / --trace-report
+├── agent/                 # Agent 核心（LangGraph 图、ReAct 循环、Issue 编排、LLM 客户端）
+├── tools/                 # 工具层（File / Shell / Docker 沙箱 / GitHub / 审批单 / 代码图 / MCP 知识客户端 / trace）
+├── benchmark/             # 评测（loader / runner / judge / report + cases 案例库）
+├── tests/                 # 测试套件（391 项；docker/mcp 标记条件跳过）
+├── docs/                  # roadmap / devlog / specs / plans / analysis / 审查报告
+├── Dockerfile             # 沙箱基础镜像 ka-sandbox:py312-v1
+└── docker/langfuse/       # Langfuse v4 观测栈（六容器 compose）
 ```
-
-## 实现路径（窗口路线图）
-
-按《实现内容与实现路径》文档第 12 节划分为 9 个窗口，每个窗口一个独立 worktree 与 feature 分支，完整路线图见 [docs/roadmap.md](docs/roadmap.md)。
-
-| 窗口 | 名称 | 关键交付 |
-|------|------|----------|
-| W0 | 项目初始化 | git 初始化、AGENTS/README/路线图、脚手架（已完成） |
-| W1 | 本地 Workspace | 文件工具四件套：list_files / read_file / search_code / write_file |
-| W2 | Shell + Test | run_command / run_tests / git 只读 + LangGraph 编排（plan → decide ⇄ execute → verify → reflect）（已完成） |
-| W3 | Docker Sandbox | 容器化执行 + timeout / CPU / 内存 / 网络 / 文件系统限制 |
-| W4 | Repository Intelligence | Code Parser → Code Knowledge Graph + 接入 Arknights KG |
-| W5 | GitHub Issue Agent | Issue → Clone → Branch → Work → Test → Review → Commit → Push → PR（MVP） |
-| W6 | Evaluation | Issue Benchmark 五类 + Issue Resolution Rate 核心指标（已完成） |
-| W7 | Observability | 全链路 Trace + Langfuse / OpenTelemetry（已完成） |
-| W8 | Human-in-the-loop | Reviewer Agent + 人工审批门禁后自动 PR（已完成） |
-
-## 推荐的真实 Issue（用于 W5/W6 验证）
-
-1. 普通 Bug：某 API 在特定情况下返回 500
-2. 测试补充：为知识抽取模块增加边界条件测试
-3. 领域逻辑 Bug：同一角色在不同章节被识别为不同 Entity（体现双知识检索价值）
-4. 跨模块任务：修改实体合并逻辑并保证已有 KG 数据兼容
-5. 旗舰 Demo：优化三遍 LLM 抽取 Pipeline，降低重复实体生成率并保持数据兼容
 
 ## 快速开始
 
-> 已实现 Level 1-4 全链路：文件工具四件套 + edit_file 局部编辑 + run_command/run_tests + git 只读三件套 + 双知识检索 + Docker 沙箱 + GitHub Issue 全链路（--issue 产单停等 → --approve 人工审批推送）+ 基准评测与全链路 Trace。
-
 ```bash
-# 环境要求：Python 3.12+、ripgrep（PATH 或 RIPGREP_BIN 指定）
+# 环境要求：Python 3.12+、ripgrep（PATH 或 RIPGREP_BIN）、Docker（沙箱/评测）
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[dev]"
+python -m pip install -e ".[dev]"          # 评测/trace 导出另装 ".[eval]"
 
-# 配置 LLM（复制 .env.example 为 .env 并填写）
-# opencode_go_api / OPENCODE_GO_BASE_URL（默认 https://opencode.ai/zen/go/v1）/ OPENCODE_GO_MODEL（默认 mimo-v2.5）
-# 部署必须显式设置 KA_LLM_TIMEOUT_S（建议 120）——未设置时 SDK 默认 600s，长任务单次请求挂起会拖垮整轮迭代
+# 配置：复制 .env.example 为 .env 填写（opencode_go_api 等；键名说明见模板注释）
+# 部署必须显式设置 KA_LLM_TIMEOUT_S（建议 120）——SDK 默认 600s 会拖垮长任务
 
 # 运行测试
-.venv\Scripts\python.exe -m pytest tests/
+python -m pytest tests/
 
-# 运行 Agent（工作区默认 workspace/，可放入任意真实项目）
-.venv\Scripts\python.exe main.py "在 demo-project 中定位某函数并添加注释" --workspace workspace
+# 运行 Agent（workspace 内放任意真实项目）
+python main.py "在 demo-project 中定位某函数并添加注释" --workspace workspace
 ```
 
-## 常用命令
+### GitHub Issue 全链路（两段式审批）
 
 ```bash
-pytest tests/ -v                 # 全量测试
-pytest tests/xxx.py -v           # 单文件测试
-
-# Issue 全链路（干跑产单停等，不推送）
+# 干跑产单停等（远端零副作用；默认 docker 沙箱隔离不可信输入）
 python main.py "owner/name#123" --issue --max-iterations 40
-# 人工审批（approve 才 commit+push+建 PR；reject 零远端副作用）
+
+# 人工审批：approve 才 commit+push+建 PR；reject 零远端副作用
 python main.py --approve output/approvals/<审批单>.json --decision approve
-# 基准评测 / 版本对比 / Trace 导出（需 ".[eval]" 与 docker 执行器）
-python main.py --benchmark --executor docker
-python main.py --compare <run_id>
-python main.py --trace-report <trace_id>
+
+# 条件自动放行档（Reviewer PASS + 红线 0 + 测试全绿 + 非删除型）
+python main.py --approve <审批单>.json --decision approve --auto-approve
 ```
 
-## 关联项目
+### 基准评测与可观测
 
-- **Arknights LLM Wiki**（兄弟项目）：本项目的领域知识来源（Knowledge Graph / LangGraph Agent / MCP 能力），同时作为 Agent 的首个真实操作仓库。
+```bash
+python main.py --benchmark --executor docker     # 六类案例评测（需 ".[eval]" 与 docker）
+python main.py --compare <run_id>                # 版本对比
+python main.py --trace-report <trace_id>         # 全链路 Trace 导出（JSON+MD）
+```
+
+观测栈部署：`docker/langfuse/`（六容器 compose，CHANGEME 占位符需全部替换）。
+
+## 安全与边界
+
+- **审批门禁**：推送唯一入口是 `--approve`；审批单含完整 diff（含未跟踪新文件内容）+ sha256 漂移检查 + 终态防重放 + reject 零副作用。
+- **红线机械拦截**：命中红线模式（`KA_REDLINE_PATTERNS` 可配）的文件在进 diff/审查/审批前被强制还原。
+- **凭据边界**：gh/git 写操作全部宿主执行，凭据不进沙箱；`.env` 不入库（`.gitignore` 覆盖）。
+- **沙箱隔离**：Issue 内容视为不可信输入，默认容器化执行；不可信内容无宿主 shell 通路。
+
+## 文档索引
+
+| 文档 | 内容 |
+|------|------|
+| [docs/roadmap.md](docs/roadmap.md) | W0-W8 窗口路线图与验收记录 |
+| [docs/devlog.md](docs/devlog.md) | 开发日志（架构决策 / 指标 / 实测记录） |
+| [docs/2026-08-30-project-overview.md](docs/2026-08-30-project-overview.md) | 项目全景：开发过程 / 功能 / 进度 / 实测战绩 |
+| [docs/2026-08-30-tech-stack-and-deployment.md](docs/2026-08-30-tech-stack-and-deployment.md) | 技术栈 / 知识内容体系 / Docker 部署指南 |
+| [docs/2026-08-30-code-review-report.md](docs/2026-08-30-code-review-report.md) | 全量代码审查报告（2C/18IM/35Min + 修复记录） |
+| docs/specs/ · docs/plans/ · docs/analysis/ | 设计规格 / 实施计划 / 分析与台账 |
+
+## 分支与历史说明
+
+本仓库远程以**全新初始提交**导入（安全审查后的干净快照）。本地保留完整开发历史（窗口制 171+ 提交）；领域知识服务的具体集成实现（Arknights 知识库对接、知识抽查 `--correct`、域规则判定器、域基准案例）在本地历史分支中维护，后续以 feature 分支形式回归本仓库——通用 MCP 接入接口（`KA_KNOWLEDGE_MCP*`）已在主分支就绪，回归时仅需配置对接。
+
+## 开发规范
+
+见 [agents.md](agents.md)：Superpowers 全套流程（brainstorming → plan → TDD → review）、窗口任务制（一个窗口 = 一个 worktree = 一个 feature 分支）、Conventional Commits。
