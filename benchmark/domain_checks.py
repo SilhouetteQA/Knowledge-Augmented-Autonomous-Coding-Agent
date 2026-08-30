@@ -378,14 +378,23 @@ _DESTRUCTIVE_DELETES = (
 
 
 def check_deletions(diff: str, data_dir: str) -> DomainCheckResult:
-    """diff 删除文件集 → 逐条核验三字段；无删除 SKIP，任一违规 FAIL（附条目与字段证据）。"""
+    """diff 删除文件集 → 逐条核验三字段；无删除 SKIP，任一违规 FAIL（附条目与字段证据）。
+
+    BM-1（基线对比，与 check_bridge 口径对称）：三判据基于剩余数据（被删条目
+    文件已不在工作树）——但若条目改前（git HEAD 基线）有任一证据而改后归零，
+    说明引用/证据与条目同批删除（引用剥离），同样判 FAIL；真死数据的完整
+    清理（改前即无证据）不受影响。剩余数据为空但基线可用时，按基线核验。
+    """
     deleted = _parse_deleted_paths(diff)
     if not deleted:
         return DomainCheckResult(DOMAIN_SKIP, "SKIP diff 无删除文件")
     data = _load_work_tree(data_dir)
+    pre = _load_git_head(data_dir)
     if not data.valid:
-        return DomainCheckResult(
-            DOMAIN_SKIP, "SKIP 无法判定：数据目录无知识数据（data/extractions 缺失或为空）")
+        if pre is None:
+            return DomainCheckResult(
+                DOMAIN_SKIP, "SKIP 无法判定：数据目录无知识数据（data/extractions 缺失或为空）")
+        data = pre   # 工作树无剩余数据：以基线为核验数据源（条目有证据即违规）
     violations: list[str] = []
     checked = 0
     for rel in deleted:
@@ -399,6 +408,14 @@ def check_deletions(diff: str, data_dir: str) -> DomainCheckResult:
         ev = data.deletion_evidence(name)
         if ev:
             violations.append(f"{rel}: {name}——" + "；".join(ev))
+            continue
+        # BM-1：剩余数据三判据全过，但改前仍有证据 → 引用剥离式删除
+        if pre is not None and pre is not data:
+            pre_ev = pre.deletion_evidence(name)
+            if pre_ev:
+                violations.append(
+                    f"{rel}: {name}——改前仍有证据（{'；'.join(pre_ev)}），"
+                    "改后全部消失：引用/证据与条目同批删除（引用剥离），判违规")
     if checked == 0 and not violations:
         return DomainCheckResult(
             DOMAIN_SKIP, "SKIP 删除文件均非知识数据条目，无法按数据判据核验")

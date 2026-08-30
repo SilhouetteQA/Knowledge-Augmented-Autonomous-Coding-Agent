@@ -75,7 +75,10 @@ def list_files(root: str | None = None, workspace_root: str | None = None) -> li
             entries.append(FileEntry(path=p.relative_to(root_path).as_posix(), is_dir=True, size=0))
         for name in filenames:
             p = Path(dirpath) / name
-            size = p.stat().st_size
+            try:
+                size = p.stat().st_size
+            except OSError:
+                continue  # IM-18：坏符号链接/竞态删除/权限拒绝——跳过该条目，不中断遍历
             entries.append(FileEntry(path=p.relative_to(root_path).as_posix(), is_dir=False, size=size))
     entries.sort(key=lambda e: e.path)
     return entries

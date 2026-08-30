@@ -292,3 +292,27 @@ def test_edit_file_crlf_old_text_matches(tmp_path):
     r = edit_file("mod.py", "y = 2\r\n", "y = 3\r\n", workspace_root=str(tmp_path))
     assert isinstance(r, EditResult) and r.replacements == 1
     assert p.read_bytes() == b"x = 1\r\ny = 3\r\n"
+
+
+def test_list_files_skips_unreadable_entries(tmp_path, monkeypatch):
+    """IM-18：遍历中 stat 失败（坏符号链接/竞态删除/权限拒绝）跳过该条目不抛异常。"""
+    import pathlib
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "ok.txt").write_text("a", encoding="utf-8")
+    (ws / "bad.txt").write_text("b", encoding="utf-8")
+
+    orig_stat = pathlib.Path.stat
+
+    def flaky_stat(self, *args, **kwargs):
+        if self.name == "bad.txt":
+            raise OSError("stat failed")
+        return orig_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "stat", flaky_stat)
+    entries = list_files(workspace_root=str(ws))
+    assert not isinstance(entries, ToolError)
+    names = [e.path for e in entries]
+    assert "ok.txt" in names
+    assert "bad.txt" not in names

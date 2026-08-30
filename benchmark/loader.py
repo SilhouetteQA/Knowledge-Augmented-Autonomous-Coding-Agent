@@ -76,9 +76,19 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
             raise CaseError(f"{path.name}: issue.{key} 须为字符串（got {issue[key]!r}）")
     if not isinstance(labels, list) or not all(isinstance(l, str) for l in labels):
         raise CaseError(f"{path.name}: issue.labels 须为字符串列表（got {labels!r}）")
+    # E9：domain_check 可选，取值 deletions/bridge 之一；缺省无（空串），显式空串与缺省同义。
+    # 非字符串或（非空且非允许取值）→ CaseError（含取值与允许集）。
+    # BM-2：校验前移——域 case 的 gold 放宽判定依赖它。
+    domain_check = data.get("domain_check", "")
+    if (not isinstance(domain_check, str)
+            or (domain_check and domain_check not in DOMAIN_CHECKS)):
+        raise CaseError(f"{path.name}: domain_check '{domain_check}' 非法"
+                        f"（应为 {DOMAIN_CHECKS}）")
     gold = data.get("gold_patch")
-    gold_full = path.parent.parent / gold if isinstance(gold, str) else None
-    if gold_full is None or not gold_full.is_file():
+    gold_full = path.parent.parent / gold if isinstance(gold, str) and gold else None
+    # BM-2：域 case（E9 规则判定器，无 gold 可比）不要求 gold 文件存在；
+    # 非域 case 维持必须存在（B9 只让 runner 跳过读取，不豁免校验）。
+    if not domain_check and (gold_full is None or not gold_full.is_file()):
         raise CaseError(f"{path.name}: gold_patch '{gold}' 文件不存在")
     must_pass = data.get("must_pass")
     if not isinstance(must_pass, list) or not must_pass or not all(
@@ -98,13 +108,6 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
     for i, cmd in enumerate(setup):
         if not isinstance(cmd, str):
             raise CaseError(f"{path.name}: setup_commands[{i}] 须为字符串（got {cmd!r}）")
-    # E9：domain_check 可选，取值 deletions/bridge 之一；缺省无（空串），显式空串与缺省同义。
-    # 非字符串或（非空且非允许取值）→ CaseError（含取值与允许集）。
-    domain_check = data.get("domain_check", "")
-    if (not isinstance(domain_check, str)
-            or (domain_check and domain_check not in DOMAIN_CHECKS)):
-        raise CaseError(f"{path.name}: domain_check '{domain_check}' 非法"
-                        f"（应为 {DOMAIN_CHECKS}）")
     # E10：expected_actions 可选 dict（如 {"deletions": 5}），缺省 {}；非 dict →
     # CaseError；键 deletions 存在时值须为非负 int（bool 为 int 子类，一并拒绝）。
     expected_actions = data.get("expected_actions", {})
@@ -121,7 +124,8 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
         issue=GitHubIssue(number=issue["number"], title=issue["title"],
                           body=issue["body"], labels=list(issue["labels"]),
                           state=issue["state"]),
-        gold_patch=str(gold), must_pass=list(must_pass),
+        gold_patch=str(gold) if isinstance(gold, str) else "",
+        must_pass=list(must_pass),
         max_iterations=max_iter, task_type=task_type, notes=data.get("notes", ""),
         setup_commands=list(setup), domain_check=domain_check,
         expected_actions=dict(expected_actions),

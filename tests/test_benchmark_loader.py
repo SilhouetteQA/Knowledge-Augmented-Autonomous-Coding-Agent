@@ -255,3 +255,37 @@ def test_expected_actions_invalid_raises(tmp_path, bad):
     _write_case(tmp_path, "bug", "x", expected_actions=bad)
     with pytest.raises(CaseError, match="expected_actions"):
         load_cases(str(tmp_path))
+
+def _domain_case_dict() -> dict:
+    return {
+        "id": "dom-1", "category": "domain", "repository": "o/r",
+        "issue": {"number": 4, "title": "清理死数据", "body": "b",
+                  "labels": [], "state": "open"},
+        "gold_patch": "gold/dom-1.diff",
+        "must_pass": ["test_x.py"],
+        "domain_check": "deletions",
+    }
+
+
+def test_loader_domain_case_without_gold_file(tmp_path):
+    """BM-2：domain case 不要求 gold_patch 文件存在（E9 规则判定器无 gold 可比）。"""
+    d = tmp_path / "domain"
+    d.mkdir()
+    (d / "dom-1.json").write_text(
+        json.dumps(_domain_case_dict(), ensure_ascii=False), encoding="utf-8")
+    cases = load_cases(str(tmp_path))
+    assert len(cases) == 1
+    assert cases[0].domain_check == "deletions"
+
+
+def test_loader_non_domain_case_still_requires_gold(tmp_path):
+    """BM-2：非域 case 维持 gold_patch 文件必须存在（不放宽）。"""
+    d = tmp_path / "bug"
+    d.mkdir()
+    case = _domain_case_dict()
+    case.update({"id": "bug-1", "category": "bug"})
+    case.pop("domain_check")
+    (d / "bug-1.json").write_text(
+        json.dumps(case, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(CaseError, match="gold_patch"):
+        load_cases(str(tmp_path))

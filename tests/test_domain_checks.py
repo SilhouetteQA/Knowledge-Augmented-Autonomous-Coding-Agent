@@ -342,3 +342,68 @@ def test_bridge_skip_not_git_repo(tmp_path):
     )
     res = domain_checks.check_bridge(diff, str(data_dir))
     assert res.verdict == DOMAIN_SKIP
+
+def _make_knowledge_repo(tmp_path, with_referrer: bool):
+    """构造知识数据 git 仓库：概念 md + 种子引用；with_referrer 控制改前是否有引用。"""
+    import json as _json
+    import subprocess as _sp
+
+    repo = tmp_path / "wikirepo"
+    ext = repo / "data" / "extractions" / "v3_wiki" / "concepts"
+    ext.mkdir(parents=True)
+    (ext / "测试概念.md").write_text("# 测试概念\n内容\n", encoding="utf-8")
+    concepts = [{"name": "测试概念", "aliases": [],
+                 "related_concepts": [], "source_records": []}]
+    if with_referrer:
+        concepts.append({"name": "另一概念", "aliases": [],
+                         "related_concepts": ["测试概念"], "source_records": []})
+    seed = repo / "data" / "extractions" / "v3_seed_db_v2.json"
+    seed.write_text(_json.dumps({"concepts": concepts}, ensure_ascii=False),
+                    encoding="utf-8")
+
+    def _git(*args):
+        _sp.run(["git", "-C", str(repo), *args], check=True,
+                capture_output=True, text=True, encoding="utf-8")
+
+    _git("init", "-b", "main")
+    _git("config", "user.email", "t@t")
+    _git("config", "user.name", "t")
+    _git("add", "-A")
+    _git("commit", "-qm", "base")
+    return repo, _git
+
+
+def _worktree_diff(repo, _git) -> str:
+    import subprocess as _sp
+    return _sp.run(["git", "-C", str(repo), "diff", "main"], capture_output=True,
+                   text=True, encoding="utf-8").stdout
+
+
+def test_check_deletions_reference_stripping_fails(tmp_path):
+    """BM-1：条目与引用同批删除（引用剥离）→ 剩余数据判据虽归零，基线对比判 FAIL。"""
+    repo, _git = _make_knowledge_repo(tmp_path, with_referrer=True)
+    # 工作树：删除 md + 移除引用它的种子记录（引用剥离）
+    (repo / "data/extractions/v3_wiki/concepts/测试概念.md").unlink()
+    import json as _json
+    seed = repo / "data" / "extractions" / "v3_seed_db_v2.json"
+    seed.write_text(_json.dumps({"concepts": [{"name": "另一概念", "aliases": [],
+                                               "related_concepts": [],
+                                               "source_records": []}]},
+                                ensure_ascii=False), encoding="utf-8")
+    diff = _worktree_diff(repo, _git)
+    r = check_deletions(diff, str(repo))
+    assert r.verdict == DOMAIN_FAIL
+    assert "剥离" in r.reason or "改前" in r.reason
+
+
+def test_check_deletions_dead_entry_full_cleanup_passes(tmp_path):
+    """BM-1 对照：条目改前本就无引用（真死数据），md+种子记录一并清理 → PASS。"""
+    repo, _git = _make_knowledge_repo(tmp_path, with_referrer=False)
+    (repo / "data/extractions/v3_wiki/concepts/测试概念.md").unlink()
+    import json as _json
+    seed = repo / "data" / "extractions" / "v3_seed_db_v2.json"
+    seed.write_text(_json.dumps({"concepts": []}, ensure_ascii=False),
+                    encoding="utf-8")
+    diff = _worktree_diff(repo, _git)
+    r = check_deletions(diff, str(repo))
+    assert r.verdict == DOMAIN_PASS
