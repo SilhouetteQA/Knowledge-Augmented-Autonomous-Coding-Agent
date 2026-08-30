@@ -16,6 +16,7 @@ from tools.file_tools import ToolError
 from tools.github_tools import (
     commit_changes, create_pull_request, push_branch, worktree_full_diff,
 )
+from tools.redlines import _red_line_patterns   # 红线模式集（M23 下沉，消除反向依赖）
 
 # 已知动作类型（扩展点：知识纠错 --apply 解冻后注册并实现执行逻辑）
 KNOWN_ACTIONS = {"pr_push"}
@@ -164,7 +165,6 @@ def _check_drift(approval: ApprovalRequest, repo_dir: str) -> None:
         cwd=repo_dir, capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=30)
     if others.returncode == 0:
-        from agent.issue import _red_line_patterns
         hot = [p for p in others.stdout.splitlines() if p.strip()
                and any(pat in p for pat in _red_line_patterns())]
         if hot:

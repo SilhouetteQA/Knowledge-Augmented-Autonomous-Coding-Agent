@@ -286,7 +286,11 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     start = time.monotonic()
     prompt_before = llm.tokens_total["prompt"]
     completion_before = llm.tokens_total["completion"]
-    repo_dir = os.path.join(repo_root, _repo_dir_name(case.repository))
+    # B13 探针暴露：repo_root 相对（main.py 默认 workspace/benchmark）时 repo_dir
+    # 亦相对——_run_setup_commands/_test_summary 把 repo_dir 同时当 cwd 与
+    # workspace_root，resolve_workspace_path 会拼出 root/repo_dir 嵌套路径（docker
+    # 下 cd 不存在目录）。入口处归一为绝对路径。
+    repo_dir = os.path.abspath(os.path.join(repo_root, _repo_dir_name(case.repository)))
     try:
         # 单 case 单沙箱（审查 I2）：setup/基线/Agent/判定共享同一容器——
         # docker 下 setup 的环境级安装此前随独立容器销毁而蒸发；嵌套的

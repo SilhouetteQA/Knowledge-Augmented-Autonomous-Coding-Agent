@@ -758,3 +758,21 @@ def test_consistency_unconfigured_true_and_note_empty(tmp_path, monkeypatch):
     assert r.consistency is True
     assert r.consistency_note == ""
     assert r.status == "resolved"
+
+def test_run_one_case_relative_repo_root_setup_fail(tmp_path, monkeypatch):
+    """B13 探针暴露：相对 repo_root 时 setup 的 cwd/workspace 不得拼接嵌套路径。"""
+    from benchmark import runner as rm
+    from benchmark.loader import BenchmarkCase
+    from tools.github_tools import GitHubIssue
+
+    monkeypatch.setattr(rm, "_ensure_repository", lambda *a, **k: None)
+    (tmp_path / "workspace" / "local__probe").mkdir(parents=True)
+    case = BenchmarkCase(
+        id="p", category="bug", repository="local/probe",
+        issue=GitHubIssue(number=1, title="t", body="", labels=[], state="open"),
+        gold_patch="", must_pass=["x.py"],
+        setup_commands=['python -c "import sys; sys.exit(2)"'])
+    monkeypatch.chdir(tmp_path)
+    r = rm._run_one_case(case, MockLLMClient([]), ".", "workspace")   # repo_root 相对
+    assert r.status == "error"
+    assert any("exit=2" in e for e in r.errors)   # 命令真执行失败，而非 cd 不存在目录

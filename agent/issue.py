@@ -26,6 +26,7 @@ from tools.github_tools import (
     sync_repository,
     worktree_full_diff,   # 完整 diff（含 untracked，CR-1）：产单/Reviewer/漂移检查共用
 )
+from tools.redlines import _red_line_patterns   # 红线模式集（M23 下沉 tools.redlines）
 from tools.tracing import traced
 
 # Review 提示词（独立审查角色）：审查输入 = Issue + diff + 验证轮数 + 工作树事实，
@@ -216,21 +217,6 @@ def _review_context(repo_dir: str, base_branch: str,
         out.append("额外事实:")
         out += [f"  {line}" for line in extra_facts]
     return "\n".join(out)
-
-
-# 红线路径模式（重测 #2 暴露：A2 提示词约束不够硬，需执行层拦截）：
-# 命中模式的文件被 _enforce_red_lines 从工作树还原，不得进入 diff/审查/审批单。
-# cost_log：output/eval/cost_log.jsonl 类运行成本日志（运行兄弟项目脚本的副作用）；
-# generated_at：v3_seed 等数据文件 _meta.generated_at 行的误改。
-RED_LINE_PATTERNS = ("cost_log", "generated_at")
-
-
-def _red_line_patterns() -> tuple[str, ...]:
-    """红线模式集：默认常量；KA_REDLINE_PATTERNS（逗号分隔子串）覆盖，空/未设 → 默认。"""
-    raw = os.environ.get("KA_REDLINE_PATTERNS", "").strip()
-    if not raw:
-        return RED_LINE_PATTERNS
-    return tuple(p.strip() for p in raw.split(",") if p.strip())
 
 
 def _enforce_red_lines(repo_dir: str, base_branch: str) -> list[str]:

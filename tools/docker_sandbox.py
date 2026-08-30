@@ -161,6 +161,10 @@ class SandboxManager:
             "--memory-swap", self.config.memory,
             "--pids-limit", str(self.config.pids_limit),
             "--tmpfs", "/tmp",
+            # 容器硬化（历轮 M20）：移除全部 Linux capabilities + 禁提权；
+            # read-only 根文件系统不做（会破坏创建期 pip 装依赖）
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
             "-v", f"{self.workspace_root}:/workspace",
             "-w", "/workspace",
         ]

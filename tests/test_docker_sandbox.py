@@ -82,6 +82,9 @@ def test_create_passes_resource_limits(tmp_path):
     assert "--pids-limit" in run and "512" in run
     assert "--network" not in run
     assert "--tmpfs" in run and "/tmp" in run
+    # 容器硬化（历轮 M20）：移除全部 capabilities + 禁提权
+    assert "--cap-drop" in run and "ALL" in run
+    assert "--security-opt" in run and "no-new-privileges" in run
     assert "-v" in run and f"{ws}:/workspace" in run
     assert "--name" in run and mgr.name in run
     assert run[-2:] == ["sleep", "infinity"]
