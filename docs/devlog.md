@@ -500,3 +500,37 @@
 - 回归如实：索引重建 5188 实体成功；兄弟项目测试套件容器内外均不可运行（pytest 0 collected + scripts/test_extraction.py SystemExit）——A13 兄弟侧问题再次暴露，Reviewer 如实区分"非本次变更引入"。
 - 复证映射：A12 预算 nudge（探索未失控、按期交付）；G5 上下文压缩（43 轮无超时）；G8 reasoning_content（43 轮无 400）；A7 结论交付（空 diff + PASS 的结论审查模式实战 PASS）。
 - 待办联动：Issue #4 的人工决策 = 保留 0 删除结论认可即可关闭；PR #3 处置（合并则 #4 背景变化）待 SilhouetteQA。
+
+## 全量代码审查修复日（2026-08-30，逐项裁决 + 27 项清偿）
+
+### 背景
+
+- 会话前半：项目全景梳理（docs/2026-08-30-project-overview.md）+ 技术栈与部署指南 + 全量代码审查报告（docs/2026-08-30-code-review-report.md，2 Critical / 18 Important / 35 Minor）。
+- 会话后半：按"一项项介绍→询问→完结"处理全部未完结事项，用户逐项裁决。
+
+### 修复清单（7 commits，全量回归 440 passed / 4 skipped / 0 failed，净增 45 项测试）
+
+- ed4f908 CR-1：untracked 新文件全程入审批——worktree_full_diff（git diff + 未跟踪伪 diff，二进制/超 1MB 以 sha256 行占位）产单/Reviewer/漂移检查三处共用，approve 前指纹覆盖 untracked 内容。
+- 8bf3ea7 CR-2：--issue 未显式配置执行器时默认 docker 沙箱（不可信输入隔离），显式 local 放行并警示。
+- 8f99bc0 IM-1..4：审批单新增 test_summary 字段 + auto-approve 测试证据硬条件（total>0 且全绿）；红线内容通道覆盖删除行；测试基础设施失败入 Reviewer 证据面；--approve 裸路径归一化。
+- 839f5f0 IM-5..9：run_command 超时收尾硬预算（Windows）；run_tests 双执行器退出码检查（exit 5 保持 G4）；docker exec/build 预算自适应（max(300,t+60)）+ exec 错误改返回 ToolError；嵌套沙箱路径归一；workspace_root=None 防护。
+- 3e380c0 IM-10..13：edit_file 行尾双向对齐（匹配归一 + 写回按原文件行尾）；最小循环工具异常守卫；畸形 tool arguments 哨兵回注可重试；git 拦截 docstring 补记 4 实测绕过形态。
+- f181ac7 IM-14..17：report_trace SDK 路径同口径去双计；code_parser 支持 async def；knowledge_audit 畸形 line_range 防御；generation 不写对话内容的取舍注记（用户未答按保守默认，可推翻）。
+- 9599f2b IM-18/BM-1/BM-2：list_files 遍历容错；域判定器 deletions 增加基线对比（堵引用剥离，剩余数据为空按基线核验）；loader 对 domain case 放宽 gold 校验。
+- 5518f5d 历轮：容器硬化（--cap-drop ALL + no-new-privileges）；红线模式集下沉 tools/redlines.py（M23）；B13 docker 实跑探针 scripts/b13_probe.py——**顺带暴露并修复 runner 相对路径嵌套缺陷**（repo_dir 绝对化，setup 失败/基线失败两形态真实验证通过）。
+- c858345 C2：补首个 domain 基准案例（兄弟项目真实 Issue #4 题面 + deletions 判定器 + A13 前提注记），案例库 6 例。
+
+### 外部动作（用户授权）
+
+- **PR #3（SilhouetteQA/Arknights-LLM-wiki）已合并**（2026-08-30T07:52Z，3 文件：seed -14 行 + 阮先生（画家）/玉门望烽节 md 删除）——双残留问题随之清偿。
+- **兄弟项目 Issue #4 已关闭**（带结论评论：3 候选全部保留 0 删除，43 迭代完整通过，证据齐备）。
+
+### 用户裁决记录
+
+- C1 单价表：暂不填（成本列保持 0）；D4 模型分流：默认 mimo + 文档化建议（deepseek 可用于长预算任务）；D2 解冻：先做事实核查报告（spec 已入库 docs/specs/2026-08-30-fact-check-stage2.md，**待实施**）；台账刷新：新建 v2（docs/analysis/2026-08-30-unfinished-ledger-v2.md，对账 08-29 版 12 项滞后状态）。
+
+### 环境备忘
+
+- 主仓 .venv 为非 editable vendoring 副本：src 改动不反映到 .venv 内 import，测试/校验用全局 `python -m pytest`（pythonpath=.）或重建 venv。
+- Docker Desktop 位于 D:\Docker，本会话实测可启动（daemon 就绪 ~5s）；沙箱镜像 ka-sandbox:py312-v1 与派生 v1x 均在。
+- 下会话入口：实施 D2-a 事实核查报告（spec §4 接口草图），随后按需排期 --apply。
