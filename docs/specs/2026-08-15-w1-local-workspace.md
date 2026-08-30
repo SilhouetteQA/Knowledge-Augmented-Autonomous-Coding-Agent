@@ -155,7 +155,7 @@ python main.py "<任务描述>" [--workspace workspace] [--max-iterations 10]
 ## 7. 验证计划
 
 1. `pytest tests/` 全绿。
-2. 用户将 `D:\AI project` 下一个小型真实项目放入 `workspace/demo-project`。
+2. 用户将 `<local-projects-dir>` 下一个小型真实项目放入 `workspace/demo-project`。
 3. 执行 `python main.py "在 demo-project 中定位 XX 函数并添加一行日志"`，观察 Agent 自主完成：搜索 → 读取 → 写入 → 确认。
 4. 人工核对修改正确、未越界。
 

@@ -88,7 +88,7 @@
 ### 遗留问题
 
 - **bilibili 业务缺陷未深入**（用户反馈"AI 日报生成问题很大"）：项目会话记录显示真实失败历史（图片 JSON 50% / 网络超时 30% / 重启 / HTTP 500；A/B/C 三个已知未修根因：lifespan 内存不重置、轮询不处理部分完成、图片 JSON 容错）。测试全绿不覆盖真实链路（LLM/公众号 API/cron/网络）。待用户确认是否需要继续排查。
-- 修复方案 conftest.py 仅在 defect-repo 副本，原仓库 `D:\AI project\bilibili` 未动（待用户决定是否应用）。
+- 修复方案 conftest.py 仅在 defect-repo 副本，原仓库 `<local-path>` 未动（待用户决定是否应用）。
 - defect-repo 演示副本不入库（同 W1 决策），收尾时清理。
 - `.venv_tmp/`、`demo-w2-*.txt` 等演示残留待清理。
 

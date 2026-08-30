@@ -1267,7 +1267,7 @@ Expected: `23 passed`（14 + 3 + 4 + 2）。
 
 - [ ] **Step 2: 真实项目演示（需要用户参与）**
 
-请用户将 `D:\AI project` 下一个小型真实项目放入 `workspace/demo-project`，然后执行：
+请用户将 `<local-projects-dir>` 下一个小型真实项目放入 `workspace/demo-project`，然后执行：
 
 ```bash
 .venv\Scripts\python.exe main.py "在 demo-project 中定位 XX 函数并添加一行中文注释" --workspace workspace
