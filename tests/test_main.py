@@ -85,12 +85,63 @@ def test_main_issue_mode_generates_approval(monkeypatch, capsys):
                             iteration_count=1, verify_rounds=1,
                             approval_path="output/approvals/x-1-1-20260826-120000.json")
     monkeypatch.setattr("main.run_issue_agent", lambda *a, **k: fake)
+    monkeypatch.setenv("KA_EXECUTOR", "docker")   # CR-2：显式配置，防默认逻辑写环境变量
     monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
     rc = main.main(["test/arc-wiki#1", "--issue"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "fix/issue-1" in out
     assert "等待人工审批" in out       # 停等审批提示（替换原 dry-run 文案）
+
+
+def _issue_fake_result():
+    from agent.issue import IssueAgentResult
+    from tools.github_tools import GitHubIssue
+    fake_issue = GitHubIssue(number=1, title="标题", body="b", labels=[], state="open")
+    return IssueAgentResult(issue=fake_issue, steps=[], final_answer="ok",
+                            branch="fix/issue-1", diff="+x", review="PASS ok",
+                            pr_url=None, stopped_by_limit=False,
+                            iteration_count=1, verify_rounds=1)
+
+
+def test_issue_mode_defaults_to_docker(monkeypatch, capsys):
+    """CR-2：--issue 未显式配置执行器 → 默认 docker（不可信输入隔离）。"""
+    monkeypatch.setattr("main.run_issue_agent", lambda *a, **k: _issue_fake_result())
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    monkeypatch.setenv("opencode_go_api", "test-key")
+    old = os.environ.get("KA_EXECUTOR")
+    os.environ.pop("KA_EXECUTOR", None)
+    try:
+        rc = main.main(["test/arc-wiki#1", "--issue"])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert os.environ.get("KA_EXECUTOR") == "docker"
+        assert "docker" in out
+    finally:
+        if old is None:
+            os.environ.pop("KA_EXECUTOR", None)
+        else:
+            os.environ["KA_EXECUTOR"] = old
+
+
+def test_issue_mode_local_explicit_warns(monkeypatch, capsys):
+    """CR-2：显式 KA_EXECUTOR=local 放行但警示宿主执行风险。"""
+    monkeypatch.setattr("main.run_issue_agent", lambda *a, **k: _issue_fake_result())
+    monkeypatch.setattr("main.OpenAICompatClient", lambda: object())
+    monkeypatch.setenv("opencode_go_api", "test-key")
+    old = os.environ.get("KA_EXECUTOR")
+    os.environ["KA_EXECUTOR"] = "local"
+    try:
+        rc = main.main(["test/arc-wiki#1", "--issue"])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert os.environ.get("KA_EXECUTOR") == "local"
+        assert "警告" in out
+    finally:
+        if old is None:
+            os.environ.pop("KA_EXECUTOR", None)
+        else:
+            os.environ["KA_EXECUTOR"] = old
 
 
 def test_main_issue_mode_bad_format(monkeypatch, capsys):

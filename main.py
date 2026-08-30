@@ -124,6 +124,16 @@ def _run_issue_mode(args: argparse.Namespace, llm) -> int:
         print("Issue 模式任务格式: <owner/name>#<issue_number>，例如 test/arc-wiki#123")
         return 1
     repo, _, num = args.task.rpartition("#")
+    # CR-2（不可信输入隔离）：Issue 内容属不可信输入，local 执行器 = 宿主 shell
+    # 直达。未显式配置执行器时默认 docker 沙箱；显式 local 放行但警示。
+    executor = os.environ.get("KA_EXECUTOR")
+    if executor is None:
+        os.environ["KA_EXECUTOR"] = "docker"
+        print("提示: Issue 模式默认使用 docker 沙箱（Issue 内容为不可信输入，需隔离执行）；"
+              "如需宿主执行请显式设置 KA_EXECUTOR=local 或 --executor local")
+    elif executor == "local":
+        print("警告: Issue 模式使用 local 执行器——不可信 Issue 内容可驱动宿主命令，"
+              "建议改用 docker 沙箱（KA_EXECUTOR=docker）")
     from agent.issue import IssueTask
     task = IssueTask(
         repository=repo, issue_number=int(num),
