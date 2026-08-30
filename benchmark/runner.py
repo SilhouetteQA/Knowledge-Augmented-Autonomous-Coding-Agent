@@ -5,14 +5,13 @@ import time
 
 from agent.issue import IssueTask, run_issue_agent
 from agent.llm import LLMClient
-from benchmark.domain_checks import (DOMAIN_PASS, _parse_deleted_paths,
-                                     check_bridge, check_deletions)
 from benchmark.judge import judge_patch
 from benchmark.loader import BenchmarkCase
 from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
                               current_metadata, save_json, save_markdown)
 from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import ToolError
+from tools.git_diff_parse import parse_deleted_paths
 from tools.github_tools import (GitHubIssue, clone_repository, get_repository,
                                 sync_repository)
 from tools.shell_tools import TestResult, run_command, run_tests
@@ -161,7 +160,7 @@ def _ensure_repository(repo_root: str, repo_dir: str, repository: str) -> None:
 def _check_consistency(case: BenchmarkCase, diff: str) -> tuple[bool, str]:
     """交付一致性核查（E10）：diff 实际删除文件数与 expected_actions 核对。
 
-    背景：兄弟项目 #1 演示中 Agent 交付报告声称删除 17 条而实际 diff 仅 5 条，
+    背景：真实演示中 Agent 交付报告声称删除 17 条而实际 diff 仅 5 条，
     deliverable 与 diff 不符。本函数在判定后核对——diff 删除文件数（复用 E9
     domain_checks 的 _parse_deleted_paths，同款 git quotepath 风格解析）与
     expected_actions["deletions"] 比较：相符 → (True, "")；不符 → (False, 差异详情：
@@ -171,7 +170,7 @@ def _check_consistency(case: BenchmarkCase, diff: str) -> tuple[bool, str]:
     if "deletions" not in (case.expected_actions or {}):
         return True, ""
     expected_n = case.expected_actions["deletions"]
-    actual = _parse_deleted_paths(diff)
+    actual = parse_deleted_paths(diff)
     actual_n = len(actual)
     if actual_n == expected_n:
         return True, ""
@@ -210,28 +209,15 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     errors: list[str] = []
     diff = getattr(run, "diff", "") or ""
     test_pass, test_summary = _test_summary(case, repo_dir)
-    gold_text = ""
-    if not case.domain_check:
-        # B9（E9 自审遗留）：域 case 判定走规则检查器，gold 读取纯浪费且
-        # 读失败还会污染 errors——仅功能等价 case 需要 gold
-        gold_path = os.path.join(case_dir, case.gold_patch)
-        try:
-            with open(gold_path, encoding="utf-8") as f:
-                gold_text = f.read()
-        except OSError as e:
-            errors.append(f"gold patch 读取失败: {e}")
-    if case.domain_check:
-        # E9：域案例判定——规则检查器（deletions/bridge）替代 LLM Judge。域知识任务
-        # （删除/bridge）无 gold 可比，「功能等价」模型不匹配；判定证据进 judge_reason，
-        # 不追加 errors；DOMAIN_SKIP 记录 SKIP 且 resolution=False（与 Judge SKIP 语义一致）。
-        checker = {"deletions": check_deletions, "bridge": check_bridge}[case.domain_check]
-        dc = checker(diff, repo_dir)
-        judge_verdict, judge_reason = dc.verdict, dc.reason
-        patch_acceptance = judge_verdict == DOMAIN_PASS
-    else:
-        judge = judge_patch(llm, diff, gold_text, case.issue)
-        judge_verdict, judge_reason = judge.verdict, judge.reason
-        patch_acceptance = judge.verdict == "PASS"
+    gold_path = os.path.join(case_dir, case.gold_patch)
+    try:
+        with open(gold_path, encoding="utf-8") as f:
+            gold_text = f.read()
+    except OSError as e:
+        errors.append(f"gold patch 读取失败: {e}")
+    judge = judge_patch(llm, diff, gold_text, case.issue)
+    judge_verdict, judge_reason = judge.verdict, judge.reason
+    patch_acceptance = judge.verdict == "PASS"
     resolution = test_pass and patch_acceptance
     # E10：判定后核查交付一致性（diff 实际删除数 vs expected_actions）——仅标注
     # consistency/consistency_note，不参与 resolution（控制器裁决：resolution 语义不变）。

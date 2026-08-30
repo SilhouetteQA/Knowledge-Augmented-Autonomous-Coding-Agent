@@ -141,7 +141,7 @@ REVIEW_CONTEXT_PROBES = [
 def _probe_review_context(repo_dir: str) -> list[str]:
     """关键路径存在性探针：具体路径用 os.path.isfile，通配路径按存在文件数标计。
 
-    自适应（brooks-health Top-1）：探针清单源自兄弟项目定制，对其它仓库
+    自适应：探针清单源自真实项目定制，对其它仓库
     "缺失"是噪声证据——父目录不存在的探针跳过；KA_REVIEW_PROBES（冒号分隔）
     可整体覆盖。
     """

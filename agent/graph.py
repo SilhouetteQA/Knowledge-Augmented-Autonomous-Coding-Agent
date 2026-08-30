@@ -143,7 +143,7 @@ def _graph_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="search_knowledge",
-            description="查询明日方舟领域知识库（Arknights Wiki 知识图谱）：kind=entity(实体)/event(事件)/relationship(关系)/timeline(时间线)/story(剧情原文)，缺省 entity",
+            description="查询领域知识库（经 MCP 知识服务接入，kind 语义见服务侧映射）：kind=entity(实体)/event(事件)/relationship(关系)/timeline(时间线)/story(剧情原文)，缺省 entity",
             parameters={
                 "type": "object",
                 "properties": {
@@ -197,7 +197,7 @@ def _graph_dispatch(name: str, args: dict, workspace_root: str | None,
         if not q:
             return ToolError("缺少参数: query")
         if knowledge_client is None:
-            return ToolError("域知识未启用：请设置 ARKNIGHTS_USE_MCP=1 与 ARKNIGHTS_WIKI_DIR")
+            return ToolError("域知识未启用：请设置 KA_KNOWLEDGE_MCP=1 及知识服务配置（KA_KNOWLEDGE_MCP_DIR/IMPORT，见 .env.example）")
         return knowledge_client.search(q, args.get("kind"))
     return _dispatch(name, args, workspace_root)
 

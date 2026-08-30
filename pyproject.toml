@@ -28,6 +28,5 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "docker: 需要 Docker 守护进程的集成测试（无 Docker 时跳过）",
-    "mcp: 需要兄弟项目 Arknights LLM Wiki（ARKNIGHTS_WIKI_DIR）的集成测试（无配置时跳过）",
-    "kg: 需要兄弟项目真实数据（ARKNIGHTS_WIKI_DIR + data/extractions）的知识抽查集成测试（无配置时跳过）",
+    "mcp: 需要 MCP 知识服务配置（KA_KNOWLEDGE_MCP*，见 .env.example）的集成测试（无配置时跳过）",
 ]

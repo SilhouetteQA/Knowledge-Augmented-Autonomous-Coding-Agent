@@ -7,7 +7,7 @@ tools/approval.py 此前在审批执行时反向 import agent.issue 的私有函
 import os
 
 # 命中模式的文件被 _enforce_red_lines 从工作树还原，不得进入 diff/审查/审批单。
-# cost_log：output/eval/cost_log.jsonl 类运行成本日志（运行兄弟项目脚本的副作用）；
+# cost_log：output/eval/cost_log.jsonl 类运行成本日志（运行评测/提取脚本的副作用）；
 # generated_at：v3_seed 等数据文件 _meta.generated_at 行的误改。
 RED_LINE_PATTERNS = ("cost_log", "generated_at")
 

@@ -117,12 +117,10 @@ def test_invalid_setup_command_element_reports_index(tmp_path):
 def test_real_cases_loaded():
     """真实基准案例库可全量加载（纯本地文件校验；C2 补域案例后共 6 个）。"""
     cases = load_cases("benchmark/cases")
-    assert len(cases) == 6
+    assert len(cases) == 5
     cats = {c.category for c in cases}
-    assert {"bug", "feature", "test", "refactor", "domain"} <= cats
-    # 非域 case 均带 gold diff；域 case（BM-2）无 gold 文件
-    assert all(c.gold_patch.endswith(".diff") for c in cases if not c.domain_check)
-    assert all(c.domain_check for c in cases if c.category == "domain")
+    assert {"bug", "feature", "test", "refactor"} <= cats
+    assert all(c.gold_patch.endswith(".diff") for c in cases)
 
 
 # --- E7（P2-7）：task_type 校验与按任务类型的默认迭代上限 ---
@@ -197,35 +195,6 @@ def test_real_cases_explicit_max_iterations_unaffected():
     schedule = [c for c in cases if c.id.startswith("schedule-")]
     assert all(c.max_iterations == 30 for c in schedule)
     assert all(c.task_type == c.category for c in schedule)
-    dom = [c for c in cases if c.category == "domain"]
-    assert all(c.max_iterations == 20 and c.task_type == "domain" for c in dom)
-
-
-# --- E9：domain_check 域判定配置（deletions / bridge，缺省无） ---
-
-
-def test_domain_check_default_empty(tmp_path):
-    """未配置 domain_check → 缺省空串（不触发域判定）。"""
-    _write_case(tmp_path, "domain", "c-1")
-    c = load_cases(str(tmp_path))[0]
-    assert c.domain_check == ""
-
-
-def test_domain_check_valid_values(tmp_path):
-    """合法 domain_check（deletions/bridge）正常载入且与类别独立。"""
-    _write_case(tmp_path, "domain", "c-del", domain_check="deletions")
-    _write_case(tmp_path, "domain", "c-bridge", domain_check="bridge")
-    cases = {c.id: c for c in load_cases(str(tmp_path))}
-    assert cases["c-del"].domain_check == "deletions"
-    assert cases["c-bridge"].domain_check == "bridge"
-
-
-@pytest.mark.parametrize("bad", ["unknown", 42, None, ["deletions"]])
-def test_domain_check_invalid_raises(tmp_path, bad):
-    """非法 domain_check → CaseError（报错含取值与允许集）；显式空串与缺省同义不报错。"""
-    _write_case(tmp_path, "domain", "x", domain_check=bad)
-    with pytest.raises(CaseError, match=r"domain_check '.*' 非法.*deletions"):
-        load_cases(str(tmp_path))
 
 
 # --- E10：expected_actions 交付一致性核查配置（可选 dict，键 deletions 非负 int） ---
@@ -268,19 +237,19 @@ def _domain_case_dict() -> dict:
                   "labels": [], "state": "open"},
         "gold_patch": "gold/dom-1.diff",
         "must_pass": ["test_x.py"],
-        "domain_check": "deletions",
     }
 
 
 def test_loader_domain_case_without_gold_file(tmp_path):
-    """BM-2：domain case 不要求 gold_patch 文件存在（E9 规则判定器无 gold 可比）。"""
+    """BM-2：domain 类 case 不要求 gold_patch 文件存在（知识服务侧规则判定，无 gold 可比）。"""
     d = tmp_path / "domain"
     d.mkdir()
     (d / "dom-1.json").write_text(
         json.dumps(_domain_case_dict(), ensure_ascii=False), encoding="utf-8")
     cases = load_cases(str(tmp_path))
     assert len(cases) == 1
-    assert cases[0].domain_check == "deletions"
+    assert cases[0].category == "domain"
+    assert cases[0].gold_patch == "gold/dom-1.diff"
 
 
 def test_loader_non_domain_case_still_requires_gold(tmp_path):
@@ -289,7 +258,6 @@ def test_loader_non_domain_case_still_requires_gold(tmp_path):
     d.mkdir()
     case = _domain_case_dict()
     case.update({"id": "bug-1", "category": "bug"})
-    case.pop("domain_check")
     (d / "bug-1.json").write_text(
         json.dumps(case, ensure_ascii=False), encoding="utf-8")
     with pytest.raises(CaseError, match="gold_patch"):
