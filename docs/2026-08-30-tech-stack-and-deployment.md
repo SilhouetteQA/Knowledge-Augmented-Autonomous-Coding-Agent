@@ -17,7 +17,7 @@
 | 代码理解 | Python AST（stdlib）+ ripgrep | Tree-sitter 调研后否决（重/依赖深）；`RIPGREP_BIN` 可覆盖 |
 | 隔离运行时 | Docker（Docker Desktop/WSL2） | 一个任务一个沙箱，六维资源限制 |
 | GitHub 通道 | gh CLI（宿主执行）+ git | 凭据不进沙箱；`GH_TOKEN` 或 `gh auth login` |
-| 知识检索 | MCP（stdio 子进程） | 经兄弟项目 Arknights LLM Wiki 的 MCP 客户端 |
+| 知识检索 | MCP（stdio 子进程） | 可插拔知识服务接入（KA_KNOWLEDGE_MCP* 配置化；未配置时优雅降级） |
 | 评测 | 自定义 benchmark 包 + LLM-as-a-Judge + 规则判定器 | 五类案例；双口径 Resolution Rate |
 | 可观测 | Langfuse v4 + OpenTelemetry + ClickHouse | SDK 4.14.4 经 OTLP 上报；events_only 模式落 events_core |
 | 观测存储栈 | docker compose 六容器 | langfuse-web/worker + postgres + clickhouse + redis + minio |
@@ -37,7 +37,7 @@ eval = ["langfuse>=4.0", "clickhouse-connect>=1.7"]   # 评测与 trace 导出
 ### 1.2 代码地图（约 5400 行源码）
 
 ```text
-main.py (293)            CLI：--graph/--issue/--approve/--correct/--benchmark/--compare/--trace-report 七模式分发
+main.py (293)            CLI：--graph/--issue/--approve/--benchmark/--compare/--trace-report 六模式分发
 agent/
   graph.py (505)         LangGraph 状态图（核心）：节点/降级/上下文压缩/预算纪律/红线规则注入
   issue.py (451)         Issue 全链路编排：红线拦截/Reviewer/审批单生成/条件自动放行
@@ -57,7 +57,6 @@ tools/
   code_graph.py (105)    内存代码图五类查询
   tracing.py (96)        Langfuse 可开关埋点
 benchmark/
-  domain_checks.py (463) 域案例规则判定器（deletions/bridge）
   runner.py (365)        评测运行器（基线预检/双判定/指标）
   report.py (199)        报告与版本对比
   loader.py (147)        案例加载与 schema 校验
@@ -82,13 +81,13 @@ docker/langfuse/docker-compose.yml  Langfuse v4 六容器观测栈
 | LLM 行为 | `KA_LLM_TIMEOUT_S` / `KA_LLM_MAX_RETRIES` | **部署必须显式设 timeout（建议 120）**——未设时 SDK 默认 600s，长任务单次请求挂起会拖垮整轮迭代 |
 | W3 沙箱 | `KA_EXECUTOR` | local（默认）/ docker |
 | | `KA_SANDBOX_IMAGE` / `_CPUS` / `_MEMORY` / `_PIDS` / `_NETWORK` / `_REPO_URL` | ka-sandbox:py312-v1 / 2 / 1g / 512 / 0（任务级 opt-in）/ 空 |
-| W4 知识 | `ARKNIGHTS_USE_MCP` / `ARKNIGHTS_WIKI_DIR` / `KA_CODE_INDEX` | 启用域知识检索 / 兄弟项目根目录 / 任务启动时构建代码索引 |
+| W4 知识 | `KA_CODE_INDEX` / `KA_KNOWLEDGE_MCP` / `KA_KNOWLEDGE_MCP_DIR` / `KA_KNOWLEDGE_MCP_IMPORT` | 任务启动时构建代码索引 / 启用域知识检索 / 知识服务根目录 / MCP 客户端导入路径（module:Class） |
 | W5 GitHub | `GH_TOKEN` / `KA_GITHUB_BRANCH_PREFIX` / `KA_APPROVAL_DIR` | 或 gh auth login / fix/issue- / output/approvals |
 | W5 抽查 | `KA_CORRECT_OUT` | output/correction（--audit-out 覆盖） |
 | W8 补强 | `KA_ISSUE_SETUP_COMMANDS` | 沙箱创建后逐条执行的环境准备（&& 分隔） |
 | | `KA_TEST_TIMEOUT_S` / `KA_REDLINE_PATTERNS` | run_tests 超时（大套件调大）/ 红线模式覆盖（逗号分隔） |
 | 评测 | `KA_SETUP_TIMEOUT_S` | case.setup_commands 每条超时（默认 60） |
-| W6/W7 可观测 | `KA_TRACING` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | 1 启用；三键齐备才启用（或兄弟项目 .env 的 LANGFUSE_INIT_PROJECT_* 运行时映射） |
+| W6/W7 可观测 | `KA_TRACING` / `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | 1 启用；三键齐备才启用（或本地 Langfuse 部署 .env 的 LANGFUSE_INIT_PROJECT_* 运行时映射） |
 | | `CLICKHOUSE_PASSWORD` | `--trace-report` 回退直查 events_core 用 |
 
 ---
@@ -100,23 +99,15 @@ docker/langfuse/docker-compose.yml  Langfuse v4 六容器观测栈
 Agent 在 decide 阶段同时持有两类知识工具：
 
 1. **代码知识（Code KG，本仓库内构建）**：`main.py --graph` 启动时经 `KA_CODE_INDEX` 构建内存 CodeGraph——Python AST 遍历 workspace（排除 IGNORED_DIRS，语法错误跳过告警，60s 限时部分返回）→ 模块/类/函数节点 + import/inherits/calls 边 → 五类查询（calls/inheritance/imports/module_of/symbols）。查询空结果附自导航提示（引导转 symbols 模糊查询或 search_code 全文搜索）。
-2. **领域知识（Arknights KG，兄弟项目经 MCP）**：`search_knowledge(kind, query)` → `ARKNIGHTS_USE_MCP=1` + `ARKNIGHTS_WIKI_DIR` 指向兄弟项目根 → 每次查询一个 stdio MCP 子进程（固定 `-c` 脚本 + argv JSON 传参，无 shell 防注入；UTF-8 reconfigure 解决 GBK 乱码）。kind 映射五类：character/event/concept/faction/location。
+2. **领域知识（可插拔知识服务经 MCP）**：`search_knowledge(kind, query)` → `KA_KNOWLEDGE_MCP=1` + `KA_KNOWLEDGE_MCP_DIR`（服务根目录）+ `KA_KNOWLEDGE_MCP_IMPORT`（module:Class）→ 每次查询一个 stdio MCP 子进程（固定 `-c` 脚本 + argv JSON 传参，无 shell 防注入；UTF-8 reconfigure 解决 GBK 乱码）。kind 映射五类（entity/event/relationship/timeline/story），具体工具名按服务侧 `_KIND_TOOL` 表调整。未配置时优雅降级（工具级提示，不阻塞任务）。
 
-### 3.2 Arknights 知识库（兄弟项目数据）
+### 3.2 知识服务对接（领域集成分支）
 
-- **数据规模**：三次提取产物统一条目模型实测 **11072 条**——event 4131 / character 2253 / concept 2170 / faction 1438 / location 1031 / timeline 49。
-- **数据布局**（domain_checks 判定器依赖）：
-  - `data/extractions/v3_seed_db_v2.json` / `v3_seed_db_v3_final.json`（concepts/factions/locations/timeline_events，含 related_*、source_records、aliases）
-  - `data/extractions/v1_events/{main,side,special}/*.json`（events participants/location、条目 line_range 锚点）
-  - `data/entity_source_map.json`（实体 → type/source_files/related_* 索引）
-  - `data/extractions/v3_wiki/concepts/<名>.md`（条目 md，文件名即规范名）
-- **抽查结论（W5 真实验收，ratio=0.02 seed=42，抽 224 条）**：来源可靠性 **96.88%**（217/217/7）；内容实用性 **70.98%**（159 used / 65 dead：concept 37 / faction 17 / location 8 / character 3）。
-- **人工复核两发现**：① "dead" 是粗筛信号非结论——两类假阳性：有戏份但未被结构化引用；**代号↔真名命名脱节**（红松林事件 participants 用真名"玛莉娅"，章节清单用代号"瑕光"，别名无 bridge 导致整名匹配不命中）。② 组织名粒度（莱茵生命 9 事件文本提及，participants 只写"莱茵研究员"变体）。
-- **域判定器**（E9）：域知识任务无 gold 可比，改用确定性规则——deletions（删除条目须同时满足：无来源锚点 ∧ 无事件参与 ∧ 结构化引用入度 0；删索引/种子文件判破坏性 FAIL）与 bridge（引用入度改前 git HEAD / 改后工作树对比，0→>0 为 bridge 建立 PASS）。判据与 knowledge_audit 的 W5 审计定义对齐。
+领域知识服务的具体集成实现（知识库数据对接、知识质量抽查、域规则判定器 deletions/bridge、domain 类基准案例）在**领域集成分支**维护（本地完整开发历史中，见 readme「分支与历史说明」）。主分支保留通用对接面：`KA_KNOWLEDGE_MCP*` 三个环境变量 + `tools/knowledge_client.py` 的 `McpKnowledgeClient`（服务侧只需提供 `call_tool(tool, args) -> str` 的 MCP 客户端类）。
 
 ### 3.3 基准案例知识（benchmark/cases/）
 
-5 个案例全部来自真实仓库 dbader/schedule 的真实 Issue，gold patch 取自社区已合并 PR：
+5 个案例全部来自真实仓库 dbader/schedule 的真实 Issue，gold patch 取自社区已合并 PR（domain 类案例在领域集成分支提供）：
 
 | case | 类别 | Issue | gold | 要点 |
 |------|------|-------|------|------|
@@ -126,7 +117,6 @@ Agent 在 decide 阶段同时持有两类知识工具：
 | schedule-602 | test | #602 补充时区测试 | PR #602 本身 | 开放型（默认 20 迭代收敛） |
 | schedule-622 | refactor | #622 去 mock 依赖 | PR #622 本身 | |
 
-domain 类案例**待补**（规则判定器 deletions/bridge 已就绪，可复用兄弟项目 Issue #4 题面）。
 
 ---
 
@@ -242,5 +232,4 @@ python main.py --compare <run_id>
 python main.py --trace-report <trace_id> --trace-out output/trace
 
 # 知识抽查（纯规则层，无需 LLM Key）
-python main.py --correct --wiki-dir "<sibling-project-dir>" --audit-ratio 0.02
 ```
