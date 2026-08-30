@@ -1,6 +1,6 @@
 # 实现路径路线图（窗口任务制）
 
-> 依据：《03_Knowledge_Augmented_Autonomous_Coding_Agent_实现内容与实现路径.md》第 12 节"实现路径"。
+> 依据：内部需求文档第 12 节"实现路径"（本地维护，不入版本控制）。
 > 规则：一个窗口 = 一个 worktree = 一个 feature 分支 = 一个实现路径阶段。窗口进出协议见 `agents.md` 第三节。
 
 ## 窗口总览

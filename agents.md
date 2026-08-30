@@ -2,7 +2,7 @@
 
 本文档定义本项目的开发、管理与协作规则，适用于所有在本仓库中工作的 Agent（Claude Code / Codex / DSH 等）。全局通用规则见用户目录下的 `CLAUDE.md`，本文档仅包含本项目差异化规则。
 
-项目需求来源：《03_Knowledge_Augmented_Autonomous_Coding_Agent_实现内容与实现路径.md》（仓库根目录）。
+项目需求来源：内部需求文档（本地维护，不入版本控制）。
 
 ---
 
