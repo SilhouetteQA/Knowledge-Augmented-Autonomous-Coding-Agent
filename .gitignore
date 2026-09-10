@@ -47,3 +47,10 @@ workspace/*/
 
 # 内部需求文档（项目作为独立项目处理，不入库；本地保留）
 /03_*.md
+
+# Foundation Contract 验证产物（Spec 01）
+# staging = 尚未发布聚合的逐事件证据；raw/private = 受控临时证据与私有回放输入
+# 显式声明，避免未来收窄 /output/ 规则时泄露受限证据
+/output/contract-validation/staging/
+/output/contract-validation/raw/
+/output/contract-validation/private/

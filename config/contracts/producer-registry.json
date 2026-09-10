@@ -1,0 +1,114 @@
+{
+  "registry_version": "1",
+  "contract_version": "0.1.0",
+  "repository": "coding",
+  "producers": [
+    {
+      "producer_id": "coding.agent.llm_usage",
+      "mapping_stages": ["openai_compat"],
+      "status": "IN_SCOPE",
+      "source_locations": ["agent/llm.py::OpenAICompatClient.chat"],
+      "legacy_fields": ["usage", "prompt_tokens", "completion_tokens", "tokens_total", "cost_usd"],
+      "foundation_objects": ["Usage", "Cost"],
+      "evidence_requirement": "ALL_STAGES",
+      "notes": "在 int coercion 前取 presence facts；tokens_total 与 record_usage(..., 0.0) 既有数值不变"
+    },
+    {
+      "producer_id": "coding.trace.generation_usage",
+      "mapping_stages": ["langfuse_generation"],
+      "status": "IN_SCOPE",
+      "source_locations": ["tools/tracing.py::record_usage"],
+      "legacy_fields": ["model", "tokens_in", "tokens_out", "cost_usd", "extra"],
+      "foundation_objects": ["Usage", "Cost"],
+      "evidence_requirement": "ALL_STAGES",
+      "notes": "只新增 keyword-only contract facts 参数；不得并入 Langfuse extra 或旧 metadata"
+    },
+    {
+      "producer_id": "coding.benchmark.case_cost",
+      "mapping_stages": ["normal", "environment_error", "error"],
+      "status": "IN_SCOPE",
+      "source_locations": [
+        "benchmark/runner.py::_run_one_case",
+        "benchmark/runner.py::_environment_error_result",
+        "benchmark/runner.py::_case_result"
+      ],
+      "legacy_fields": ["cost_usd", "resolved", "tests_passed"],
+      "foundation_objects": ["CostSummary"],
+      "evidence_requirement": "ALL_STAGES",
+      "notes": "每个分支先形成完整 CaseResult 再旁路 emit；不参与 resolution/test/patch/consistency 判定"
+    },
+    {
+      "producer_id": "coding.trace.summary",
+      "mapping_stages": ["sdk", "clickhouse"],
+      "status": "IN_SCOPE",
+      "source_locations": [
+        "tools/report_trace.py::_summarize_trace",
+        "tools/report_trace.py::_summarize_events"
+      ],
+      "legacy_fields": ["cost_usd", "tokens_in", "tokens_out", "total_cost"],
+      "foundation_objects": ["Usage", "CostSummary"],
+      "evidence_requirement": "ONE_OF",
+      "notes": "SDK 缺 cost 时旧 0.0 映射 unknown；ClickHouse 在 _as_float 前区分 absent 与 explicit zero"
+    },
+    {
+      "producer_id": "coding.sandbox",
+      "mapping_stages": [],
+      "status": "DEFERRED",
+      "source_locations": ["tools/docker_sandbox.py"],
+      "legacy_fields": [],
+      "foundation_objects": [],
+      "evidence_requirement": "NOT_APPLICABLE",
+      "reason": "sandbox_safety_boundary_out_of_v0.1_scope"
+    },
+    {
+      "producer_id": "coding.approval",
+      "mapping_stages": [],
+      "status": "DEFERRED",
+      "source_locations": ["tools/approval.py", "tools/redlines.py"],
+      "legacy_fields": [],
+      "foundation_objects": [],
+      "evidence_requirement": "NOT_APPLICABLE",
+      "reason": "human_in_the_loop_boundary_out_of_v0.1_scope"
+    },
+    {
+      "producer_id": "coding.github_workflow",
+      "mapping_stages": [],
+      "status": "DEFERRED",
+      "source_locations": ["tools/github_tools.py"],
+      "legacy_fields": [],
+      "foundation_objects": [],
+      "evidence_requirement": "NOT_APPLICABLE",
+      "reason": "external_side_effect_boundary_out_of_v0.1_scope"
+    },
+    {
+      "producer_id": "coding.tool_envelope",
+      "mapping_stages": [],
+      "status": "DEFERRED",
+      "source_locations": ["tools/shell_tools.py", "tools/file_tools.py"],
+      "legacy_fields": [],
+      "foundation_objects": [],
+      "evidence_requirement": "NOT_APPLICABLE",
+      "reason": "tool_result_contract_belongs_to_later_family"
+    },
+    {
+      "producer_id": "coding.agent_routing",
+      "mapping_stages": [],
+      "status": "DEFERRED",
+      "source_locations": ["agent/graph.py", "agent/loop.py"],
+      "legacy_fields": [],
+      "foundation_objects": [],
+      "evidence_requirement": "NOT_APPLICABLE",
+      "reason": "agent_routing_and_retry_out_of_v0.1_scope"
+    },
+    {
+      "producer_id": "coding.benchmark_report",
+      "mapping_stages": [],
+      "status": "DEFERRED",
+      "source_locations": ["benchmark/report.py", "benchmark/judge.py"],
+      "legacy_fields": [],
+      "foundation_objects": [],
+      "evidence_requirement": "NOT_APPLICABLE",
+      "reason": "benchmark_decision_and_rendering_out_of_v0.1_scope"
+    }
+  ]
+}
