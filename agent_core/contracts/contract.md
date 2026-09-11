@@ -2,11 +2,11 @@
 
 > Contract Set 版本：`0.1.0`（契约族：`foundation`）
 > 规范真相源：`docs/specs/2026-09-10-dual-agent-foundation-contract-master-spec.md`
-> 本文件的作用域：[IMPLEMENTATION-READY] Part I 中**属于本子 Spec 的**规则，
-> 即 Master Spec Appendix A.1–A.4。
+> 本文件的作用域：Part I 中**已落地到本 Contract Set** 的规则，即
+> Master Spec Appendix A.1–A.5 里属于 foundation 与 evidence 两族的条目。
 >
-> Evidence 与发布完整性规则（`EVD-*`、`FND-REL-*`）与回归规则（`FND-REG-*`）
-> 分别由后续子 Spec 写入本文件。
+> `FND-REL-*`（Cycle 发布完整性）与 `FND-REG-*`（回归与非侵入）按各自子 Spec 的
+> 落地时点写入本文件；在写入之前，它们**不属于**本 Contract Set 的规范载荷。
 
 ## 0. 文档地位
 
@@ -386,9 +386,144 @@ STRICT  使用完全相同路径并记录证据；任何契约失败令验证命
 
 ---
 
-## 9. 规则索引
+## 9. Evidence 与发布边界
 
-### 9.1 包与版本
+### 9.1 观测对象
+
+`FoundationObservation` 用**显式结构**承载一次 producer 观测到的 Foundation 事实，
+不是任意 `dict`：
+
+```yaml
+usage: Usage | null
+cost: Cost | null
+cost_summary: CostSummary | null
+```
+
+三者**至少一项必须存在**。空观测不是"合法的 zero"，必须被拒绝。
+
+`FoundationObservation` 是跨边界 DTO：它不是业务 `Result`，不得成为业务函数返回值，
+不得继承 `BaseException`，也不得替代仓库现有的返回契约。
+
+### 9.2 证据记录
+
+`EvidenceRecord` 的字段集合是**封闭**的（禁止额外字段）：
+
+```yaml
+event_id: str              run_id: str                repository: wiki | coding
+repository_commit: str     producer_id: str          mapping_stage: str
+contract_mode: observe | strict
+contract_version: str      contract_payload_hash: str
+timestamp: str             validation_status: PASS | FAIL
+sanitized_input_facts: dict[str, JsonValue]
+foundation_output: FoundationObservation | null
+error_envelope: ErrorEnvelope | null
+```
+
+状态不变量：
+
+```text
+PASS → foundation_output 存在 AND error_envelope 为 null
+FAIL → error_envelope 存在；foundation_output 可空
+```
+
+`contract_mode` 只允许 `observe` / `strict`：`off` 完全跳过 facts 与 Evidence 分支，
+因而**不产出证据**。任一其它取值必须明确失败，不得静默归为某一模式。
+
+`producer_id` 与 `mapping_stage` 必须存在，并由 Producer Registry 约束其实际取值。
+
+### 9.3 标识与路径安全
+
+```text
+run_id     ^[A-Za-z0-9_-]+$
+event_id   canonical UUID（8-4-4-4-12）或 ULID（26 位 Crockford base32）
+```
+
+`event_id` 统一规范化为小写：UUID 的规范形式本就小写，ULID 的 Crockford 字母表
+大小写不敏感，统一小写避免"同一事件两种拼写"绕过唯一性判断。
+
+**任一标识都不得携带 `/`、`\`、`..`、`:` 参与路径构造。** 共享层提供
+`is_path_safe_identifier` 作为该判定的唯一实现；项目 sink 在拼路径前必须**再次**调用，
+与模型层校验互为冗余。路径安全与字符集合法性是两件事：空格对路径无害，
+但仍会被 `run_id` 的形状规则拒绝。
+
+### 9.4 EvidenceSink Protocol 与失败语义
+
+```python
+class EvidenceSink(Protocol):
+    def emit(self, record: EvidenceRecord) -> None: ...
+```
+
+Protocol 只定义行为边界，**不定义**目录、命名、rotation 或 cleanup；符合实现必须
+接收合法记录，无法持久化时**显式报告失败**，不得静默丢弃。
+
+失败语义：
+
+```text
+Sink failure != business failure          （observe 下不得改变业务返回）
+Sink failure  = evidence gate failure     （该 run 的证据失效）
+partial .tmp  != valid evidence
+```
+
+失败只允许使用 `evidence.*` 基础设施诊断码写结构化应用日志与内存 failure counter，
+**不得**污染 Foundation semantic error。因此失败上报类型与 `ErrorEnvelope` 互不继承，
+`evidence.*` 也不是新的 `ErrorCategory`。失败时禁止递归地再次调用同一个 sink。
+
+### 9.5 容量与脱敏
+
+```text
+单条 EvidenceRecord 的 canonical JSON UTF-8  ≤ 64 KiB
+sanitized_input_facts 的键数               ≤ 64
+fact key 形状  ^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$
+fact key 首段  wiki | coding | provider | adapter（foundation / shared 保留）
+```
+
+`foundation` 与 `shared` 是保留命名空间，项目 Adapter 禁止写入。
+
+脱敏采用与 Extension Boundary 相同的两层防线，但归属 `EVD-DATA-001`：
+
+```text
+敏感 key（raw prompt / response / reasoning / traceback / 凭据）→ 硬拒绝
+内容启发式（绝对路径 / Bearer / 长随机串）                     → 只告警并计数
+```
+
+fact 值域是递归 JSON，复用 Extension Boundary 的唯一实现；`Decimal`、datetime、
+`Path`、`bytes` 等一律拒绝。`prompt_tokens`、`response_chars` 这类**指标名**不得被误伤。
+
+### 9.6 发布边界
+
+发布必须采用 **allowlist extraction**，不得采用"序列化原始对象后删除已知敏感字段"
+的 denylist 做法：
+
+```text
+controlled business / historical source
+→ minimal staging facts
+→ construct new publishable Evidence DTO
+→ validate and scan
+→ hash
+→ release snapshot
+```
+
+可进入 Evidence Publication Commit B 的 artifact 是**显式闭集**：
+
+```text
+run-manifest.json          contract-manifest.json     evidence-manifest.json
+validation-report.md       rule-traceability.json     sanitized-replay-corpus.jsonl
+```
+
+最终 `cycle-report.json` / `cycle-report.md` 只在 Wiki Finalization C 写入，
+**不在**上述清单内。
+
+`staging` 只表示"尚未发布聚合"，仍然禁止原始 Prompt、response、trace、代码与凭据：
+**staging evidence ≠ raw business payload**。
+
+`REPRODUCTION_RESTRICTED` 表示结论有真实证据支持，但完整复现依赖不可发布数据或受限
+环境；它不是 `FAIL`，也不能伪报为完全可复现。
+
+---
+
+## 10. 规则索引
+
+### 10.1 包与版本
 
 | Rule ID | 规范语句 | 测试落点 |
 |---|---|---|
@@ -403,7 +538,7 @@ STRICT  使用完全相同路径并记录证据；任何契约失败令验证命
 | FND-VER-005 | Evidence Manifest 必须绑定已存在的 Candidate commit 与 Payload Hash。 | Spec 14 manifest validation |
 | FND-VER-006 | 治理生命周期变化不得改变 payload 身份（除非规范内容变化）。 | Spec 03 hash fixture test |
 
-### 9.2 存在性感知映射与 Usage
+### 10.2 存在性感知映射与 Usage
 
 | Rule ID | 规范语句 | 测试落点 |
 |---|---|---|
@@ -413,7 +548,7 @@ STRICT  使用完全相同路径并记录证据；任何契约失败令验证命
 | FND-USAGE-002 | provider 报告的 `total_tokens` 必须精确保留，即使与可见组成项不一致。 | `conformance/test_usage.py` |
 | FND-USAGE-003 | 缺失 `total_tokens` 必须保持 `null`；Adapter 不得合成 input + output。 | `conformance/test_usage.py` |
 
-### 9.3 Cost
+### 10.3 Cost
 
 | Rule ID | 规范语句 | 测试落点 |
 |---|---|---|
@@ -431,7 +566,7 @@ STRICT  使用完全相同路径并记录证据；任何契约失败令验证命
 | FND-COST-012 | 单独的 Legacy 数值零不足以证明真实零成本。 | `conformance/test_cost.py` |
 | FND-COST-013 | 价格表推导的已知金额必须引用 canonical pricing snapshot 标识。 | `conformance/test_cost.py` |
 
-### 9.4 CostSummary
+### 10.4 CostSummary
 
 | Rule ID | 规范语句 | 测试落点 |
 |---|---|---|
@@ -447,7 +582,7 @@ STRICT  使用完全相同路径并记录证据；任何契约失败令验证命
 | FND-CSUM-010 | CostSummary 不得声明统一的 `source` 或 `pricing_version`。 | `conformance/test_cost_summary.py` |
 | FND-CSUM-011 | Summary 必须由被观察到的组成项构建，不得从 Legacy total 反推。 | `conformance/test_cost_summary.py` |
 
-### 9.5 错误、模式与扩展边界
+### 10.5 错误、模式与扩展边界
 
 | Rule ID | 规范语句 | 测试落点 |
 |---|---|---|
@@ -467,5 +602,25 @@ STRICT  使用完全相同路径并记录证据；任何契约失败令验证命
 | FND-MODE-003 | 非法 `AGENT_CONTRACT_MODE` 必须令配置校验失败，不得静默变为 off。 | `conformance/test_modes.py` |
 | FND-MODE-004 | observe 的映射失败必须保持 Legacy 行为并产出失败校验证据。 | 项目 invariance harness（Spec 09） |
 
+### 10.6 证据与发布
+
+| Rule ID | 规范语句 | 测试落点 |
+|---|---|---|
+| EVD-RUN-001 | Controlled smoke / replay / strict 命令必须收到显式且安全的 `run_id`。 | `conformance/test_evidence.py` + Spec 09 run harness |
+| EVD-RUN-002 | 每条 EvidenceRecord 必须绑定 contract version、Payload Hash 与已验证的仓库提交。 | `conformance/test_evidence.py` |
+| EVD-SINK-001 | EvidenceSink 不得静默丢弃合法记录。 | `conformance/test_evidence.py`（接口与失败形状）+ Spec 09 注入失败测试 |
+| EVD-SINK-002 | observe 下 sink 失败不得改变业务结果。 | 项目 invariance harness（Spec 09） |
+| EVD-SINK-003 | 任何 sink 失败都令该 run 不再是 Cycle Evidence。 | Spec 09 smoke closure |
+| EVD-SINK-004 | 文件形式的事件发布必须原子且并发写入安全。 | Spec 09 项目 sink 测试 |
+| EVD-DATA-001 | Staging Evidence 必须排除原始业务内容，并遵守 allowlist、JSON 与 64 KiB 约束。 | `conformance/test_evidence.py` |
+| EVD-PUB-001 | Git 发布 artifact 必须由显式 allowlist 构造。 | `conformance/test_evidence.py`（清单闭集）+ Spec 10/14 发布变换测试 |
+| EVD-PUB-002 | 原始 prompt、response、reasoning、代码正文、diff 与原始 trace 不得进入发布。 | Spec 10/14 forbidden-field scan |
+| EVD-PUB-003 | 凭据、环境转储与私有端点不得进入发布。 | Spec 10/14 secret scan |
+| EVD-PUB-004 | Replay 语料只能包含复现契约语义所需的字段。 | Spec 12 corpus schema test |
+| EVD-PUB-005 | 受限证据必须标记 `REPRODUCTION_RESTRICTED`。 | `conformance/test_evidence.py` + Spec 14 状态校验 |
+| EVD-PUB-006 | 已发布证据必须绑定版本、Payload Hash 与 Candidate commit。 | Spec 14 manifest validation |
+| EVD-PUB-007 | 原始临时证据必须有显式的保留决策。 | Spec 14 publication checklist |
+
 `evidence.*` sink / I/O 诊断码属于基础设施诊断，不是新的 `ErrorCategory`，
-也不是 `foundation.*` 语义错误。
+也不是 `foundation.*` 语义错误。`FND-REL-*` 与 `FND-REG-*` 在各自子 Spec 落地前
+不属于本 Contract Set 载荷。

@@ -46,12 +46,24 @@ from agent_core.contracts.version import (
 )
 
 #: Schema ID → (模块, 模型属性名, 快照文件名)。
-#: Spec 04 将追加 FoundationObservation 与 EvidenceRecord，使 v0.1 达到六类。
+#: v0.1 全集共六类（Master Spec §3.1）；Spec 04 补入 Evidence 两类，使集合完整。
 SCHEMA_REGISTRY: Final[tuple[tuple[str, str, str, str], ...]] = (
     ("Usage", "agent_core.contracts.models.usage", "Usage", "usage.schema.json"),
     ("Cost", "agent_core.contracts.models.cost", "Cost", "cost.schema.json"),
     ("CostSummary", "agent_core.contracts.models.cost", "CostSummary", "cost-summary.schema.json"),
     ("ErrorEnvelope", "agent_core.contracts.models.error", "ErrorEnvelope", "error-envelope.schema.json"),
+    (
+        "FoundationObservation",
+        "agent_core.contracts.models.evidence",
+        "FoundationObservation",
+        "foundation-observation.schema.json",
+    ),
+    (
+        "EvidenceRecord",
+        "agent_core.contracts.models.evidence",
+        "EvidenceRecord",
+        "evidence-record.schema.json",
+    ),
 )
 
 SCHEMA_MODE: Final[str] = "serialization"
@@ -61,8 +73,9 @@ SCHEMAS_DIR: Final[str] = "agent_core/contracts/schemas"
 DESCRIPTOR_PATH: Final[str] = "agent_core/contracts/payload-descriptor.json"
 CONTRACT_MD_PATH: Final[str] = "agent_core/contracts/contract.md"
 
-#: ``| FND-COST-001 | ... |`` 形式的规则索引行。
-_RULE_LINE_PREFIX: Final[str] = "| FND-"
+#: 规则索引行前缀。``contract.md`` 的规则索引表同时声明 foundation 与 evidence 两族；
+#: 只认 ``FND-`` 会让 ``EVD-*`` 静默缺席 descriptor 的 ``normative_rule_set``。
+_RULE_LINE_PREFIXES: Final[tuple[str, ...]] = ("| FND-", "| EVD-")
 
 
 def find_repo_root() -> Path:
@@ -89,7 +102,7 @@ def parse_declared_rules(repo_root: Path) -> list[str]:
     rules: set[str] = set()
     for line in text.splitlines():
         stripped = line.lstrip()
-        if not stripped.startswith(_RULE_LINE_PREFIX):
+        if not stripped.startswith(_RULE_LINE_PREFIXES):
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
         if cells and cells[0]:
