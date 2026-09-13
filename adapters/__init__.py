@@ -1,7 +1,7 @@
 """Coding 项目本地的 Foundation Adapter 层。
 
 与 Wiki 仓的同名子包**各自独立实现**（Spec 06：逻辑与共享契约一致，代码项目本地）；
-共享的只有 :mod:`agent_core.contracts` 定义的模型、枚举、Protocol 与生成的 Schema。
+共享的只有 `agent_core.contracts` 定义的模型、枚举、Protocol 与生成的 Schema。
 
 子包构成：
 
