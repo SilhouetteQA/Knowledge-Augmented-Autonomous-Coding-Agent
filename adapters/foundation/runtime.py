@@ -26,6 +26,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import os
+import subprocess
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -168,6 +169,11 @@ class CodingFoundationRuntime:
         return self._mode
 
     @property
+    def accepts_observation(self) -> bool:
+        """off 模式下为 ``False``；producer 用它做最外层短路（零 I/O、零价格表加载）。"""
+        return self._mode is not ContractMode.OFF
+
+    @property
     def run_id(self) -> str:
         return self._run_id
 
@@ -293,6 +299,7 @@ class CodingFoundationRuntime:
             model=model,
             call_id=call_id,
             stage=stage,
+            write_ledger=False,
         )
 
     def observe_case_cost(self, mark: int, *, stage: str = "normal") -> None:
@@ -408,17 +415,25 @@ class CodingFoundationRuntime:
         model: str | None,
         call_id: str | None,
         stage: str,
+        write_ledger: bool = True,
     ) -> None:
-        """记入 sidecar 并发射（Usage, Cost）证据。"""
-        ledger = self._ledger_for_observation()
-        ledger.append(
-            ComponentRecord(
-                usage_facts=usage_facts,
-                cost_facts=cost_facts,
-                model=model,
-                call_id=call_id,
+        """发射（Usage, Cost）证据；``write_ledger`` 决定是否记入 sidecar。
+
+        ``openai_compat``（chat）写 ledger；``langfuse_generation``（record_usage）
+        只旁路观察、不写 ledger —— 否则同一调用被两个 stage 各写一次，
+        benchmark 的 case summary 会 double-count（母 Spec §9.3）。
+        """
+        if write_ledger:
+            ledger = self._ledger_for_observation()
+            ledger.append(
+                ComponentRecord(
+                    usage_facts=usage_facts,
+                    cost_facts=cost_facts,
+                    model=model,
+                    call_id=call_id,
+                )
             )
-        )
+        component_count = self._ledger.component_count if self._ledger is not None else 0
         payload: dict[str, JsonValue] = {
             "coding.legacy.call_observed": usage_facts.call_observed,
             "coding.legacy.usage_object_present": usage_facts.usage_object_present,
@@ -428,7 +443,7 @@ class CodingFoundationRuntime:
             "coding.currency.context": cost_facts.currency_context or facts_mod.CURRENCY_CONTEXT,
             "coding.legacy.cost_is_default": cost_facts.legacy_cost_is_default,
             "coding.model.name": model or "unknown",
-            "coding.case.component_count": ledger.component_count,
+            "coding.case.component_count": component_count,
         }
         self._run(
             producer_id=producer_for_stage(stage),
@@ -569,13 +584,185 @@ def _utc_now() -> str:
     )
 
 
+# --------------------------------------------------------------------------- #
+# 进程级访问器与模块级窄 helper（Spec 08 deviation，与 Wiki Spec 07 对称）
+# --------------------------------------------------------------------------- #
+
+_commit_cache: str | None = None
+_commit_cache_resolved: bool = False
+
+
+def detect_repository_commit() -> str | None:
+    """惰性只读 ``git rev-parse HEAD``；最多探测一次，失败即放弃（返回 ``None``）。
+
+    与 Wiki Spec 07 的 git 回退对称：本地 observe 开箱即用，无需手工 export
+    ``AGENT_CONTRACT_COMMIT``。只接受 40 位小写 hex，其余一律视为失败。
+    """
+    global _commit_cache, _commit_cache_resolved
+    if _commit_cache_resolved:
+        return _commit_cache
+    _commit_cache_resolved = True
+    _commit_cache = None
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (proc.stdout or "").strip()
+    if REPOSITORY_COMMIT_PATTERN.match(text):
+        _commit_cache = text
+    return _commit_cache
+
+
+_active_runtime: CodingFoundationRuntime | None = None
+
+
+def _build_runtime_from_env() -> CodingFoundationRuntime:
+    """按环境构造进程级 runtime。
+
+    off 下不构造 sink（零 I/O）；observe/strict 下用项目本地 FileEvidenceSink。
+    commit 解析沿用 Wiki Spec 07 已批准的「env 优先 + git 回退」。
+    """
+    mode = resolve_contract_mode(None)
+    sink: EvidenceSink | None = None
+    if mode is not ContractMode.OFF:
+        from adapters.foundation.evidence_sink import FileEvidenceSink
+
+        sink = FileEvidenceSink()
+    commit = resolve_repository_commit(None)
+    if commit is None:
+        commit = detect_repository_commit()
+    return CodingFoundationRuntime(sink=sink, mode=mode, repository_commit=commit)
+
+
+def get_foundation_runtime() -> CodingFoundationRuntime:
+    """返回进程级 runtime（首次调用时按环境构造并缓存）。
+
+    这是四个 producer seam 的唯一入口。``off`` 下只构造一个无 sink 的轻量对象，
+    之后每次调用都只是一次属性访问。
+    """
+    global _active_runtime
+    if _active_runtime is None:
+        _active_runtime = _build_runtime_from_env()
+    return _active_runtime
+
+
+def set_foundation_runtime(runtime: CodingFoundationRuntime) -> None:
+    """受控注入 runtime（测试 / Spec 13 smoke 使用）。"""
+    global _active_runtime
+    _active_runtime = runtime
+
+
+def reset_foundation_runtime() -> None:
+    """清空进程级缓存（测试隔离用）。"""
+    global _active_runtime
+    _active_runtime = None
+
+
+def observe_openai_compat(
+    response: object | None,
+    *,
+    model: str | None = None,
+    legacy_cost_usd: object = None,
+    cost_is_default: bool = True,
+) -> None:
+    """`agent/llm.py::chat` 的 openai_compat 旁路观察（emit + 写 ledger）。"""
+    runtime = get_foundation_runtime()
+    if not runtime.accepts_observation:
+        return
+    runtime.observe_chat_completion(
+        response,
+        model=model,
+        stage="openai_compat",
+        legacy_cost_usd=legacy_cost_usd,
+        cost_is_default=cost_is_default,
+    )
+
+
+def observe_langfuse_generation(
+    model: str | None,
+    tokens_in: object,
+    tokens_out: object,
+    cost_usd: object,
+) -> None:
+    """`tools/tracing.py::record_usage` 的 langfuse_generation 旁路观察（emit only）。"""
+    runtime = get_foundation_runtime()
+    if not runtime.accepts_observation:
+        return
+    runtime.observe_usage(
+        tokens_in,
+        tokens_out,
+        model=model,
+        stage="langfuse_generation",
+        legacy_cost_usd=cost_usd,
+        cost_is_default=(cost_usd == 0.0),
+        call_observed=True,
+    )
+
+
+def observe_case_begin() -> int:
+    """`benchmark/runner.py` case 开始：返回游标（off 返回 0）。"""
+    return get_foundation_runtime().begin_case()
+
+
+def observe_case_cost_entry(mark: int, *, stage: str) -> None:
+    """`benchmark/runner.py` 三个分支形成 CaseResult 后的 summary 观察。"""
+    runtime = get_foundation_runtime()
+    if not runtime.accepts_observation:
+        return
+    runtime.observe_case_cost(mark, stage=stage)
+
+
+def observe_trace_summary_entry(
+    raw_rows: Sequence[Mapping[str, object]],
+    *,
+    stage: str,
+) -> None:
+    """`tools/report_trace.py` 两个 summarize 形成旧 TraceSummary 后的 summary 观察。
+
+    ``raw_rows`` 每项含可选键：``model`` / ``input`` / ``output`` / ``cost`` /
+    ``cost_present``。runtime 内部用价格表构造 components 并 emit —— 调用方只收集
+    原始 presence，不碰 facts 构造（价格表只此一处读取）。
+    """
+    runtime = get_foundation_runtime()
+    if not runtime.accepts_observation:
+        return
+    components: list[CodingLegacyCostFacts] = []
+    for row in raw_rows:
+        cost_present = bool(row.get("cost_present"))
+        model = row.get("model")
+        components.append(
+            facts_mod.extract_cost_facts(
+                runtime.price_table,
+                model=model if isinstance(model, str) else None,
+                legacy_cost_usd=row.get("cost") if cost_present else None,
+                call_observed=True,
+                provider_reported_cost=cost_present,
+            )
+        )
+    runtime.observe_trace_summary(components, stage=stage)
+
+
 __all__ = [
     "CONTRACT_COMMIT_ENV",
     "STAGE_PRODUCER",
     "ContractConfigurationError",
     "ContractValidationError",
     "CodingFoundationRuntime",
+    "detect_repository_commit",
+    "get_foundation_runtime",
+    "observe_case_begin",
+    "observe_case_cost_entry",
+    "observe_langfuse_generation",
+    "observe_openai_compat",
+    "observe_trace_summary_entry",
     "producer_for_stage",
+    "reset_foundation_runtime",
     "resolve_payload_hash",
     "resolve_repository_commit",
+    "set_foundation_runtime",
 ]

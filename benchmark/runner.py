@@ -270,6 +270,10 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     零开销。任一环节异常收敛为该 case 的 error 结果，不中断其余 case。
     """
     start = time.monotonic()
+    # Spec 08：case 开始游标（off 返回 0，不分配 ledger）。
+    from adapters.foundation.runtime import observe_case_begin, observe_case_cost_entry
+
+    mark = observe_case_begin()
     prompt_before = llm.tokens_total["prompt"]
     completion_before = llm.tokens_total["completion"]
     # B13 探针暴露：repo_root 相对（main.py 默认 workspace/benchmark）时 repo_dir
@@ -286,9 +290,11 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
             _run_setup_commands(case, repo_dir)
             baseline_ok, summary = _test_summary(case, repo_dir)
             if not baseline_ok:
-                return _environment_error_result(
+                result = _environment_error_result(
                     case, summary, llm, prompt_before, completion_before,
                     start, time.monotonic())
+                observe_case_cost_entry(mark, stage="environment_error")
+                return result
             run = run_issue_agent(
                 IssueTask(repository=case.repository,
                           issue_number=case.issue.number,
@@ -296,11 +302,13 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
                           max_iterations=case.max_iterations,
                           issue_snapshot=case.issue),
                 llm)
-            return _case_result(
+            result = _case_result(
                 case, llm, case_dir, repo_dir, prompt_before, completion_before,
                 start, time.monotonic(), run)
+            observe_case_cost_entry(mark, stage="normal")
+            return result
     except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
-        return CaseResult(
+        result = CaseResult(
             case_id=case.id, category=case.category, status="error",
             resolution=False, test_pass=False, patch_acceptance=False,
             judge_verdict="SKIP", judge_reason="SKIP 执行异常",
@@ -309,6 +317,8 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
             tokens_prompt=llm.tokens_total["prompt"] - prompt_before,
             tokens_completion=llm.tokens_total["completion"] - completion_before,
             cost_usd=0.0, diff="", errors=[str(e)])
+        observe_case_cost_entry(mark, stage="error")
+        return result
 
 
 def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],

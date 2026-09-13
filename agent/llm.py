@@ -183,12 +183,17 @@ class OpenAICompatClient:
             ]
         resp = self._client.chat.completions.create(**params)
         usage = getattr(resp, "usage", None)
+        # Spec 08：provider response 后、int coercion 前旁路观察（stage=openai_compat）。
+        # 放在 is_enabled 无关处：Foundation 观察不依赖 Langfuse 是否开启。
+        from adapters.foundation.runtime import observe_openai_compat
+
+        observe_openai_compat(resp, model=self.model)
         if usage is not None:
             pt = int(getattr(usage, "prompt_tokens", 0) or 0)
             ct = int(getattr(usage, "completion_tokens", 0) or 0)
             self.tokens_total["prompt"] += pt
             self.tokens_total["completion"] += ct
-            record_usage(self.model, pt, ct, 0.0)
+            record_usage(self.model, pt, ct, 0.0, contract_facts=True)
         msg = resp.choices[0].message
         tool_calls = None
         if msg.tool_calls:

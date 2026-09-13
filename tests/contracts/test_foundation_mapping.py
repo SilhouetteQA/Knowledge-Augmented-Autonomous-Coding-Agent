@@ -240,12 +240,18 @@ def test_cursor_slice_does_not_leak_previous_case_components() -> None:
     runtime = make_runtime(sink)
 
     first = runtime.begin_case()
-    runtime.observe_usage(1, 2, model="mimo-v2.5")
-    runtime.observe_usage(3, 4, model="mimo-v2.5")
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=1, completion_tokens=2)), model="mimo-v2.5"
+    )
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=3, completion_tokens=4)), model="mimo-v2.5"
+    )
     assert len(runtime.case_components(first)) == 2
 
     second = runtime.begin_case()
-    runtime.observe_usage(5, 6, model="mimo-v2.5")
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=5, completion_tokens=6)), model="mimo-v2.5"
+    )
     components = runtime.case_components(second)
     assert len(components) == 1
     assert components[0].usage_facts.prompt_tokens == 5
@@ -331,7 +337,10 @@ def test_client_isolation_between_two_runtimes() -> None:
     right_mark = right.begin_case()
     interleaved = [(left, 1), (right, 10), (left, 2), (right, 20)]
     for runtime, value in interleaved:
-        runtime.observe_usage(value, value, model="mimo-v2.5")
+        runtime.observe_chat_completion(
+            _Response(_Usage(prompt_tokens=value, completion_tokens=value)),
+            model="mimo-v2.5",
+        )
 
     left_values = [rec.usage_facts.prompt_tokens for rec in left.case_components(left_mark)]
     right_values = [rec.usage_facts.prompt_tokens for rec in right.case_components(right_mark)]
@@ -362,10 +371,12 @@ def test_off_mode_allocates_no_ledger_and_emits_nothing() -> None:
 
 
 def test_observe_allocates_ledger_only_when_used() -> None:
-    """observe 模式下 sidecar 惰性分配。"""
+    """observe 模式下 sidecar 惰性分配（只有 openai_compat 写 ledger）。"""
     runtime = make_runtime(RecordingSink())
     assert runtime.ledger_allocated is False
-    runtime.observe_usage(1, 2, model="mimo-v2.5")
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=1, completion_tokens=2)), model="mimo-v2.5"
+    )
     assert runtime.ledger_allocated is True
 
 
@@ -494,7 +505,9 @@ def test_case_cost_stages_map_to_case_cost_producer(stage: str) -> None:
     sink = RecordingSink()
     runtime = make_runtime(sink)
     mark = runtime.begin_case()
-    runtime.observe_usage(1, 2, model="mimo-v2.5")
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=1, completion_tokens=2)), model="mimo-v2.5"
+    )
     runtime.observe_case_cost(mark, stage=stage)
 
     summary_records = [r for r in sink.records if r.mapping_stage == stage]
@@ -506,8 +519,12 @@ def test_partial_calls_before_failure_keep_components() -> None:
     """已有调用后失败：保留已观察到的组件，不因最终错误清零。"""
     runtime = make_runtime(RecordingSink())
     mark = runtime.begin_case()
-    runtime.observe_usage(1, 2, model="mimo-v2.5")
-    runtime.observe_usage(3, 4, model="mimo-v2.5")
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=1, completion_tokens=2)), model="mimo-v2.5"
+    )
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=3, completion_tokens=4)), model="mimo-v2.5"
+    )
     # 模拟 case 以错误结束：不清理 sidecar，只按游标取切片
     components = runtime.case_cost_facts(mark)
     assert len(components) == 2
@@ -540,7 +557,9 @@ def test_called_then_failed_differs_from_never_called() -> None:
     never_summary = mapping_mod.map_summary(runtime.case_cost_facts(never))
 
     called = runtime.begin_case()
-    runtime.observe_usage(9, 9, model="mimo-v2.5")
+    runtime.observe_chat_completion(
+        _Response(_Usage(prompt_tokens=9, completion_tokens=9)), model="mimo-v2.5"
+    )
     called_summary = mapping_mod.map_summary(runtime.case_cost_facts(called))
 
     assert never_summary.component_count == 0

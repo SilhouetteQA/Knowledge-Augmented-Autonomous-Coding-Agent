@@ -79,8 +79,18 @@ def traced(name: str | None = None, as_type: str = "span", metadata_fn=None):
 
 
 def record_usage(model: str, tokens_in: int, tokens_out: int,
-                 cost_usd: float, extra: dict | None = None) -> None:
-    """在当前 generation observation 上记录 usage/cost（须处于 generation 内）。"""
+                 cost_usd: float, extra: dict | None = None,
+                 *, contract_facts=None) -> None:
+    """在当前 generation observation 上记录 usage/cost（须处于 generation 内）。
+
+    ``contract_facts``：只供旁路的 keyword-only 参数（`agent/llm.py::chat` 传入）。
+    非空时先做 stage=`langfuse_generation` 的 Foundation 观察，再执行原 Langfuse
+    写入。它**绝不**合并进 Langfuse ``extra`` / ``metadata``。未传时向后兼容。
+    """
+    if contract_facts is not None:
+        from adapters.foundation.runtime import observe_langfuse_generation
+
+        observe_langfuse_generation(model, tokens_in, tokens_out, cost_usd)
     c = get_client()
     if c is None:
         return

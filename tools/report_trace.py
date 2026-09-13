@@ -102,6 +102,7 @@ def _summarize_trace(trace_id: str, trace: object) -> TraceSummary:
     test_results: list[dict] = []
     starts: list = []
     ends: list = []
+    raw_rows: list[dict] = []  # Spec 08：收集 cost presence（缺 cost → unknown）
     task = getattr(trace, "name", "") or trace_id
     for o in obs:
         name = getattr(o, "name", "") or ""
@@ -118,15 +119,28 @@ def _summarize_trace(trace_id: str, trace: object) -> TraceSummary:
         meta = getattr(o, "metadata", None) or {}
         if isinstance(meta, dict) and meta.get("retry"):
             retries += 1
+        # Spec 08：原始 observation 仍可见时提取 cost presence。
+        # SDK 缺 cost 时旧 cost_usd=0.0 映射 unknown（不误判为真零）。
+        cost_details = getattr(o, "cost_details", None)
+        if isinstance(cost_details, dict):
+            raw_rows.append({
+                "cost": cost_details.get("total"),
+                "cost_present": "total" in cost_details,
+            })
     latency = 0.0
     if starts and ends:
         latency = (max(ends) - min(starts)).total_seconds()
-    return TraceSummary(
+    summary = TraceSummary(
         trace_id=trace_id, task=task, total_latency_s=latency,
         tokens_prompt=tokens_prompt, tokens_completion=tokens_completion,
         cost_usd=0.0, tool_calls=tool_calls, errors=errors,
         retries=retries, test_results=test_results, steps=steps,
     )
+    # Spec 08：旧 TraceSummary 形成后旁路 emit（stage=sdk）。
+    from adapters.foundation.runtime import observe_trace_summary_entry
+
+    observe_trace_summary_entry(raw_rows, stage="sdk")
+    return summary
 
 
 def _metadata_dict(names: list, values: list) -> dict:
@@ -169,6 +183,7 @@ def _summarize_events(trace_id: str, rows: list) -> TraceSummary:
     cost_usd = 0.0
     starts: list = []
     ends: list = []
+    raw_rows: list[dict] = []  # Spec 08：收集 generation row 的 cost presence
     for row in rows:
         (event_type, name, start_time, end_time, usage, total_cost,
          status, level, meta_names, meta_values, is_root) = row
@@ -186,6 +201,9 @@ def _summarize_events(trace_id: str, rows: list) -> TraceSummary:
         usage = usage or {}
         tokens_prompt += _as_int(usage.get("input"))
         tokens_completion += _as_int(usage.get("output"))
+        # Spec 08：在 _as_float 前区分 total_cost 缺失 vs 显式零（仅 generation row）。
+        if str(event_type).lower() == "generation":
+            raw_rows.append({"cost": total_cost, "cost_present": total_cost is not None})
         cost_usd += _as_float(total_cost)
         if status or (level or "").upper() in ("ERROR", "FATAL"):
             errors.append(f"{name}: {status or level}")
@@ -205,14 +223,20 @@ def _summarize_events(trace_id: str, rows: list) -> TraceSummary:
                 "duration": _as_float(meta.get("duration", 0.0)),
             })
     # 总耗时 = trace 全跨度（max end - min start），避免嵌套 span 重复累加
+    latency = 0.0
     if starts and ends:
         latency = (max(ends) - min(starts)).total_seconds()
-    return TraceSummary(
+    summary = TraceSummary(
         trace_id=trace_id, task=task, total_latency_s=latency,
         tokens_prompt=tokens_prompt, tokens_completion=tokens_completion,
         cost_usd=cost_usd, tool_calls=tool_calls, errors=errors,
         retries=retries, test_results=test_results, steps=steps,
     )
+    # Spec 08：旧 TraceSummary 形成后旁路 emit（stage=clickhouse）。
+    from adapters.foundation.runtime import observe_trace_summary_entry
+
+    observe_trace_summary_entry(raw_rows, stage="clickhouse")
+    return summary
 
 
 def fetch_trace(trace_id: str, *, clickhouse_env: str | None = None) -> TraceSummary:
