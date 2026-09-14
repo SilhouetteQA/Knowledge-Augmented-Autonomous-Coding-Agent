@@ -47,12 +47,13 @@ def default_evidence_root() -> Path:
 
 
 def _escapes(root: Path, target: Path) -> bool:
-    """target 是否逃出 root（目录穿越的最后一道防线）。"""
-    try:
-        base = root.resolve()
-        resolved = target.resolve()
-    except OSError:
-        return True
+    """target 是否逃出 root（目录穿越的最后一道防线）。
+
+    用 ``os.path.abspath`` 做纯词法规范化（不解析 symlink、不访问文件系统），
+    避免 ``Path.resolve`` 对未 mkdir 目录的并发竞态（Spec 09 并发测试暴露）。
+    """
+    base = Path(os.path.abspath(root))
+    resolved = Path(os.path.abspath(target))
     return base != resolved and base not in resolved.parents
 
 

@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_core.contracts.conformance.rules import contract_rule
 from agent_core.contracts.enums.evidence import ValidationStatus
 from agent_core.contracts.enums.modes import ContractMode, ContractModeConfigError
 from agent_core.contracts.enums.sources import CostSource, UsageSource
@@ -125,6 +126,7 @@ def code_only(path: Path) -> str:
 # --------------------------------------------------------------------------- #
 
 
+@contract_rule("FND-MAP-002")
 def test_usage_absent_is_unknown_not_zero() -> None:
     """provider usage absent → 全 null + unknown。"""
     usage_facts = facts_mod.extract_usage_from_response(None)
@@ -180,6 +182,7 @@ def test_provider_total_is_never_recomputed() -> None:
     assert with_total.total_tokens == 999
 
 
+@contract_rule("FND-MAP-001")
 def test_empty_price_table_yields_unknown_usd_not_true_zero() -> None:
     """空价格表 → amount null + source unknown + USD 上下文（unknown 不是零）。"""
     cost_facts = facts_mod.extract_cost_facts(
@@ -567,6 +570,7 @@ def test_called_then_failed_differs_from_never_called() -> None:
     assert never_summary.complete != called_summary.complete
 
 
+@contract_rule("FND-MODE-004")
 def test_mapping_failure_in_observe_does_not_change_business_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -591,6 +595,7 @@ def test_mapping_failure_in_observe_does_not_change_business_result(
     assert sink.records[0].validation_status is ValidationStatus.FAIL
 
 
+@contract_rule("EVD-SINK-002", "EVD-SINK-003")
 def test_observe_sink_failure_does_not_change_business_result() -> None:
     """observe 下 sink 失败不改变业务返回；该 run 明确失效。"""
     sink = ExplodingSink()
