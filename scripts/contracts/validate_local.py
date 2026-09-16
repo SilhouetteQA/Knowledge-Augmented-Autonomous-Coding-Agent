@@ -72,6 +72,24 @@ EXIT_OK = 0
 EXIT_GATE_FAILED = 1
 EXIT_USAGE = 2
 
+
+def _force_utf8_streams() -> None:
+    """把 stdout/stderr 强制为 UTF-8。
+
+    GitHub Actions 的 Windows runner 默认 stdout 编码是 **cp1252**，而本工具的步骤名与
+    详情含中文与全角括号（如 ``payload allowlist（FND-PKG-001/002）``），直接 ``print``
+    会抛 ``UnicodeEncodeError`` 并让 gate 以 traceback 失败。首次真实 CI 运行正是这样挂掉的。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # 非文本流或已关闭的流
+            pass
+
+
 CONTRACT_VERSION = "0.1.0"
 MAX_RECORD_BYTES = 64 * 1024
 RELEASE_ROOT = Path("docs") / "contracts" / "releases"
@@ -918,6 +936,7 @@ def gate_smoke(manifest_path: Path | None) -> list[Step]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _force_utf8_streams()
     parser = argparse.ArgumentParser(description="Foundation Contract local gate（Spec 10）")
     parser.add_argument("--gate", choices=("pr", "candidate", "smoke"), required=True)
     parser.add_argument("--run-manifest", type=Path, default=None)
