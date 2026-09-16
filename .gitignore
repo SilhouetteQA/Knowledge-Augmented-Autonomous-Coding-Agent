@@ -54,3 +54,9 @@ workspace/*/
 /output/contract-validation/staging/
 /output/contract-validation/raw/
 /output/contract-validation/private/
+
+# Foundation Contract packaging 构建产物（Spec 10）
+# `python -m build` 与 `test_packaging.py` 会在源树产生 build/ 与 dist/；它们是验证
+# 中间物，不得进入版本控制（`*.egg-info/` 已在文件头部忽略）
+build/
+dist/

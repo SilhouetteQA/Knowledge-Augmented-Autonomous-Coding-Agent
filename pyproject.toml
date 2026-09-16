@@ -12,15 +12,31 @@ dependencies = [
     "openai>=1.40",
     "python-dotenv>=1.0",
     "langgraph>=1.2",
+    "pydantic==2.13.4",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "build>=1.2",
 ]
 eval = [
     "langfuse>=4.0",
     "clickhouse-connect>=1.7",
+]
+
+[tool.setuptools.packages.find]
+# 显式声明，不依赖 setuptools flat-layout 自动发现
+# （auto-discovery 会排除 tools / benchmark 等 common 名称）。
+include = ["agent*", "adapters*", "agent_core*", "benchmark*", "tools*"]
+
+# Foundation Contract Payload 非 Python 文件必须随 wheel 发布，
+# 由 agent_core.contracts.tooling 与 conformance 通过 importlib.resources 读取。
+[tool.setuptools.package-data]
+"agent_core.contracts" = [
+    "contract.md",
+    "payload-descriptor.json",
+    "schemas/*.json",
 ]
 
 [tool.pytest.ini_options]

@@ -28,11 +28,15 @@ CONFORMANCE_DIR = Path(__file__).resolve().parent
 DESCRIPTOR_PATH = CONFORMANCE_DIR.parent / "payload-descriptor.json"
 
 #: 项目层负责落点的 payload 规则（conformance 层无法 import 项目验证，故声明）。
+#:
+#: ``FND-PKG-003`` 由 Spec 10 交付后加入：wheel/发行包是仓库特有的 packaging 事实，
+#: 落点在两仓 ``tests/contracts/test_packaging.py``。
 PROJECT_SCOPED_RULES = frozenset(
     {
         "FND-MAP-001",
         "FND-MAP-002",
         "FND-MODE-004",
+        "FND-PKG-003",
         "EVD-SINK-002",
         "EVD-SINK-003",
         "EVD-SINK-004",

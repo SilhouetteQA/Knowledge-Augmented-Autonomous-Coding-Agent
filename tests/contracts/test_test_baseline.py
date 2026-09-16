@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -206,3 +207,50 @@ def test_baseline_self_consistency() -> None:
     for rec in baseline.get("known_failures", []):
         recomputed = fingerprint_sha256(rec, baseline_commit=rec.get("fingerprint_anchor_commit") or anchor)
         assert recomputed == rec["fingerprint_sha256"], rec["nodeid"]
+
+
+# --------------------------------------------------------------------------- #
+# 项目层规则落点反向核验（Spec 10）
+# --------------------------------------------------------------------------- #
+
+
+def declared_rule_ids_in_project_tests() -> dict[str, list[str]]:
+    """静态扫描本仓 ``tests/contracts/*.py`` 的 ``@contract_rule(...)`` 落点。
+
+    以 AST 解析而非 import：``tests/contracts/`` 没有 ``__init__.py``，不能按包路径
+    import；同时避免在比较器测试里重复触发项目模块的导入副作用。
+    """
+    usages: dict[str, list[str]] = {}
+    for path in sorted((REPO_ROOT / "tests" / "contracts").glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call):
+                    continue
+                func = decorator.func
+                name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+                if name != "contract_rule":
+                    continue
+                for arg in decorator.args:
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        usages.setdefault(arg.value, []).append(f"{path.name}::{node.name}")
+    for names in usages.values():
+        names.sort()
+    return usages
+
+
+def test_project_scoped_rules_have_real_landings() -> None:
+    """payload 里声明的 ``PROJECT_SCOPED_RULES`` 必须在项目测试中真实落点。
+
+    conformance 层无法 import 项目模块，只能声明这些规则"由项目层负责"；本断言在
+    项目侧反向核验该声明，避免出现"声明有落点、实际无人落点"的假闭环。
+
+    本测试不绑定 Rule ID：它是 traceability 元检查，不对应某条独立规范规则。
+    """
+    from agent_core.contracts.conformance.test_traceability import PROJECT_SCOPED_RULES
+
+    usages = declared_rule_ids_in_project_tests()
+    missing = sorted(rule for rule in PROJECT_SCOPED_RULES if rule not in usages)
+    assert not missing, f"payload 声明为项目层落点的规则缺少真实落点：{missing}"

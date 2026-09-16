@@ -184,10 +184,12 @@ RULE_REGISTRY: dict[str, str] = {
 
 #: 本 Spec 明确 defer 到后续 Spec 的 payload 规则（traceability 白名单，不算“无测试”失败）。
 #:
-#: - ``FND-PKG-003`` → Spec 10（clean wheel smoke）
 #: - ``EVD-PUB-002/003/004/006/007`` → Spec 12（replay corpus）/ Spec 14（publication）
+#:
+#: ``FND-PKG-003`` 原在此列表（defer 给 Spec 10 的 clean wheel smoke）。Spec 10 交付后
+#: 已移出 deferral，转为项目层落点：两仓 ``tests/contracts/test_packaging.py``，
+#: 并在 ``test_traceability.PROJECT_SCOPED_RULES`` 中登记。
 DEFERRED_PAYLOAD_RULES: tuple[str, ...] = (
-    "FND-PKG-003",
     "EVD-PUB-002",
     "EVD-PUB-003",
     "EVD-PUB-004",
