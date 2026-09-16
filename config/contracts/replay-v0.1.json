@@ -1,0 +1,40 @@
+{
+  "manifest_version": "1",
+  "run_id": "foundation-0_1_0-c1-coding-replay",
+  "contract_mode": "strict",
+  "contract_version": "0.1.0",
+  "payload_hash": "sha256:64049830ba0d1ca2969bb04620ede2d54852e0171f2397d71bc646b2339a4576",
+  "repository_commit": null,
+  "output_dir": "output/contract-validation/staging",
+  "sources": [
+    {
+      "source_id": "coding-benchmark-case-feature",
+      "source_class": "benchmark",
+      "path": "benchmark/cases/feature/schedule-99.json",
+      "producer_id": "coding.benchmark.case_cost",
+      "mapping_stage": "normal",
+      "runtime_adapter_status": "IN_SCOPE",
+      "evidence_role": "historical_replay_only"
+    },
+    {
+      "source_id": "coding-benchmark-case-bug",
+      "source_class": "benchmark",
+      "path": "benchmark/cases/bug/schedule-608.json",
+      "producer_id": "coding.benchmark.case_cost",
+      "mapping_stage": "normal",
+      "runtime_adapter_status": "IN_SCOPE",
+      "evidence_role": "historical_replay_only"
+    },
+    {
+      "source_id": "coding-benchmark-case-test",
+      "source_class": "benchmark",
+      "path": "benchmark/cases/test/schedule-602.json",
+      "producer_id": "coding.benchmark.case_cost",
+      "mapping_stage": "normal",
+      "runtime_adapter_status": "IN_SCOPE",
+      "evidence_role": "historical_replay_only"
+    }
+  ],
+  "max_records": 5,
+  "reproduction_restriction": "REPRODUCTION_RESTRICTED"
+}

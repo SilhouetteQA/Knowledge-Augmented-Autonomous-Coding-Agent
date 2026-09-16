@@ -1,0 +1,68 @@
+{
+  "manifest_version": "1",
+  "run_id": "foundation-0_1_0-c1-coding-smoke",
+  "contract_mode": "observe",
+  "contract_version": "0.1.0",
+  "payload_hash": "sha256:64049830ba0d1ca2969bb04620ede2d54852e0171f2397d71bc646b2339a4576",
+  "candidate_commit": null,
+  "repository_commit": null,
+  "evidence_root": "output/contract-validation/staging",
+  "coverage_policy": "ALL_STAGES",
+  "required_producer_stages": [
+    {
+      "producer_id": "coding.agent.llm_usage",
+      "mapping_stage": "openai_compat",
+      "evidence_requirement": "ALL_STAGES"
+    },
+    {
+      "producer_id": "coding.trace.generation_usage",
+      "mapping_stage": "langfuse_generation",
+      "evidence_requirement": "ALL_STAGES"
+    },
+    {
+      "producer_id": "coding.benchmark.case_cost",
+      "mapping_stage": "normal",
+      "evidence_requirement": "ALL_STAGES"
+    },
+    {
+      "producer_id": "coding.benchmark.case_cost",
+      "mapping_stage": "environment_error",
+      "evidence_requirement": "ALL_STAGES"
+    },
+    {
+      "producer_id": "coding.benchmark.case_cost",
+      "mapping_stage": "error",
+      "evidence_requirement": "ALL_STAGES"
+    },
+    {
+      "producer_id": "coding.trace.summary",
+      "mapping_stage": "sdk",
+      "evidence_requirement": "ONE_OF"
+    },
+    {
+      "producer_id": "coding.trace.summary",
+      "mapping_stage": "clickhouse",
+      "evidence_requirement": "ONE_OF"
+    }
+  ],
+  "model": "mimo-v2.5",
+  "provider": "opencode_go",
+  "case_ids": [
+    "schedule-99"
+  ],
+  "expected_calls": {
+    "coding.agent.llm_usage": 1,
+    "coding.trace.generation_usage": 1,
+    "coding.benchmark.case_cost": 3,
+    "coding.trace.summary": 1
+  },
+  "max_calls": 12,
+  "estimated_cost_cap": {
+    "amount": "1",
+    "currency": "USD"
+  },
+  "network_requirement": "provider",
+  "side_effect_policy": "read_only",
+  "timeout_seconds": 600,
+  "duration_cap_seconds": 1800
+}
