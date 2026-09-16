@@ -1,0 +1,127 @@
+# =============================================================================
+# contract-payload-linux.yml —— Canonical Payload Hash job（Coding 仓，Linux）
+# =============================================================================
+#
+# 目的
+#   在 Linux 上以**最小契约依赖**运行同一份共享实现（`canonicalization_version=1`），
+#   重新生成 Schema、计算 Payload Hash，并与 expected hash 比较。
+#   本 job **不**运行完整 Coding Agent、不安装业务依赖、不宣称两个业务系统跨平台兼容
+#   （Master §15.2:1583 明文）。
+#
+# 规范来源
+#   Master `docs/specs/2026-09-10-dual-agent-foundation-contract-master-spec.md`
+#     §15.2  跨平台 hash job：Windows 运行完整 Contract CI；Linux 只安装最小 contract
+#            dependencies，用同一 canonicalization_version=1 与同一共享实现重新生成
+#            Schema、计算 Payload Hash 并比较 expected hash；不宣称两业务系统跨平台兼容（1583）
+#     Appendix C.4  Canonical hash = Linux / 最小契约依赖 / 无密钥（2433）
+#     Appendix F.3  `contract-payload-linux.yml`：Linux minimal hash，不运行完整 Coding Agent（2681）
+#   Spec 10 `docs/specs/foundation-contract/10-packaging-and-local-contract-ci.md`
+#     CI Implementation Steps（90）、Acceptance「Windows/Linux 同 payload hash」（131）、
+#     Stop Conditions「Linux hash 与 Windows 不同」（138）、Allowed Changes（41）
+#
+# provisional 与已知缺口
+#   G-06  触发条件未定义：§15.2 与 Appendix 未给出任何 `on:`；下方触发集合为 provisional
+#         推断，与 `contract-local.yml` 保持一致，待 Spec 回修后收敛。
+#   G-15  Linux job 的 "expected hash" 来源未定义：§15.2 只说"比较 expected hash"，
+#         没有说明从哪个 artifact/文件读取。本文件把 expected hash 做成
+#         `workflow_dispatch` 的**可选输入** `expected_payload_hash`（provisional 收敛）：
+#           - 提供时：`verify_payload --expect-payload-hash`（与其他 job 的 expected hash 比较）；
+#           - 不提供时：只做自洽校验（不做任何跨仓读取、不联网取 hash）。
+#         未定义不等于可以发明：这里只暴露一个显式输入，不新增 artifact 契约。
+#   G-16  Coding 侧 expected hash 来源未定义（§15.1:1550 禁止 clone Wiki）：本 job 不解决
+#         该问题，也不通过 clone 另一仓或联网取 hash 来绕过（两者均禁止）；只能由操作者
+#         在 dispatch 时提供权威 expected hash。
+#   G-18  退出码语义未定义；本文件只采用"非 0 即失败"。
+#
+# 禁止事项（Spec10 51/53；Appendix F.3:2681）
+#   1. 不得 clone / fetch / 读取另一仓（Wiki）；不得联网获取 expected hash。
+#   2. 不得安装业务依赖（openai / langgraph / langchain / python-dotenv / langfuse /
+#      clickhouse-connect / numpy 等一律不装），也不执行 `pip install -e .`
+#      （那会拉入主依赖与 Agent 业务栈）。
+#   3. 不得运行完整业务测试（不跑 `pytest tests/`，不跑 `tests/contracts`，
+#      不跑 `scripts/contracts/validate_local.py`，不触碰 Docker/GitHub/Sandbox 路径）。
+#   4. 不得 dump 环境变量、凭据或 private endpoint；不得读取 `.env` / `.env.example`；
+#      不得设置或使用任何 secret。
+#   5. 不宣称两业务系统跨平台兼容：本 job 只证明"同一共享实现 + 同一
+#      canonicalization_version 在两个 OS 上对同一 Payload 得到同一身份 hash"。
+#
+# 实现说明
+#   为了在**不安装本项目**的前提下 import `agent_core`，本 job 通过
+#   `PYTHONPATH=${{ github.workspace }}`（工作区根）暴露源码树；
+#   这是"最小依赖"约束下的必要手段，而非安装本项目。
+#   跨平台比较依赖 `verify_payload` 打印的 payload_hash（stdout）；本 job 不上传 artifact
+#   （不新增未定义的 artifact 契约）。
+# =============================================================================
+
+name: Contract Canonical Payload Hash (Coding, Linux)
+
+# provisional（G-06）：`on:` 全文未定义，以下为推断集合，与 contract-local.yml 对齐。
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  workflow_dispatch:
+    inputs:
+      # provisional（G-15）：expected hash 的规范来源未定义，暂以此可选输入承载。
+      # 非 dispatch 触发时该输入为空 → 走"自洽校验"分支（见下方 step 的 if 条件）。
+      expected_payload_hash:
+        description: '可选：权威 expected payload hash（sha256:<64hex>）。留空则只做自洽校验。'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-payload-hash:
+    name: Canonical hash (ubuntu-latest, Python 3.12)
+    # Appendix C.4:2433 —— Canonical hash 运行在 Linux，最小契约依赖，无密钥。
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # 不安装本项目，仅把源码树加入 import path（最小依赖约束）。
+      PYTHONPATH: ${{ github.workspace }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # §15.2:1583 —— 只安装最小契约依赖：pydantic 精确固定值 + pytest。
+      # 禁止 `pip install -e .`：那会拉入本仓业务依赖，违反 §15.2 与 F.3:2681。
+      - name: Install minimal contract dependencies only
+        run: python -m pip install "pydantic==2.13.4" pytest
+
+      # §15.2:1583 —— 用同一共享实现重新生成 Schema 并比较快照（不写工作区）。
+      - name: Regenerate schemas --check (same shared implementation)
+        run: python -m agent_core.contracts.tooling.generate_schemas --check
+
+      # 分支 A：未提供 expected hash → 只做自洽校验（无跨仓读取、无联网取 hash）。
+      # 注：非 dispatch 触发时 `inputs.expected_payload_hash` 为空 → 走本分支。
+      - name: Verify payload (self-consistent only)
+        if: ${{ inputs.expected_payload_hash == '' }}
+        run: python -m agent_core.contracts.tooling.verify_payload
+
+      # 分支 B：提供了 expected hash → 额外比较 expected hash（不一致即 DIVERGED/FAILED，退出 1）。
+      # 判定逻辑在共享实现内（verify_tree(expected_payload_hash=...)），本 workflow 不重复实现。
+      # dispatch 输入经 step 级 `env:` 中转，绝不直接插值进命令行（避免脚本注入）。
+      - name: Verify payload against expected hash
+        if: ${{ inputs.expected_payload_hash != '' }}
+        env:
+          EXPECTED_PAYLOAD_HASH: ${{ inputs.expected_payload_hash }}
+        run: python -m agent_core.contracts.tooling.verify_payload --expect-payload-hash "$EXPECTED_PAYLOAD_HASH"
+
+      # 共享 conformance：仅依赖 pydantic + pytest（不 import 任何项目业务模块）。
+      - name: Shared conformance tests
+        run: python -m pytest agent_core/contracts/conformance -q
