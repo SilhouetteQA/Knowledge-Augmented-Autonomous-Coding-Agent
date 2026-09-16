@@ -9,13 +9,21 @@ flush/fsync/close -> os.replace。读取端只看 .json，.tmp 属于未完成�
 
 失败处理：递增进程内 failure counter、写结构化日志、抛 SinkFailure
 （evidence.* 基础设施码）。绝不静默丢弃合法记录，也绝不在失败时递归再调 sink。
+
+失败的可持久承载（G-04 provisional 的最小补足）：进程内 counter 随进程退出而消失，
+而 L3 fresh smoke 的业务路径是**子进程**，父进程读不到该 counter。因此每次失败额外
+追加一行 JSON 到 run 级标记文件 ``<root>/<run_id>/sink-failures.jsonl``；**缺文件 =
+零失败**。标记写入失败绝不再抛（不得改变业务返回），只记日志。详情掩掉绝对路径再落盘
+（Master §11.4 的发布扫描禁止绝对路径出现在 staging 内）。
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Final
 
 from agent_core.contracts.enums.evidence import (
     EVIDENCE_INVALID_RUN_ID,
@@ -35,7 +43,27 @@ EVENTS_DIRNAME = "events"
 FORMAL_SUFFIX = ".json"
 TEMP_SUFFIX = ".json.tmp"
 
+#: run 级 sink 失败标记文件名（每次失败追加一行 JSON；缺文件 = 零失败）。
+FAILURES_FILENAME: Final[str] = "sink-failures.jsonl"
+
+#: 单条失败详情落盘前的最大长度（避免标记本身演变成大文件）。
+MAX_FAILURE_DETAIL_CHARS: Final[int] = 200
+
+#: 失败详情中的绝对路径模式（与 Spec 10 发布扫描的同类模式一致）。
+_ABSOLUTE_PATH_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"[A-Za-z]:[\\/][^\s\"']*"),
+    re.compile(r"/(?:home|Users|root|mnt|var/folders)/[^\s\"']*"),
+)
+
 logger = logging.getLogger(__name__)
+
+
+def _mask_detail(detail: str) -> str:
+    """掩掉详情里的绝对路径并截断；标记文件落在 staging 内，受 §11.4 扫描约束。"""
+    masked = detail
+    for pattern in _ABSOLUTE_PATH_PATTERNS:
+        masked = pattern.sub("<PATH>", masked)
+    return masked[:MAX_FAILURE_DETAIL_CHARS]
 
 
 def default_evidence_root() -> Path:
@@ -77,6 +105,40 @@ class FileEvidenceSink:
     def events_dir(self, run_id: str) -> Path:
         """某个 run 的事件目录（不创建）。"""
         return self._root / run_id / EVENTS_DIRNAME
+
+    def failures_path(self, run_id: str) -> Path | None:
+        """run 级失败标记路径；``run_id`` 不安全（不可参与路径构造）时返回 ``None``。
+
+        ``None`` 表示这次失败**无法**用 run 级文件承载（例如 run_id 含 ``../``）；
+        调用方（L3 driver）自己会先校验 run_id，因此不会读不到可承载的失败。
+        """
+        if not is_safe_run_id(run_id):
+            return None
+        return self._root / run_id / FAILURES_FILENAME
+
+    def record_failure(self, *, run_id: str, code: str, event_id: str, detail: str) -> None:
+        """把一次失败追加到 run 级标记文件（一行一条 canonical JSON）。
+
+        这是进程内 counter 之外的**持久**承载：子进程业务路径的失败必须能被父进程读到。
+        写入失败只记日志——sink 的失败处理绝不改变业务返回，也绝不递归。
+        """
+        path = self.failures_path(run_id)
+        if path is None:
+            return
+        entry = {
+            "code": code,
+            "detail": _mask_detail(detail),
+            "event_id": event_id,
+            "run_id": run_id,
+        }
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(canonical_json_dumps(entry) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            self._log.warning("coding: 无法写入 sink 失败标记 %s", path)
 
     def emit(self, record: EvidenceRecord) -> None:
         """原子写入一条记录；失败抛 SinkFailure。"""
@@ -127,7 +189,7 @@ class FileEvidenceSink:
             )
 
     def _abort(self, code: str, detail: str, run_id: str, event_id: str) -> None:
-        """计一次失败、记结构化日志、抛 SinkFailure；不递归。"""
+        """计一次失败、落 run 级标记、记结构化日志、抛 SinkFailure；不递归。"""
         self._failures += 1
         self._log.error(
             "evidence sink failure code=%s run_id=%s event_id=%s root=%s count=%d detail=%s",
@@ -138,6 +200,7 @@ class FileEvidenceSink:
             self._failures,
             detail,
         )
+        self.record_failure(run_id=run_id, code=code, event_id=event_id, detail=detail)
         raise SinkFailure(code, detail, event_id=event_id)
 
 
@@ -163,7 +226,9 @@ __all__ = [
     "EVIDENCE_DIR_ENV",
     "DEFAULT_EVIDENCE_ROOT",
     "EVENTS_DIRNAME",
+    "FAILURES_FILENAME",
     "FORMAL_SUFFIX",
+    "MAX_FAILURE_DETAIL_CHARS",
     "TEMP_SUFFIX",
     "FileEvidenceSink",
     "default_evidence_root",

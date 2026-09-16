@@ -311,3 +311,381 @@ def test_resolve_manifest_commit_refuses_to_infer_without_env(vl, monkeypatch) -
 def test_resolve_manifest_commit_rejects_malformed_value(vl) -> None:
     with pytest.raises(vl.UsageError):
         vl._resolve_manifest_commit({"repository_commit": "not-a-sha"})
+
+
+# --------------------------------------------------------------------------- #
+# gate: smoke 第 7 步 —— 逐对 evidence_requirement 覆盖（B7 / Spec 13:51）
+# --------------------------------------------------------------------------- #
+# 合成证据与合成 manifest 全部落在 tmp_path：不经网络、不碰 staging、不写冻结的
+# config/contracts/*.json。gate 的 REPO_ROOT 被指向 tmp_path，因此不需要仓库内
+# scratch 目录；repository 名与 sink 分支按本仓真实取值保留（两仓同构）。
+
+B7_RUN_ID = "b7-smoke-coverage"
+B7_COMMIT = "c" * 40
+B7_PAYLOAD_HASH = "sha256:" + "e" * 64
+
+
+def _b7_manifest(*, policy: str, pairs) -> dict:
+    """最小合法 run manifest；``pairs`` = [(producer_id, mapping_stage, requirement|None)]。"""
+    stages = []
+    for producer_id, stage, requirement in pairs:
+        entry = {"producer_id": producer_id, "mapping_stage": stage}
+        if requirement is not None:
+            entry["evidence_requirement"] = requirement
+        stages.append(entry)
+    return {
+        "manifest_version": "1",
+        "run_id": B7_RUN_ID,
+        "contract_mode": "observe",
+        "contract_version": "0.1.0",
+        "payload_hash": B7_PAYLOAD_HASH,
+        "repository_commit": B7_COMMIT,
+        "evidence_root": "evidence",
+        "coverage_policy": policy,
+        "required_producer_stages": stages,
+        "expected_calls": {},
+        "max_calls": 12,
+        "estimated_cost_cap": {"amount": "1", "currency": "USD"},
+        "network_requirement": "provider",
+        "side_effect_policy": "read_only",
+        "timeout_seconds": 600,
+        "duration_cap_seconds": 1800,
+        "model": "synthetic-model",
+        "provider": "synthetic-provider",
+        "case_ids": ["synthetic-case"],
+    }
+
+
+def _b7_record(producer_id: str, stage: str, repository: str, index: int):
+    from agent_core.contracts.enums.evidence import ValidationStatus
+    from agent_core.contracts.enums.modes import ContractMode
+    from agent_core.contracts.enums.sources import UsageSource
+    from agent_core.contracts.models.evidence import EvidenceRecord, FoundationObservation
+    from agent_core.contracts.models.usage import Usage
+
+    return EvidenceRecord(
+        event_id="7b1c0c1e-4a3b-4c2d-8e5f-%012x" % index,
+        run_id=B7_RUN_ID,
+        repository=repository,
+        repository_commit=B7_COMMIT,
+        producer_id=producer_id,
+        mapping_stage=stage,
+        contract_mode=ContractMode.OBSERVE,
+        contract_version="0.1.0",
+        contract_payload_hash=B7_PAYLOAD_HASH,
+        timestamp="2026-09-14T01:00:00Z",
+        validation_status=ValidationStatus.PASS,
+        sanitized_input_facts={f"{repository}.legacy.b7_fixture": True},
+        foundation_output=FoundationObservation(
+            usage=Usage(input_tokens=1, source=UsageSource.PROVIDER_REPORTED)
+        ),
+    )
+
+
+def _b7_publish_evidence(tmp_path: Path, repository: str, observed) -> None:
+    """写合成事件（经本仓 sink → canonical 落盘）与 run-summary.json。"""
+    if repository == "wiki":
+        from arknights_wiki.adapters.foundation.evidence_sink import FileEvidenceSink
+    else:
+        from adapters.foundation.evidence_sink import FileEvidenceSink
+
+    root = tmp_path / "evidence"
+    sink = FileEvidenceSink(root)
+    for index, (producer_id, stage) in enumerate(observed, start=1):
+        sink.emit(_b7_record(producer_id, stage, repository, index))
+
+    summary = {
+        "sink_failure_count": 0,
+        "rejected_records": [],
+        "actual_calls": len(observed),
+        "actual_tokens": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
+        "duration_seconds": 0.0,
+        "producer_coverage": [[producer, stage] for producer, stage in sorted(observed)],
+        "known_cost_components": 0,
+        "unknown_cost_components": 0,
+    }
+    (root / B7_RUN_ID / "run-summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def smoke_gate(vl, tmp_path, monkeypatch):
+    """把 gate 的 REPO_ROOT 指到 tmp_path；返回 (manifest_path, real_repository)。"""
+    real_repository = vl.repository_name()
+    monkeypatch.setenv("AGENT_CONTRACT_MODE", "observe")
+    monkeypatch.setenv("AGENT_CONTRACT_RUN_ID", B7_RUN_ID)
+    monkeypatch.setattr(vl, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(vl, "repository_name", lambda: real_repository)
+
+    def build(*, policy: str, pairs, observed):
+        manifest_path = tmp_path / "smoke-manifest.json"
+        manifest_path.write_text(
+            json.dumps(_b7_manifest(policy=policy, pairs=pairs), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        _b7_publish_evidence(tmp_path, real_repository, observed)
+        return manifest_path
+
+    return build
+
+
+def test_smoke_gate_fails_on_missing_all_stages_pair(vl, smoke_gate) -> None:
+    """ALL_STAGES 逐对判定：缺任意一对即失败（原行为不变）。"""
+    pairs = [
+        ("synthetic.llm_usage", "openai_compat", "ALL_STAGES"),
+        ("synthetic.llm_usage", "chat_completion", "ALL_STAGES"),
+    ]
+    manifest = smoke_gate(
+        policy="ALL_STAGES",
+        pairs=pairs,
+        observed=[("synthetic.llm_usage", "openai_compat")],
+    )
+
+    with pytest.raises(vl.GateFailure) as excinfo:
+        vl.gate_smoke(manifest)
+
+    message = str(excinfo.value)
+    assert "ALL_STAGES" in message and "chat_completion" in message
+
+
+def test_smoke_gate_missing_coverage_exits_1(vl, smoke_gate, capsys) -> None:
+    """闭合失败仍是退出码 1 + 明确报错（不弱化门）。"""
+    pairs = [("synthetic.llm_usage", "openai_compat", "ALL_STAGES")]
+    # 观测到的是**未预登记**的一对（证据目录非空），判定必须走到第 7 步才失败。
+    manifest = smoke_gate(
+        policy="ALL_STAGES", pairs=pairs, observed=[("synthetic.trace.summary", "sdk")]
+    )
+
+    assert vl.main(["--gate", "smoke", "--run-manifest", str(manifest)]) == 1
+    err = capsys.readouterr().err
+    assert "GATE FAILED" in err and "openai_compat" in err
+
+
+def test_smoke_gate_one_of_group_passes_with_single_stage_observed(vl, smoke_gate) -> None:
+    """ONE_OF 组内观测到 1/2 即闭合（B7 的核心修复；Coding 的 trace.summary）。
+
+    这里是冻结 Coding manifest 的真实形状：ALL_STAGES 对逐对判、ONE_OF 对成组判。
+    """
+    pairs = [
+        ("synthetic.llm_usage", "openai_compat", "ALL_STAGES"),
+        ("synthetic.trace.summary", "sdk", "ONE_OF"),
+        ("synthetic.trace.summary", "clickhouse", "ONE_OF"),
+    ]
+    observed = [
+        ("synthetic.llm_usage", "openai_compat"),
+        ("synthetic.trace.summary", "sdk"),
+    ]
+    manifest = smoke_gate(policy="ALL_STAGES", pairs=pairs, observed=observed)
+
+    steps = vl.gate_smoke(manifest)
+
+    assert [step.index for step in steps] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert steps[6].index == 7
+    assert "policy=ALL_STAGES" in steps[6].detail
+    assert "ALL_STAGES 1/1" in steps[6].detail
+    assert "ONE_OF[synthetic.trace.summary] 1/2" in steps[6].detail
+
+
+def test_smoke_gate_one_of_group_passes_with_both_stages_observed(vl, smoke_gate) -> None:
+    """两组都存在时同样闭合，并如实报 2/2。"""
+    pairs = [
+        ("synthetic.trace.summary", "sdk", "ONE_OF"),
+        ("synthetic.trace.summary", "clickhouse", "ONE_OF"),
+    ]
+    observed = [
+        ("synthetic.trace.summary", "sdk"),
+        ("synthetic.trace.summary", "clickhouse"),
+    ]
+    manifest = smoke_gate(policy="ALL_STAGES", pairs=pairs, observed=observed)
+
+    steps = vl.gate_smoke(manifest)
+
+    assert "ONE_OF[synthetic.trace.summary] 2/2" in steps[6].detail
+
+
+def test_smoke_gate_fails_when_one_of_group_entirely_unobserved(vl, smoke_gate) -> None:
+    """ONE_OF 组一对都没观测到 → 失败（fail closed），且不被其他 producer 顶替。"""
+    pairs = [
+        ("synthetic.llm_usage", "openai_compat", "ALL_STAGES"),
+        ("synthetic.trace.summary", "sdk", "ONE_OF"),
+        ("synthetic.trace.summary", "clickhouse", "ONE_OF"),
+    ]
+    manifest = smoke_gate(
+        policy="ALL_STAGES",
+        pairs=pairs,
+        observed=[("synthetic.llm_usage", "openai_compat")],
+    )
+
+    with pytest.raises(vl.GateFailure) as excinfo:
+        vl.gate_smoke(manifest)
+
+    message = str(excinfo.value)
+    assert "ONE_OF" in message and "synthetic.trace.summary" in message
+
+
+def test_smoke_gate_does_not_criss_cross_one_of_producers(vl, smoke_gate) -> None:
+    """不同 producer_id 的 ONE_OF 对各自成组：A 的观测不能顶替 B 的要求。"""
+    pairs = [
+        ("synthetic.trace.alpha", "sdk", "ONE_OF"),
+        ("synthetic.trace.beta", "clickhouse", "ONE_OF"),
+    ]
+    manifest = smoke_gate(
+        policy="ALL_STAGES", pairs=pairs, observed=[("synthetic.trace.alpha", "sdk")]
+    )
+
+    with pytest.raises(vl.GateFailure) as excinfo:
+        vl.gate_smoke(manifest)
+
+    assert "synthetic.trace.beta" in str(excinfo.value)
+
+
+def test_smoke_gate_pair_without_requirement_follows_top_level_all_stages(vl, smoke_gate) -> None:
+    """无 per-pair 要求 → 回退顶层 ALL_STAGES：每一对都必须观测到。"""
+    pairs = [
+        ("synthetic.llm_usage", "openai_compat", None),
+        ("synthetic.llm_usage", "chat_completion", None),
+    ]
+    manifest = smoke_gate(
+        policy="ALL_STAGES",
+        pairs=pairs,
+        observed=[("synthetic.llm_usage", "openai_compat")],
+    )
+
+    with pytest.raises(vl.GateFailure) as excinfo:
+        vl.gate_smoke(manifest)
+
+    assert "chat_completion" in str(excinfo.value)
+
+
+def test_smoke_gate_pair_without_requirement_follows_top_level_one_of(vl, smoke_gate) -> None:
+    """无 per-pair 要求 → 回退顶层 ONE_OF：同 producer 组内 1/2 即闭合。"""
+    pairs = [
+        ("synthetic.trace.summary", "sdk", None),
+        ("synthetic.trace.summary", "clickhouse", None),
+    ]
+    manifest = smoke_gate(
+        policy="ONE_OF", pairs=pairs, observed=[("synthetic.trace.summary", "sdk")]
+    )
+
+    steps = vl.gate_smoke(manifest)
+
+    assert "ONE_OF[synthetic.trace.summary] 1/2" in steps[6].detail
+
+
+# --------------------------------------------------------------------------- #
+# gate: smoke 第 7 步 —— ``NOT_OBSERVED_ALLOWED``（母 Spec §7.3:896）
+# --------------------------------------------------------------------------- #
+# 规范依据：§7.3:896「`normal` required；错误 stage 可 `NOT_OBSERVED`」+ §7.3:887
+# 「'未观察到'不等于失败」。该值只管**逐对**：未观测不使 gate 失败，但必须被逐对点名
+# （"未观测 ≠ 通过"），且不得作为顶层 `coverage_policy`。
+
+
+def test_smoke_gate_not_observed_allowed_pair_passes_and_names_it(vl, smoke_gate, capsys) -> None:
+    """(A/B) 授权可未观测的一对未观测 → gate **通过**（exit 0），且在文本里被逐对点名。"""
+    pairs = [
+        ("synthetic.llm_usage", "openai_compat", "ALL_STAGES"),
+        ("synthetic.benchmark.case_cost", "normal", "ALL_STAGES"),
+        ("synthetic.benchmark.case_cost", "environment_error", "NOT_OBSERVED_ALLOWED"),
+        ("synthetic.trace.summary", "sdk", "NOT_OBSERVED_ALLOWED"),
+    ]
+    observed = [
+        ("synthetic.llm_usage", "openai_compat"),
+        ("synthetic.benchmark.case_cost", "normal"),
+    ]
+    manifest = smoke_gate(policy="ALL_STAGES", pairs=pairs, observed=observed)
+
+    assert vl.main(["--gate", "smoke", "--run-manifest", str(manifest)]) == 0
+    assert "GATE FAILED" not in capsys.readouterr().err
+
+    steps = vl.gate_smoke(manifest)
+    detail = steps[6].detail
+    # 具名：不许静默通过，也不许把未观测说成 covered/通过
+    assert "synthetic.benchmark.case_cost/environment_error" in detail
+    assert "synthetic.trace.summary/sdk" in detail
+    assert "未观测" in detail
+    assert "NOT_OBSERVED_ALLOWED 0/2" in detail
+    # 未被计入 ALL_STAGES / ONE_OF
+    assert "ALL_STAGES 2/2" in detail
+    assert "ONE_OF" not in detail
+
+
+def test_smoke_gate_not_observed_allowed_pair_observed_is_not_listed_unobserved(vl, smoke_gate) -> None:
+    """该对**已**观测到 → 如实报 1/1 且未观测列表为空（不无中生有）。"""
+    pairs = [
+        ("synthetic.llm_usage", "openai_compat", "ALL_STAGES"),
+        ("synthetic.trace.summary", "sdk", "NOT_OBSERVED_ALLOWED"),
+    ]
+    observed = [
+        ("synthetic.llm_usage", "openai_compat"),
+        ("synthetic.trace.summary", "sdk"),
+    ]
+    manifest = smoke_gate(policy="ALL_STAGES", pairs=pairs, observed=observed)
+
+    detail = vl.gate_smoke(manifest)[6].detail
+
+    assert "NOT_OBSERVED_ALLOWED 1/1" in detail
+    assert "未观测：无" in detail
+
+
+def test_smoke_gate_not_observed_allowed_does_not_rescue_other_pairs(vl, smoke_gate) -> None:
+    """豁免只对本对生效：同 producer 的 ALL_STAGES 对仍必须观测到（不弱化门）。"""
+    pairs = [
+        ("synthetic.benchmark.case_cost", "normal", "ALL_STAGES"),
+        ("synthetic.benchmark.case_cost", "error", "NOT_OBSERVED_ALLOWED"),
+    ]
+    manifest = smoke_gate(
+        policy="ALL_STAGES",
+        pairs=pairs,
+        observed=[("synthetic.trace.summary", "sdk")],
+    )
+
+    with pytest.raises(vl.GateFailure) as excinfo:
+        vl.gate_smoke(manifest)
+
+    message = str(excinfo.value)
+    assert "ALL_STAGES" in message and "normal" in message
+    assert "error" not in message  # 被豁免的那对不得出现在 ALL_STAGES 失败清单里
+
+
+def test_smoke_gate_rejects_not_observed_allowed_as_top_level_policy(vl, smoke_gate) -> None:
+    """顶层策略不接受 `NOT_OBSERVED_ALLOWED`（整仓放宽会掩盖未观测）→ 用法错误。"""
+    pairs = [("synthetic.llm_usage", "openai_compat", "NOT_OBSERVED_ALLOWED")]
+    manifest = smoke_gate(
+        policy="NOT_OBSERVED_ALLOWED",
+        pairs=pairs,
+        observed=[("synthetic.llm_usage", "openai_compat")],
+    )
+
+    with pytest.raises(vl.UsageError) as excinfo:
+        vl.gate_smoke(manifest)
+
+    assert "coverage_policy" in str(excinfo.value)
+    assert vl.main(["--gate", "smoke", "--run-manifest", str(manifest)]) == vl.EXIT_USAGE
+
+
+def test_smoke_gate_rejects_unknown_evidence_requirement(vl, smoke_gate) -> None:
+    """逐对闭集之外的取值（例如温和命名 `OPTIONAL`）一律用法错误，不得静默放行。"""
+    pairs = [("synthetic.llm_usage", "openai_compat", "OPTIONAL")]
+    manifest = smoke_gate(
+        policy="ALL_STAGES",
+        pairs=pairs,
+        observed=[("synthetic.llm_usage", "openai_compat")],
+    )
+
+    with pytest.raises(vl.UsageError) as excinfo:
+        vl.gate_smoke(manifest)
+
+    message = str(excinfo.value)
+    assert "OPTIONAL" in message and "NOT_OBSERVED_ALLOWED" in message
+
+
+def test_per_pair_vocabulary_and_policy_sets_are_frozen(vl) -> None:
+    """字面量守卫：逐对闭集与顶层策略闭集都不含含糊值（`OPTIONAL` 之类）。"""
+    assert vl.PER_PAIR_EVIDENCE_REQUIREMENTS == (
+        "ALL_STAGES",
+        "ONE_OF",
+        "NOT_OBSERVED_ALLOWED",
+    )
+    assert vl.COVERAGE_POLICIES == ("ALL_STAGES", "ONE_OF")
+    assert "NOT_OBSERVED_ALLOWED" not in vl.COVERAGE_POLICIES

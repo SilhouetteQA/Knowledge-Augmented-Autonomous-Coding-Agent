@@ -36,6 +36,15 @@
   约定 ``0`` = 通过；``1`` = gate 失败；``2`` = 用法或配置错误。
 - **G-12**（Spec 09 的 baseline comparator 位于无 ``__init__.py`` 的 ``tests/contracts/``）
   按文件路径加载，而非包路径 import。
+- **§7.3:887 + §7.3:896**（"'未观察到'不等于失败"与"错误 stage 可 ``NOT_OBSERVED``"）
+  ``gate_smoke`` 第 7 步据此接受**逐对** ``evidence_requirement = NOT_OBSERVED_ALLOWED``：
+  该对未被观测不使 gate 失败，但必须在第 7 步文本里被**逐对具名**报为未观测
+  （豁免登记；不计入覆盖、绝不当成通过）。它**不得**作为顶层 ``coverage_policy`` ——
+  整仓放宽会掩盖未观测。逐对值的改动分两类，二者不可混同：
+  **(A) 规范回归**（Coding ``case_cost`` 的错误 stage：§7.3:896 本就允许 ``NOT_OBSERVED``，
+  冻结 manifest 错标 ``ALL_STAGES``）；**(B) 用户授权偏离**（Wiki ``scoring``、
+  Coding ``trace.summary``：§7.3 硬要求但本机无法观测，依 N-04 授权并记录在
+  ``docs/plans/2026-09-16-foundation-contract-spec11-stage0-calibration.md`` §10）。
 
 本脚本**不修改任何文件**（除 `python -m build` 产生的 `build/` 与临时目录，均在
 结束后清理）。不访问另一仓、不调用真实模型、不 dump 环境变量或凭据。
@@ -115,6 +124,19 @@ RUN_SUMMARY_KEYS = (
     "producer_coverage",
     "known_cost_components",
     "unknown_cost_components",
+)
+
+#: 顶层 ``coverage_policy`` 的闭集。**不含** ``NOT_OBSERVED_ALLOWED``：整仓放宽会把
+#: 未观测淹没在策略里而不被点名；只有逐对声明才是可审计的豁免。
+COVERAGE_POLICIES: tuple[str, ...] = ("ALL_STAGES", "ONE_OF")
+
+#: 逐对 ``evidence_requirement`` 的闭集。``NOT_OBSERVED_ALLOWED`` 直接引用母 Spec
+#: §7.3:896 的「错误 stage 可 ``NOT_OBSERVED``」措辞，使授权偏离在 grep 下一眼可审计
+#: （刻意不叫 ``OPTIONAL`` —— 那会暗示"无要求"）。语义见 :func:`gate_smoke` 第 7 步。
+PER_PAIR_EVIDENCE_REQUIREMENTS: tuple[str, ...] = (
+    "ALL_STAGES",
+    "ONE_OF",
+    "NOT_OBSERVED_ALLOWED",
 )
 
 SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -886,23 +908,91 @@ def gate_smoke(manifest_path: Path | None) -> list[Step]:
     steps.append(Step(6, "全部事件 contract_mode=observe", f"{len(records)} 条"))
 
     observed = {(str(record.producer_id), str(record.mapping_stage)) for record in records}
-    required_pairs = {
-        (str(item["producer_id"]), str(item["mapping_stage"]))
-        for item in manifest["required_producer_stages"]
-    }
     policy = manifest["coverage_policy"]
-    if policy == "ALL_STAGES":
-        missing_pairs = sorted(required_pairs - observed)
-        if missing_pairs:
-            raise GateFailure(f"§13.3：required producer/stage 未观测到：{missing_pairs}")
-        covered = f"{len(required_pairs)}/{len(required_pairs)}"
-    elif policy == "ONE_OF":
-        if not (required_pairs & observed):
-            raise GateFailure(f"§13.3：ONE_OF 策略下未观测到任何 required stage：{sorted(required_pairs)}")
-        covered = f"{len(required_pairs & observed)}/{len(required_pairs)}"
-    else:
-        raise UsageError(f"coverage_policy 非法：{policy!r}")
-    steps.append(Step(7, "producer/stage 覆盖（G-04 provisional）", f"{policy} {covered}"))
+    if policy not in COVERAGE_POLICIES:
+        raise UsageError(
+            f"coverage_policy 非法：{policy!r}（顶层闭集 {COVERAGE_POLICIES}）；"
+            "NOT_OBSERVED_ALLOWED 只能逐对声明，不得作为整仓顶层策略放宽"
+        )
+
+    # B7（Spec 13:51 /Master §7.3）：覆盖要求是**逐对**的。顶层 ``coverage_policy``
+    # 只作为未携带 ``evidence_requirement`` 的 pair 的回退值，不再平铺应用到所有 pair。
+    #   ALL_STAGES            ：每一对都必须观测到。
+    #   ONE_OF                ：同一 ``producer_id`` 的 ONE_OF 候选构成一组，组内至少
+    #                           观测到一个；不同 producer_id 各自成组（不跨 producer 串组
+    #                           —— 否则 A 的观测会错误地顶替 B 的要求）。"未观察到"不等于
+    #                           失败，但整组皆缺即失败。
+    #   NOT_OBSERVED_ALLOWED  ：§7.3:896「错误 stage 可 ``NOT_OBSERVED``」的逐对形态 ——
+    #                           该对**允许**未被观测到，未观测不使 gate 失败。但它必须在
+    #                           第 7 步文本里被逐对具名。"未观测 ≠ 通过"（§7.3:887）：
+    #                           这里只登记豁免，不计入覆盖率，绝不伪报为已覆盖/通过。
+    all_stages_pairs: set[tuple[str, str]] = set()
+    one_of_groups: dict[str, set[tuple[str, str]]] = {}
+    not_observed_allowed_pairs: set[tuple[str, str]] = set()
+    for item in manifest["required_producer_stages"]:
+        producer_id = str(item["producer_id"])
+        pair = (producer_id, str(item["mapping_stage"]))
+        requirement = item.get("evidence_requirement", policy)
+        if requirement == "ONE_OF":
+            one_of_groups.setdefault(producer_id, set()).add(pair)
+        elif requirement == "ALL_STAGES":
+            all_stages_pairs.add(pair)
+        elif requirement == "NOT_OBSERVED_ALLOWED":
+            not_observed_allowed_pairs.add(pair)
+        else:
+            raise UsageError(
+                "required_producer_stages[].evidence_requirement 非法："
+                f"{requirement!r}（producer_id={producer_id!r}；"
+                f"逐对闭集 {PER_PAIR_EVIDENCE_REQUIREMENTS}）"
+            )
+
+    missing_pairs = sorted(all_stages_pairs - observed)
+    if missing_pairs:
+        raise GateFailure(f"§13.3：ALL_STAGES required producer/stage 未观测到：{missing_pairs}")
+
+    group_coverage = [
+        (producer_id, pairs & observed, pairs)
+        for producer_id, pairs in sorted(one_of_groups.items())
+    ]
+    unsatisfied_groups = [
+        f"{producer_id}（候选 {sorted(pairs)}）"
+        for producer_id, covered, pairs in group_coverage
+        if not covered
+    ]
+    if unsatisfied_groups:
+        raise GateFailure(
+            "§13.3：ONE_OF 组未观测到任何预登记 stage：" + "；".join(unsatisfied_groups)
+        )
+
+    allowed_observed = sorted(not_observed_allowed_pairs & observed)
+    allowed_unobserved = sorted(not_observed_allowed_pairs - observed)
+
+    detail = f"policy={policy}；ALL_STAGES {len(all_stages_pairs)}/{len(all_stages_pairs)}"
+    if group_coverage:
+        detail += "；" + "；".join(
+            f"ONE_OF[{producer_id}] {len(covered)}/{len(pairs)}"
+            for producer_id, covered, pairs in group_coverage
+        )
+    if not_observed_allowed_pairs:
+        detail += (
+            f"；NOT_OBSERVED_ALLOWED {len(allowed_observed)}/{len(not_observed_allowed_pairs)}"
+            "（§7.3:896 授权可不观测）"
+        )
+        if allowed_unobserved:
+            named = "，".join(
+                f"{producer_id}/{stage}" for producer_id, stage in allowed_unobserved
+            )
+            detail += f"；未观测（豁免登记，不计为通过/覆盖）：{named}"
+        else:
+            detail += "；未观测：无"
+    steps.append(
+        Step(
+            7,
+            "producer/stage 覆盖（逐对 evidence_requirement；未观测≠通过；"
+            "NOT_OBSERVED_ALLOWED 单列未观测项）",
+            detail,
+        )
+    )
 
     summary_path = root / "run-summary.json"
     if not summary_path.is_file():

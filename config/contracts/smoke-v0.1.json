@@ -27,22 +27,22 @@
     {
       "producer_id": "coding.benchmark.case_cost",
       "mapping_stage": "environment_error",
-      "evidence_requirement": "ALL_STAGES"
+      "evidence_requirement": "NOT_OBSERVED_ALLOWED"
     },
     {
       "producer_id": "coding.benchmark.case_cost",
       "mapping_stage": "error",
-      "evidence_requirement": "ALL_STAGES"
+      "evidence_requirement": "NOT_OBSERVED_ALLOWED"
     },
     {
       "producer_id": "coding.trace.summary",
       "mapping_stage": "sdk",
-      "evidence_requirement": "ONE_OF"
+      "evidence_requirement": "NOT_OBSERVED_ALLOWED"
     },
     {
       "producer_id": "coding.trace.summary",
       "mapping_stage": "clickhouse",
-      "evidence_requirement": "ONE_OF"
+      "evidence_requirement": "NOT_OBSERVED_ALLOWED"
     }
   ],
   "model": "mimo-v2.5",

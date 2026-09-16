@@ -34,8 +34,8 @@
       ],
       "legacy_fields": ["cost_usd", "resolved", "tests_passed"],
       "foundation_objects": ["CostSummary"],
-      "evidence_requirement": "ALL_STAGES",
-      "notes": "每个分支先形成完整 CaseResult 再旁路 emit；不参与 resolution/test/patch/consistency 判定"
+      "evidence_requirement": "NOT_OBSERVED_ALLOWED",
+      "notes": "每个分支先形成完整 CaseResult 再旁路 emit；不参与 resolution/test/patch/consistency 判定。evidence_requirement 是**授权下限**：§7.3:896 本就写明错误 stage 可 NOT_OBSERVED（规范回归，非偏离），且 benchmark/runner.py::_run_one_case 三分支互斥、manifest.case_ids 冻结为单一 case，故 environment_error/error 在一次 run 内不可能与 normal 同时出现；manifest 的 normal 仍为 ALL_STAGES。见 docs/plans/2026-09-16-foundation-contract-spec11-stage0-calibration.md §10 (A)。"
     },
     {
       "producer_id": "coding.trace.summary",
@@ -47,8 +47,8 @@
       ],
       "legacy_fields": ["cost_usd", "tokens_in", "tokens_out", "total_cost"],
       "foundation_objects": ["Usage", "CostSummary"],
-      "evidence_requirement": "ONE_OF",
-      "notes": "SDK 缺 cost 时旧 0.0 映射 unknown；ClickHouse 在 _as_float 前区分 absent 与 explicit zero"
+      "evidence_requirement": "NOT_OBSERVED_ALLOWED",
+      "notes": "SDK 缺 cost 时旧 0.0 映射 unknown；ClickHouse 在 _as_float 前区分 absent 与 explicit zero。evidence_requirement 是**授权下限**：§7.3:897 的 L3 硬要求是 ONE_OF(sdk, clickhouse)，但 --benchmark 路径上无任何 producer 可达（唯一 producer 在 tools/report_trace.py，只经 main.py --trace-report，需 Langfuse 凭据或 127.0.0.1:8123 的 ClickHouse），故 sdk/clickhouse 依 N-04 授权登记为可未观测。见 docs/plans/2026-09-16-foundation-contract-spec11-stage0-calibration.md §10 (B2)。"
     },
     {
       "producer_id": "coding.sandbox",

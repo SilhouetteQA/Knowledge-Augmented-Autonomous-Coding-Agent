@@ -42,6 +42,10 @@ provisional 决策（G-01/G-08/G-14/G-16/G-18，已获用户批准）
 * **G-18（Provisional）** 退出码：`0` 通过、`1` 校验/扫描失败、`2` 用法或配置错误。
 * `fresh_smoke` 在没有 smoke staging 事件时记为 `NOT_OBSERVED`（§11.5 的合法状态），
   **不**伪报为 PASS；一旦存在事件则必须通过 A 绑定检查，否则拒发（exit 1）。
+* `NOT_OBSERVED_ALLOWED`（§7.3:896「错误 stage 可 `NOT_OBSERVED`」）是**逐对**授权豁免：
+  未观测时 `producer_coverage` 如实记 `covered=false`，validation report 单列该对，
+  绝不伪报覆盖；顶层 `coverage_policy` 不接受该值。registry 的 producer 级值是授权**下限**，
+  manifest 的逐对声明不得低于它（放宽必须两份文件同步变更）。
 """
 from __future__ import annotations
 
@@ -212,6 +216,18 @@ EVIDENCE_KEYS: Final[tuple[str, ...]] = (
     "full_regression",
 )
 
+#: 逐对 ``evidence_requirement`` 的**严格度偏序**（数值越大越严）。
+#: ``NOT_OBSERVED_ALLOWED`` 直接引用母 Spec §7.3:896 的「错误 stage 可 ``NOT_OBSERVED``」
+#: 措辞；``ONE_OF`` 与 ``ALL_STAGES`` 的严格度关系对**单一 pair** 成立（ALL_STAGES 要求
+#: 该 pair 本身被观测到，ONE_OF 只要求同 producer 组内至少一个）。
+#: registry 的 producer 级值是**授权下限**：manifest 的逐对声明可以更严，但**不得**更松。
+#: 放宽必须先改 registry —— 两份文件同步变更，偏离才可审计。
+EVIDENCE_REQUIREMENT_STRICTNESS: Final[Mapping[str, int]] = {
+    "NOT_OBSERVED_ALLOWED": 0,
+    "ONE_OF": 1,
+    "ALL_STAGES": 2,
+}
+
 
 def release_allowlist(release_version: str, repository: str) -> tuple[str, ...]:
     """B 阶段的严格 allowlist（仓库相对路径）。
@@ -379,11 +395,19 @@ def load_smoke_manifest(repo_root: Path) -> dict[str, Any]:
 def validate_required_stages(
     manifest: Mapping[str, Any], registry: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
-    """`required_producer_stages` 必须与本仓 registry 的 IN_SCOPE 组合一致。"""
+    """`required_producer_stages` 必须与本仓 registry 的 IN_SCOPE 组合一致。
+
+    `evidence_requirement` 的比对是**下限**关系，不是严格相等：registry 的 producer 级值是
+    授权下限（可能因 §7.3:896 的「可 ``NOT_OBSERVED``」或用户依 N-04 授权的偏离而为
+    ``NOT_OBSERVED_ALLOWED``），manifest 的逐对声明可以**更严**（例如同一 producer 的
+    ``normal`` 仍为 ``ALL_STAGES``），但**不得更松** —— 要放宽必须同时改 registry。
+    缺失该字段的 entry 一律拒绝：**不得**为缺失项默认一个 required 值。
+    """
     required = manifest.get("required_producer_stages")
     if not isinstance(required, list) or not required:
         raise ToolError(EXIT_USAGE, "smoke run manifest 缺少 required_producer_stages")
 
+    vocabulary = sorted(EVIDENCE_REQUIREMENT_STRICTNESS)
     producers = registry_producers(registry)
     normalized: list[dict[str, Any]] = []
     for index, entry in enumerate(required):
@@ -411,19 +435,44 @@ def validate_required_stages(
                 f"required_producer_stages[{index}].mapping_stage {stage!r} 不在 producer "
                 f"{producer_id!r} 的登记 stage {stages} 内",
             )
-        requirement = producer.get("evidence_requirement")
-        declared = entry.get("evidence_requirement", requirement)
-        if declared != requirement:
+        registry_requirement = producer.get("evidence_requirement")
+        if (
+            not isinstance(registry_requirement, str)
+            or registry_requirement not in EVIDENCE_REQUIREMENT_STRICTNESS
+        ):
             raise ToolError(
                 EXIT_USAGE,
-                f"required_producer_stages[{index}].evidence_requirement {declared!r} 与 registry "
-                f"{requirement!r} 不一致",
+                f"registry 中 IN_SCOPE producer {producer_id!r} 的 evidence_requirement "
+                f"{registry_requirement!r} 不在逐对闭集 {vocabulary} 内",
+            )
+        if "evidence_requirement" not in entry:
+            raise ToolError(
+                EXIT_USAGE,
+                f"required_producer_stages[{index}] 缺少 evidence_requirement；"
+                "不得为缺失项默认一个 required 值（registry 值是授权下限，不是缺省填充）",
+            )
+        declared = entry["evidence_requirement"]
+        if not isinstance(declared, str) or declared not in EVIDENCE_REQUIREMENT_STRICTNESS:
+            raise ToolError(
+                EXIT_USAGE,
+                f"required_producer_stages[{index}].evidence_requirement {declared!r} 不在逐对闭集 "
+                f"{vocabulary} 内",
+            )
+        if (
+            EVIDENCE_REQUIREMENT_STRICTNESS[declared]
+            < EVIDENCE_REQUIREMENT_STRICTNESS[registry_requirement]
+        ):
+            raise ToolError(
+                EXIT_USAGE,
+                f"required_producer_stages[{index}].evidence_requirement {declared!r} 弱于本仓 "
+                f"registry 的 {registry_requirement!r}（registry 是授权下限）；"
+                "放宽必须先改 registry，两份文件必须同步变更",
             )
         normalized.append(
             {
                 "producer_id": str(producer_id),
                 "mapping_stage": str(stage),
-                "evidence_requirement": str(requirement),
+                "evidence_requirement": declared,
             }
         )
 
@@ -1087,6 +1136,27 @@ def render_validation_report(**kwargs: Any) -> str:
             f"| `{entry['producer_id']}` | `{entry['mapping_stage']}` | "
             f"{entry['evidence_requirement']} | {str(entry['covered']).lower()} |"
         )
+    authorized_uncovered = [
+        entry
+        for entry in kwargs["producer_coverage"]
+        if entry["evidence_requirement"] == "NOT_OBSERVED_ALLOWED" and not entry["covered"]
+    ]
+    lines += [
+        "",
+        "### Authorized `NOT_OBSERVED_ALLOWED` pairs",
+        "",
+        "母 Spec §7.3:896「错误 stage 可 `NOT_OBSERVED`」/ §7.3:887「'未观察到'不等于失败」："
+        "下列 (producer_id, mapping_stage) 本次 run **未观测到**，`covered=false`。"
+        "它们是**授权豁免的未观测项，不是通过，也不计入覆盖**。",
+        "",
+    ]
+    if authorized_uncovered:
+        lines += [
+            f"- `{entry['producer_id']}` / `{entry['mapping_stage']}` — unobserved（covered=false）"
+            for entry in authorized_uncovered
+        ]
+    else:
+        lines.append("- （无：本次 run 的 `NOT_OBSERVED_ALLOWED` 对全部已观测到）")
     lines += [
         "",
         "## Rule traceability",

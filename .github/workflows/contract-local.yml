@@ -36,6 +36,10 @@
 #         只做**本仓自洽**校验，不做任何跨仓身份比较；跨仓比较是 §15.3 协调端职责。
 #   G-07  candidate 档位的回归基线（381/13/0）与仓库现状可能冲突：本文件不运行
 #         `--gate candidate`（其触发方式亦未定义，同 G-06）。
+#   G-20  L3 缺口（A2 修复，本文件只记录）：`--gate smoke` 只校验已完成的 run，规范
+#         又没有给出驱动命令，于是 `run-summary.json` 无人产出、预登记 case_ids 无人
+#         选中 —— L3 永远不可能闭合。缺口由 `scripts/contracts/run_l3_smoke.py` 补上
+#         （受控手动运行，见文末注释块），本 workflow 的 job 步骤不变。
 #
 # 禁止事项（Master §15.1:1550；Spec10:51/53；Appendix F.3:2680）
 #   1. 不得 clone 或读取另一仓（Wiki）：本 job 无跨仓 checkout / fetch / 网络拉取。
@@ -150,7 +154,19 @@ jobs:
 #   $env:AGENT_CONTRACT_MODE='strict'; $env:AGENT_CONTRACT_RUN_ID='<run_id>'; python scripts/contracts/replay_history.py --run-manifest config/contracts/replay-v0.1.json
 #
 # L3 —— Fresh smoke（Master §11.2/§13.3 / Appendix C.2:2409-2411；Spec13）：
+#   $env:AGENT_CONTRACT_MODE='observe'; $env:AGENT_CONTRACT_RUN_ID='<run_id>'; python scripts/contracts/run_l3_smoke.py --run-manifest config/contracts/smoke-v0.1.json
 #   $env:AGENT_CONTRACT_MODE='observe'; $env:AGENT_CONTRACT_RUN_ID='<run_id>'; python scripts/contracts/validate_local.py --gate smoke --run-manifest config/contracts/smoke-v0.1.json
+#
+#   `run_l3_smoke.py` 是 Spec13 缺失的 L3 **驱动**（A2 修复）：用与 `--gate smoke`
+#   同一必需键集校验 manifest → 把预登记 case_ids 解析到 benchmark/cases（缺失即
+#   SPEC_INCOMPLETE/exit 2）→ 以 observe 子进程跑真实业务路径
+#   （python main.py --benchmark --cases <staged> ...，遵守 manifest.timeout_seconds）
+#   → 读回 events/ 写出 <evidence_root>/<run_id>/run-summary.json 并判定覆盖闭合。
+#   第二条 `validate_local.py --gate smoke` 仍是唯一权威判定命令（本驱动不代替它）。
+#   业务 scratch（克隆/报告）落 output/contract-validation/run-scratch/<run_id>/，
+#   不进 staging（Master §11.5：原始业务记录不得进入 staging）。
+#   `--case-source <dir>` 可换 case 源；`KA_L3_SMOKE_BUSINESS_CMD` 是测试用 fixture
+#   seam（合成证据、无网络），真实 L3 不设置它、也不得用它冒充真实观测。
 #
 # Appendix C.2:2406/2410 给出的示例 run_id：'foundation-0_1_0-c1-coding-replay' /
 # 'foundation-0_1_0-c1-coding-smoke'。`<run_id>` 必须显式给出、与 run manifest 一致，
