@@ -849,3 +849,74 @@ def test_shipped_manifests_match_this_repo_registry():
     assert smoke["repository_commit"] is None and replay["repository_commit"] is None
     assert replay["reproduction_restriction"] == "REPRODUCTION_RESTRICTED"
     assert smoke["coverage_policy"] in {"ALL_STAGES", "ONE_OF"}
+
+
+# --------------------------------------------------------------------------- #
+# 冻结表面：run manifest 键集（Spec 11 Stage 0 校准，G-01 / G-02）
+# --------------------------------------------------------------------------- #
+
+
+def test_manifest_key_sets_are_frozen() -> None:
+    """Spec 13/14 禁止修改 ``config/``，所以两个 run manifest 的键名必须在 A 冻结前定死。
+
+    Wiki 侧同一断言在 ``tests/contracts/test_status_ledger.py::TestFrozenSurface``；
+    Coding 没有 ``status_ledger.py``，故在此独立钉住（两仓键集当前逐字相同）。
+
+    校准记录：``docs/plans/2026-09-16-foundation-contract-spec11-stage0-calibration.md``
+    """
+    expected_smoke_keys = {
+        "manifest_version",
+        "run_id",
+        "contract_mode",
+        "contract_version",
+        "payload_hash",
+        "candidate_commit",
+        "repository_commit",
+        "evidence_root",
+        "coverage_policy",
+        "required_producer_stages",
+        "model",
+        "provider",
+        "case_ids",
+        "expected_calls",
+        "max_calls",
+        "estimated_cost_cap",
+        "network_requirement",
+        "side_effect_policy",
+        "timeout_seconds",
+        "duration_cap_seconds",
+    }
+    expected_replay_keys = {
+        "manifest_version",
+        "run_id",
+        "contract_mode",
+        "contract_version",
+        "payload_hash",
+        "repository_commit",
+        "output_dir",
+        "sources",
+        "max_records",
+        "reproduction_restriction",
+    }
+    expected_stage_keys = {"producer_id", "mapping_stage", "evidence_requirement"}
+    expected_source_keys = {
+        "source_id",
+        "source_class",
+        "path",
+        "producer_id",
+        "mapping_stage",
+        "runtime_adapter_status",
+        "evidence_role",
+    }
+
+    config_dir = REPO_ROOT / "config" / "contracts"
+    smoke = json.loads((config_dir / "smoke-v0.1.json").read_text(encoding="utf-8"))
+    replay = json.loads((config_dir / "replay-v0.1.json").read_text(encoding="utf-8"))
+
+    assert set(smoke) == expected_smoke_keys, sorted(set(smoke) ^ expected_smoke_keys)
+    assert set(replay) == expected_replay_keys, sorted(set(replay) ^ expected_replay_keys)
+    for item in smoke["required_producer_stages"]:
+        assert set(item) == expected_stage_keys
+    assert replay["sources"], "sources 必须非空（空 sources 是显式 exit 2，不得静默）"
+    for source in replay["sources"]:
+        assert set(source) == expected_source_keys
