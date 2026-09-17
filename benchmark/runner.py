@@ -282,11 +282,18 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     # 下 cd 不存在目录）。入口处归一为绝对路径。
     repo_dir = os.path.abspath(os.path.join(repo_root, _repo_dir_name(case.repository)))
     try:
+        # 仓库就绪必须在进入沙箱**之前**完成：DockerExecutor.create() 要求
+        # workspace_root 已存在（tools/docker_sandbox.py），而
+        # _ensure_repository 才是创建并克隆它的人；顺序颠倒会让 docker 执行器下
+        # 每个**全新** case 都以「沙箱工作区不存在」失败 —— 只有复用旧 workspace
+        # 时才偶然通过，所以 local 执行器（无此前置检查）与预置 workspace 的单测
+        # 都发现不了。repo 就绪本身走宿主 gh/git（凭据不进沙箱，与执行器无关），
+        # 因此把它移到 with 之外语义不变。
+        _ensure_repository(repo_root, repo_dir, case.repository)
         # 单 case 单沙箱（审查 I2）：setup/基线/Agent/判定共享同一容器——
         # docker 下 setup 的环境级安装此前随独立容器销毁而蒸发；嵌套的
         # sandbox_executor 调用按 workspace 匹配自动复用外层容器
         with sandbox_executor(repo_dir):
-            _ensure_repository(repo_root, repo_dir, case.repository)
             _run_setup_commands(case, repo_dir)
             baseline_ok, summary = _test_summary(case, repo_dir)
             if not baseline_ok:

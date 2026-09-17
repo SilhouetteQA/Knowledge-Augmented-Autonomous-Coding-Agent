@@ -668,3 +668,49 @@ def test_run_one_case_relative_repo_root_setup_fail(tmp_path, monkeypatch):
     r = rm._run_one_case(case, MockLLMClient([]), ".", "workspace")   # repo_root 相对
     assert r.status == "error"
     assert any("exit=2" in e for e in r.errors)   # 命令真执行失败，而非 cd 不存在目录
+
+
+def test_sandbox_entered_only_after_repository_is_ready(tmp_path, monkeypatch):
+    """A6 回归钉子：进入沙箱**之前** repo 必须已就绪。
+
+    `DockerExecutor.create()` 要求 `workspace_root` 已存在（tools/docker_sandbox.py），
+    而负责创建并克隆它的是 `_ensure_repository`。一旦两者顺序颠倒，"全新 workspace
+    + docker 执行器" 的每个 case 都会以「沙箱工作区不存在」失败 —— 而且**只有复用旧
+    workspace 时才偶然通过**，所以用 local 执行器（无此前置检查）或预置 workspace 的
+    单测都发现不了。本测试用「与 DockerExecutor.create() 同款前置检查」的替身
+    `sandbox_executor` 把它钉住：旧顺序下替身会直接断言失败。
+    """
+    from contextlib import contextmanager
+
+    entered: list[str] = []
+    workspace_existed_at_entry: list[bool] = []
+
+    def fake_ensure_repository(repo_root, repo_dir, repository):
+        # 真实实现的职责：创建 workspace（随后才由 gh/git 填充）
+        os.makedirs(repo_dir, exist_ok=True)
+
+    @contextmanager
+    def fake_sandbox_executor(workspace_root):
+        # 只记录观测值，不在 with 内抛错：_run_one_case 的兜底 except 会把异常
+        # 收敛成 error 结果，断言放在运行之后才能给出准确诊断。
+        workspace_existed_at_entry.append(os.path.isdir(str(workspace_root)))
+        entered.append(str(workspace_root))
+        yield None
+
+    monkeypatch.setattr(runner_mod, "_ensure_repository", fake_ensure_repository)
+    monkeypatch.setattr(runner_mod, "sandbox_executor", fake_sandbox_executor)
+    monkeypatch.setattr(runner_mod, "run_tests",
+                        lambda path, workspace_root: TestResult(1, 0, 0, 1, 0.1, []))
+    monkeypatch.setattr(runner_mod, "run_issue_agent",
+                        lambda task, llm, **kw: _result_diff())
+    llm = MockLLMClient([LLMMessage(role="assistant", content="PASS 一致。")])
+
+    report = runner_mod.run_benchmark_cases(
+        llm, [_case()], _make_gold(tmp_path), "", "docker", tmp_path)
+
+    assert entered, "docker 执行器下沙箱必须被进入"
+    assert all(workspace_existed_at_entry), (
+        "沙箱在 workspace 就绪之前被进入：docker 执行器下会以「沙箱工作区不存在」"
+        "失败（_ensure_repository 必须先于 with 执行）"
+    )
+    assert report.results[0].status == "resolved"
