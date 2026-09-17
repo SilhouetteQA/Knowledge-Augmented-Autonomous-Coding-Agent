@@ -45,8 +45,8 @@
       "evidence_requirement": "NOT_OBSERVED_ALLOWED"
     }
   ],
-  "model": "mimo-v2.5",
-  "provider": "opencode_go",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "provider": "command_goat",
   "case_ids": [
     "schedule-99"
   ],

@@ -1,12 +1,20 @@
 # agent/llm.py
 """LLM 客户端：可插拔协议 + OpenAI 兼容实现 + Mock 实现。
 
-真实配置按供应商（KA_LLM_PROVIDER，默认 opencode_go）从环境变量读取：
-- opencode_go：opencode_go_api（Key）、OPENCODE_GO_BASE_URL（端点，
-  默认 https://opencode.ai/zen/go/v1）、OPENCODE_GO_MODEL（模型，默认 mimo-v2.5）；
+真实配置按供应商从环境变量读取。供应商由 `KA_LLM_PROVIDER` 显式指定；未指定时按
+`PROVIDER_PREFERENCE` 取**第一个已配置 Key** 的供应商（订阅网关优先）：
+
+- command_goat（默认首选，订阅网关）：command_goat_api（Key）、
+  COMMAND_GOAT_BASE_URL（端点，默认 https://api.commandcode.ai/provider/v1）、
+  COMMAND_GOAT_MODEL（模型，默认 deepseek/deepseek-v4.1-flash）；
 - deepseek：deepseek_api（Key）、DEEPSEEK_BASE_URL（端点，默认
   https://api.deepseek.com）、DEEPSEEK_MODEL（模型，默认 deepseek-v4-flash，
-  端点实测模型列表：deepseek-v4-flash / deepseek-v4-flash-vision-exp / deepseek-v4-pro）。
+  端点实测模型列表：deepseek-v4-flash / deepseek-v4-flash-vision-exp / deepseek-v4-pro）；
+- opencode_go（保留的历史供应商，不参与自动选择）：opencode_go_api（Key）、
+  OPENCODE_GO_BASE_URL（端点，默认 https://opencode.ai/zen/go/v1）、
+  OPENCODE_GO_MODEL（模型，默认 mimo-v2.5）。
+
+无任何 Key 且未显式指定时回退 opencode_go，报错点名为 `opencode_go_api`（与改造前一致）。
 
 请求超时与重试（P1-4，优先 SDK 原生参数，不自造重试循环）：
 - KA_LLM_TIMEOUT_S：请求超时秒数（float，非法值回退 120.0；未设则不传，
@@ -17,7 +25,7 @@
 import json
 import os
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Mapping, Protocol
 
 import openai
 
@@ -25,6 +33,13 @@ from tools.tracing import record_usage, traced
 
 # 供应商配置表（扩展新供应商时在此注册）
 LLM_PROVIDERS: dict[str, dict[str, str]] = {
+    "command_goat": {
+        "key_env": "command_goat_api",
+        "base_url_env": "COMMAND_GOAT_BASE_URL",
+        "base_url_default": "https://api.commandcode.ai/provider/v1",
+        "model_env": "COMMAND_GOAT_MODEL",
+        "model_default": "deepseek/deepseek-v4.1-flash",
+    },
     "opencode_go": {
         "key_env": "opencode_go_api",
         "base_url_env": "OPENCODE_GO_BASE_URL",
@@ -40,6 +55,27 @@ LLM_PROVIDERS: dict[str, dict[str, str]] = {
         "model_default": "deepseek-v4-flash",
     },
 }
+
+#: 未显式设置 ``KA_LLM_PROVIDER`` 时的自动选择顺序（订阅网关优先，见 `.env.example`）。
+PROVIDER_PREFERENCE: tuple[str, ...] = ("command_goat", "deepseek")
+
+#: 没有任何候选 Key 时的回退供应商（保持改造前的报错点名与默认端点/模型）。
+FALLBACK_PROVIDER: str = "opencode_go"
+
+
+def _resolve_provider_name(env: Mapping[str, str]) -> str:
+    """解析供应商名：显式 ``KA_LLM_PROVIDER`` 优先，否则取第一个已配置 Key 的候选。
+
+    显式值即使未知也原样返回，交由调用方报"未知供应商"错误（不静默改写用户配置）。
+    """
+    explicit = (env.get("KA_LLM_PROVIDER") or "").strip()
+    if explicit:
+        return explicit
+    for name in PROVIDER_PREFERENCE:
+        if (env.get(LLM_PROVIDERS[name]["key_env"]) or "").strip():
+            return name
+    return FALLBACK_PROVIDER
+
 
 
 def _env_timeout() -> float | None:
@@ -121,7 +157,7 @@ def _parse_tool_call(tc) -> ToolCall:
 
 
 class OpenAICompatClient:
-    """OpenAI 兼容实现（按 KA_LLM_PROVIDER 选择供应商与模型）。
+    """OpenAI 兼容实现（供应商由 KA_LLM_PROVIDER 显式指定，否则按已配置 Key 自动选择）。
 
     timeout / max_retries 传入 openai.OpenAI 构造（SDK 原生超时与重试，
     不在此自造重试循环）。两者为 None 时分别从 KA_LLM_TIMEOUT_S /
@@ -133,7 +169,7 @@ class OpenAICompatClient:
     def __init__(self, api_key: str | None = None, base_url: str | None = None,
                  model: str | None = None, timeout: float | None = None,
                  max_retries: int | None = None):
-        provider = os.environ.get("KA_LLM_PROVIDER", "opencode_go")
+        provider = _resolve_provider_name(os.environ)
         conf = LLM_PROVIDERS.get(provider)
         if conf is None:
             raise ValueError(

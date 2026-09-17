@@ -12,6 +12,20 @@ from agent.llm import (
     ToolSpec,
 )
 
+#: 全部供应商的 Key 环境变量（自动选择测试必须逐个清空，否则本机真实 Key 会改变选择结果）。
+ALL_KEY_ENVS = ("command_goat_api", "opencode_go_api", "deepseek_api")
+
+
+def _clear_provider_env(monkeypatch):
+    """清空供应商选择相关环境：Key、显式选择、以及三个供应商的端点/模型覆盖。"""
+    for name in ALL_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("KA_LLM_PROVIDER", raising=False)
+    for name in ("COMMAND_GOAT_BASE_URL", "COMMAND_GOAT_MODEL",
+                 "OPENCODE_GO_BASE_URL", "OPENCODE_GO_MODEL",
+                 "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
 
 def test_mock_llm_pops_script_and_records_calls():
     script = [LLMMessage(role="assistant", content="你好")]
@@ -26,14 +40,72 @@ def test_mock_llm_pops_script_and_records_calls():
 
 
 def test_openai_client_requires_env(monkeypatch):
-    monkeypatch.delenv("opencode_go_api", raising=False)
+    """无任何供应商 Key 时回退 opencode_go，报错点名其 Key 环境变量。"""
+    _clear_provider_env(monkeypatch)
     with pytest.raises(ValueError, match="opencode_go_api"):
         OpenAICompatClient()
+    monkeypatch.setenv("KA_LLM_PROVIDER", "opencode_go")
     monkeypatch.setenv("opencode_go_api", "k")
     client = OpenAICompatClient()
     assert client.base_url == "https://opencode.ai/zen/go/v1"
     assert client.model == "mimo-v2.5"
 
+
+# ---- A5: command_goat 订阅网关 + 未显式指定时的自动选择 ----
+
+def test_command_goat_provider_uses_its_own_env(monkeypatch):
+    """KA_LLM_PROVIDER=command_goat 时读取 command_goat_api / COMMAND_GOAT_*。"""
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("KA_LLM_PROVIDER", "command_goat")
+    monkeypatch.setenv("command_goat_api", "ck")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://api.commandcode.ai/provider/v1"
+    assert client.model == "deepseek/deepseek-v4.1-flash"
+    # 环境变量可覆盖端点与模型
+    monkeypatch.setenv("COMMAND_GOAT_BASE_URL", "https://cg.example.com/v1")
+    monkeypatch.setenv("COMMAND_GOAT_MODEL", "deepseek-v4.1-flash")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://cg.example.com/v1"
+    assert client.model == "deepseek-v4.1-flash"
+
+
+def test_auto_select_prefers_command_goat_over_deepseek(monkeypatch):
+    """未显式指定时：command_goat_api 与 deepseek_api 都在 → 选订阅网关 command_goat。"""
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("command_goat_api", "ck")
+    monkeypatch.setenv("deepseek_api", "dk")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://api.commandcode.ai/provider/v1"
+    assert client.model == "deepseek/deepseek-v4.1-flash"
+
+
+def test_auto_select_falls_back_to_deepseek(monkeypatch):
+    """只有 deepseek_api 时自动选择 deepseek。"""
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("deepseek_api", "dk")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://api.deepseek.com"
+    assert client.model == "deepseek-v4-flash"
+
+
+def test_auto_select_ignores_blank_and_opencode_go_key(monkeypatch):
+    """空白 Key 不算已配置；opencode_go 不参与自动选择（两者都设仍回退 deepseek）。"""
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("command_goat_api", "   ")
+    monkeypatch.setenv("opencode_go_api", "ok")
+    monkeypatch.setenv("deepseek_api", "dk")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://api.deepseek.com"
+
+
+def test_explicit_provider_wins_over_auto_select(monkeypatch):
+    """显式 KA_LLM_PROVIDER 覆盖自动选择结果。"""
+    _clear_provider_env(monkeypatch)
+    monkeypatch.setenv("command_goat_api", "ck")
+    monkeypatch.setenv("deepseek_api", "dk")
+    monkeypatch.setenv("KA_LLM_PROVIDER", "deepseek")
+    client = OpenAICompatClient()
+    assert client.base_url == "https://api.deepseek.com"
 
 def test_deepseek_provider_uses_its_own_env(monkeypatch):
     """KA_LLM_PROVIDER=deepseek 时读取 deepseek_api / DEEPSEEK_* 配置。"""
@@ -70,7 +142,8 @@ def test_unknown_provider_rejected(monkeypatch):
 
 
 def test_openai_client_chat_converts_response(monkeypatch):
-    # 固定模型默认值，避免本机 OPENCODE_GO_MODEL 环境变量干扰断言
+    # 固定供应商与模型默认值，避免本机 Key / OPENCODE_GO_MODEL 干扰断言
+    monkeypatch.setenv("KA_LLM_PROVIDER", "opencode_go")
     monkeypatch.delenv("OPENCODE_GO_MODEL", raising=False)
     client = OpenAICompatClient(api_key="test-key", base_url="http://localhost:1")
 
