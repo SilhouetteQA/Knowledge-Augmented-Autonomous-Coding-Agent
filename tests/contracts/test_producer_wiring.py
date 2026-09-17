@@ -335,3 +335,47 @@ def test_off_mode_runs_no_seam(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     assert sink.records == []
     assert runtime.ledger_allocated is False
     assert runtime.sink_failure_count == 0
+
+
+# ---- A7: 进程级 runtime 必须采纳 AGENT_CONTRACT_RUN_ID --------------------------
+
+def test_env_built_runtime_adopts_agent_contract_run_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A7 回归钉子：按环境构造的 runtime 必须用 ``AGENT_CONTRACT_RUN_ID`` 作为 run_id。
+
+    L3 gate 只在 ``<evidence_root>/<manifest run_id>/events`` 下找证据。若
+    ``_build_runtime_from_env`` 不读该环境变量，就会回落到进程级 UUID，把证据写进
+    gate **永远找不到**的目录 —— 现象是「0 事件 + required producer/stage 未观测」，
+    而业务路径完全正常（Spec 13 在 Coding 仓第一次真实运行时的真实表现：
+    102 条格式完全正确、commit 与 mode 都对的事件被写进了
+    ``<staging>/7e3c49b5-…/events/``）。
+    """
+    from adapters.foundation import runtime as rt
+
+    monkeypatch.setenv("AGENT_CONTRACT_MODE", "observe")
+    monkeypatch.setenv("AGENT_CONTRACT_RUN_ID", "foundation-0_1_0-c1-coding-smoke")
+    monkeypatch.setenv("AGENT_CONTRACT_COMMIT", COMMIT)
+    monkeypatch.setenv("AGENT_CONTRACT_EVIDENCE_DIR", str(tmp_path / "staging"))
+    rt.reset_foundation_runtime()
+
+    runtime = rt.get_foundation_runtime()
+
+    assert runtime.run_id == "foundation-0_1_0-c1-coding-smoke"
+
+
+def test_env_built_runtime_ignores_unsafe_run_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """不安全的 run_id 在 observe 下被忽略（回落 UUID）而不是抛错击穿业务。"""
+    from adapters.foundation import runtime as rt
+
+    monkeypatch.setenv("AGENT_CONTRACT_MODE", "observe")
+    monkeypatch.setenv("AGENT_CONTRACT_RUN_ID", "../escape")
+    monkeypatch.setenv("AGENT_CONTRACT_COMMIT", COMMIT)
+    monkeypatch.setenv("AGENT_CONTRACT_EVIDENCE_DIR", str(tmp_path / "staging"))
+    rt.reset_foundation_runtime()
+
+    runtime = rt.get_foundation_runtime()
+
+    assert runtime.run_id != "../escape"

@@ -620,12 +620,21 @@ def detect_repository_commit() -> str | None:
 
 _active_runtime: CodingFoundationRuntime | None = None
 
+#: run_id 环境变量（与 Wiki 仓同名；Spec 11 Stage 0 冻结的 run manifest 键集一致）。
+CONTRACT_RUN_ID_ENV: Final[str] = "AGENT_CONTRACT_RUN_ID"
+
 
 def _build_runtime_from_env() -> CodingFoundationRuntime:
     """按环境构造进程级 runtime。
 
     off 下不构造 sink（零 I/O）；observe/strict 下用项目本地 FileEvidenceSink。
     commit 解析沿用 Wiki Spec 07 已批准的「env 优先 + git 回退」。
+
+    **run_id 必须从 ``AGENT_CONTRACT_RUN_ID`` 采纳**：L3 gate 只认
+    ``<evidence_root>/<manifest run_id>/events``。若这里回落到进程级 UUID，证据会被
+    写进一个 gate 永远找不到的目录，表现就是「0 事件 + required producer/stage 未观测」，
+    而业务路径完全正常 —— 这正是 Spec 13 在 Coding 仓第一次真实运行时的现象。
+    不安全的值按 Wiki 同款策略忽略并记结构化日志（observe 继续，strict 由 runtime 自身失败）。
     """
     mode = resolve_contract_mode(None)
     sink: EvidenceSink | None = None
@@ -636,7 +645,18 @@ def _build_runtime_from_env() -> CodingFoundationRuntime:
     commit = resolve_repository_commit(None)
     if commit is None:
         commit = detect_repository_commit()
-    return CodingFoundationRuntime(sink=sink, mode=mode, repository_commit=commit)
+
+    raw_run_id = os.environ.get(CONTRACT_RUN_ID_ENV, "").strip()
+    run_id = raw_run_id if raw_run_id and is_safe_run_id(raw_run_id) else None
+    if raw_run_id and run_id is None:
+        logger.error(
+            "忽略不安全的 %s：%r", CONTRACT_RUN_ID_ENV, raw_run_id,
+            extra={"evidence_code": "evidence.invalid_run_id"},
+        )
+
+    return CodingFoundationRuntime(
+        sink=sink, mode=mode, run_id=run_id, repository_commit=commit
+    )
 
 
 def get_foundation_runtime() -> CodingFoundationRuntime:
@@ -749,6 +769,7 @@ def observe_trace_summary_entry(
 
 __all__ = [
     "CONTRACT_COMMIT_ENV",
+    "CONTRACT_RUN_ID_ENV",
     "STAGE_PRODUCER",
     "ContractConfigurationError",
     "ContractValidationError",
