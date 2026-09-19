@@ -63,6 +63,6 @@
   },
   "network_requirement": "provider",
   "side_effect_policy": "read_only",
-  "timeout_seconds": 600,
+  "timeout_seconds": 1800,
   "duration_cap_seconds": 1800
 }
