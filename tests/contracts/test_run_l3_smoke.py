@@ -528,6 +528,49 @@ def test_driver_reports_incomplete_coverage_as_conflict(
     assert summary["producer_coverage"] == [["coding.agent.llm_usage", "openai_compat"]]
 
 
+def test_second_run_does_not_reuse_previous_run_events(
+    driver, monkeypatch, tmp_path, capsys
+) -> None:
+    """A8 回归钉子：同一个 run_id 的第二次尝试**不得**复用第一次留下的证据。
+
+    旧驱动只 `mkdir(exist_ok=True)`、从不清理，于是 run#1 留下的完整证据会在 run#2 里
+    继续被读到 —— run#2 即使只跑出一个 stage，也会因为目录里还躺着旧事件而被判为
+    "覆盖完整"并**退出 0**。那正是最坏的一种错误：用上一次的证据证明这一次通过了。
+    本测试构造的正是这个假通过场景：run#1 覆盖全部预登记对；run#2 只覆盖 1 对。
+    """
+    manifest = write_manifest(tmp_path)
+    events_dir = tmp_path / "evidence" / RUN_ID / "events"
+
+    # run#1：完整覆盖 → rc 0，磁盘上留下全套事件
+    set_driver_env(monkeypatch, tmp_path, write_fixture_business(tmp_path))
+    assert driver.main(["--run-manifest", str(manifest), "--json"]) == 0
+    stale = sorted(p.name for p in events_dir.glob("*.json"))
+    assert stale, "run#1 应当留下事件"
+
+    # run#2：只覆盖 1 对，但同 run_id 下仍残留 run#1 的全部事件
+    capsys.readouterr()
+    set_driver_env(
+        monkeypatch,
+        tmp_path,
+        write_fixture_business(
+            tmp_path, pairs=(("coding.agent.llm_usage", "openai_compat"),)
+        ),
+    )
+    rc = driver.main(["--run-manifest", str(manifest), "--json"])
+
+    captured = capsys.readouterr()
+    report = json.loads(captured.out)
+    # 先钉住最严重的后果：陈旧证据不得让第二次尝试"通过"。
+    assert report["producer_coverage"] == [["coding.agent.llm_usage", "openai_compat"]]
+    assert rc == 1, "陈旧证据不得让第二次尝试通过"
+    assert "coding.benchmark.case_cost" in captured.err
+    assert report["cleared_previous_run"], "必须报告清掉了陈旧产物"
+    remaining = sorted(p.name for p in events_dir.glob("*.json"))
+    # run#2 只产出 1 对 → 目录里只应有 1 条事件；旧事件必须已被清掉。
+    # （不能按文件名比较：fixture 用固定 event_id，两次运行的单个事件可能同名。）
+    assert len(remaining) == 1, f"陈旧事件未清干净：{remaining}"
+
+
 def test_one_of_policy_accepts_single_trace_summary_stage(driver, monkeypatch, tmp_path, capsys) -> None:
     """`coding.trace.summary` 是 ONE_OF：只观测 sdk 也闭合（逐对策略，Spec 13）。"""
     pairs = tuple(pair for pair in REQUIRED_PAIRS if pair[1] != "clickhouse")

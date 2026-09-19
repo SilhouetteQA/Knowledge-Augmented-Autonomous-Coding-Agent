@@ -641,6 +641,36 @@ def summarize_evidence(records: Sequence[Any], duration_seconds: float) -> dict[
     }
 
 
+def clear_previous_run(run_dir: Path) -> list[str]:
+    """清掉同一个 run_id 上一次尝试留下的产物（fresh smoke 的 "fresh" 必须是真的）。
+
+    A8 修复：本仓驱动此前**只** `mkdir(exist_ok=True)`，从不清理 —— 于是同一个 run_id
+    的历次尝试把 ``events/`` 一层层叠起来，后果有三：
+      1. ``actual_calls`` / ``producer_coverage`` 把**旧运行的证据算进本次运行**，
+         pre-registered ``max_calls`` 失去意义（实测同一 run_id 下累积到 100+ 次调用）；
+      2. 更严重：若上一次尝试恰好观测到某个 stage，本次即使没跑出来，gate 也会
+         因为目录里存在那条**陈旧**事件而判为已覆盖 —— "fresh smoke" 反而不 fresh；
+      3. 失败诊断被噪声污染（分不清哪条事件属于哪次尝试）。
+    Wiki 仓的驱动器自 A2 起就有这个清理（``clear_previous_run``），本仓是遗漏。
+    """
+    from adapters.foundation.evidence_sink import FAILURES_FILENAME
+
+    removed: list[str] = []
+    for relative in (EVENTS_DIRNAME, RUN_SUMMARY_FILENAME, FAILURES_FILENAME):
+        target = run_dir / relative
+        if target.is_dir():
+            shutil.rmtree(target, ignore_errors=True)
+            removed.append(f"{relative}/")
+        elif target.exists():
+            target.unlink()
+            removed.append(relative)
+    # 残留的原子写临时文件同样不该跨运行存活（§11.1 禁止 .tmp 残留）。
+    for temp in sorted(run_dir.glob(f"*{TEMP_SUFFIX}")):
+        temp.unlink()
+        removed.append(temp.name)
+    return removed
+
+
 def write_run_summary(run_dir: Path, summary: dict[str, Any]) -> Path:
     """原子写出 run-summary.json（键集 = ``RUN_SUMMARY_KEYS``，逐键断言）。"""
     from agent_core.contracts.models.base import canonical_json_dumps
@@ -786,6 +816,8 @@ class SmokeRun:
     #: 也不是 covered —— 报告必须点名，绝不呈现为通过）。
     authorized_unobserved: list[tuple[str, str]] = field(default_factory=list)
     fixture_seam: bool = False
+    #: 本次运行前清掉的同 run_id 陈旧产物（fresh smoke 的证据，A8）。
+    cleared: list[str] = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:
@@ -804,6 +836,7 @@ class SmokeRun:
             "business_returncode": self.business.returncode,
             "business_timed_out": self.business.timed_out,
             "fixture_seam": self.fixture_seam,
+            "cleared_previous_run": list(self.cleared),
             "duration_seconds": self.summary["duration_seconds"],
             "summary_path": str(self.summary_path) if self.summary_path else None,
             "producer_coverage": self.summary["producer_coverage"],
@@ -844,6 +877,9 @@ def run_l3_smoke(
     selected = select_cases(source, manifest["case_ids"])
     staged_cases = materialize_cases(selected, scratch_run_dir / CASES_DIRNAME)
     command, fixture_seam = resolve_business_command(staged_cases, scratch_run_dir, environment)
+
+    # fresh smoke 的 "fresh" 必须是真的：清掉同 run_id 上次尝试的产物，再驱动业务。
+    cleared = clear_previous_run(run_dir)
 
     child_env = dict(environment)
     child_env[MODE_ENV] = OBSERVE_MODE
@@ -889,6 +925,7 @@ def run_l3_smoke(
         violations=violations,
         authorized_unobserved=authorized_unobserved,
         fixture_seam=fixture_seam,
+        cleared=cleared,
     )
 
 
@@ -923,6 +960,10 @@ def render_human(run: SmokeRun) -> str:
         lines.append(
             f"WARNING: {BUSINESS_COMMAND_ENV} 生效 —— 这是 fixture seam，不是真实业务路径"
         )
+    lines.append(
+        "cleared         : "
+        + (", ".join(run.cleared) if run.cleared else "无（同 run_id 无陈旧产物）")
+    )
     if run.authorized_unobserved:
         lines.append(
             f"未观测（§7.3:896 授权豁免，NOT_OBSERVED_ALLOWED；**不是**通过，不计入覆盖）"
