@@ -378,8 +378,10 @@ def test_baseline_runs_before_agent(tmp_path, monkeypatch):
     """执行顺序：repo 就绪 → setup → 基线预检 → Agent → 判定（setup 前置重构）。"""
     events: list[str] = []
 
-    def fake_ensure(repo_root, repo_dir, repository):
+    def fake_ensure(repo_root, repo_dir, repository, commit=""):
+        # T3b：真实实现多了一个"钉住的 fixture 提交"参数并返回实际 HEAD
         events.append("ensure")
+        return commit
 
     def fake_run_command(command, cwd=None, timeout=60, workspace_root=None):
         events.append("setup")
@@ -685,9 +687,10 @@ def test_sandbox_entered_only_after_repository_is_ready(tmp_path, monkeypatch):
     entered: list[str] = []
     workspace_existed_at_entry: list[bool] = []
 
-    def fake_ensure_repository(repo_root, repo_dir, repository):
+    def fake_ensure_repository(repo_root, repo_dir, repository, commit=""):
         # 真实实现的职责：创建 workspace（随后才由 gh/git 填充）
         os.makedirs(repo_dir, exist_ok=True)
+        return commit
 
     @contextmanager
     def fake_sandbox_executor(workspace_root):

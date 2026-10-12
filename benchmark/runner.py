@@ -148,15 +148,41 @@ def _git_checkout(repo_dir: str, base: str) -> str | None:
     return None
 
 
-def _ensure_repository(repo_root: str, repo_dir: str, repository: str) -> None:
-    """基线阶段确保仓库就绪：克隆/同步到 base 分支（未修改的原仓库）。
+def _git_head(repo_dir: str) -> str:
+    """当前 HEAD 提交（T3b）：用于核对"实际跑在哪个 fixture 提交上"。"""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo_dir, capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=60)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    return (proc.stdout or "").strip() if proc.returncode == 0 else ""
+
+
+def _stamp_fixture(result: CaseResult, pinned: str, actual: str) -> CaseResult:
+    """T3b：把 fixture 提交（钉住值 / 实际检出值）钉在结果上；不匹配即记入 errors。"""
+    result.repository_commit_pinned = pinned or ""
+    result.repository_commit_actual = actual or ""
+    if pinned and actual and pinned != actual:
+        result.errors.append(
+            f"fixture 提交不匹配：钉住 {pinned[:12]}，实际检出 {actual[:12]}")
+    return result
+
+
+def _ensure_repository(repo_root: str, repo_dir: str, repository: str,
+                       commit: str = "") -> str:
+    """基线阶段确保仓库就绪：克隆/同步，然后检出 base 分支或**钉住的提交**。
 
     顺序（P0-2）：创建 workspace_root → 目录无 .git 则 clone_repository，
-    否则 sync_repository，再 git checkout <base>；base 取
+    否则 sync_repository，再 git checkout；base 取
     get_repository(repository).default_branch（与 run_issue_agent 内部一致）。
     run_issue_agent 内部也会 clone/sync，runner 提前执行一遍是为了基线测试
     跑在干净 base 工作树上。任一 git 操作失败抛 ToolError（克隆/同步失败视为
     执行异常，由外层收敛为该 case 的 error 结果）。
+
+    T3b：`commit` 非空时检出该提交（detached HEAD）——冻结基线必须真正跑在被钉住的
+    fixture 上；只把 pin 写进报告却不检出，等于没有固定 fixture 状态。
+    返回实际检出的 HEAD 提交（取不到时为空串）。
     """
     os.makedirs(repo_root, exist_ok=True)
     repo = get_repository(repository)
@@ -171,9 +197,15 @@ def _ensure_repository(repo_root: str, repo_dir: str, repository: str) -> None:
         err = sync_repository(repo_dir, base)
         if err is not None:
             raise ToolError(f"同步仓库失败: {err.message}")
-    err = _git_checkout(repo_dir, base)
-    if err is not None:
-        raise ToolError(f"检出 base 分支失败: {err}")
+    if commit:
+        err = _git_checkout(repo_dir, commit)
+        if err is not None:
+            raise ToolError(f"检出钉住提交失败（{commit}）: {err}")
+    else:
+        err = _git_checkout(repo_dir, base)
+        if err is not None:
+            raise ToolError(f"检出 base 分支失败: {err}")
+    return _git_head(repo_dir)
 
 
 def _check_consistency(case: BenchmarkCase, diff: str) -> tuple[bool, str]:
@@ -305,6 +337,9 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     # workspace_root，resolve_workspace_path 会拼出 root/repo_dir 嵌套路径（docker
     # 下 cd 不存在目录）。入口处归一为绝对路径。
     repo_dir = os.path.abspath(os.path.join(repo_root, _repo_dir_name(case.repository)))
+    # T3b：fixture 提交在 try 之外初始化，保证异常路径也能记录（未就绪时留空）
+    fixture_pinned = getattr(case, "repository_commit", "") or ""
+    fixture_actual = ""
     try:
         # 仓库就绪必须在进入沙箱**之前**完成：DockerExecutor.create() 要求
         # workspace_root 已存在（tools/docker_sandbox.py），而
@@ -313,7 +348,8 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
         # 时才偶然通过，所以 local 执行器（无此前置检查）与预置 workspace 的单测
         # 都发现不了。repo 就绪本身走宿主 gh/git（凭据不进沙箱，与执行器无关），
         # 因此把它移到 with 之外语义不变。
-        _ensure_repository(repo_root, repo_dir, case.repository)
+        fixture_actual = _ensure_repository(repo_root, repo_dir, case.repository,
+                                            fixture_pinned)
         # 单 case 单沙箱（审查 I2）：setup/基线/Agent/判定共享同一容器——
         # docker 下 setup 的环境级安装此前随独立容器销毁而蒸发；嵌套的
         # sandbox_executor 调用按 workspace 匹配自动复用外层容器
@@ -324,6 +360,7 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
                 result = _environment_error_result(
                     case, summary, llm, prompt_before, completion_before,
                     start, time.monotonic())
+                _stamp_fixture(result, fixture_pinned, fixture_actual)
                 observe_case_cost_entry(mark, stage="environment_error")
                 return result
             run = run_issue_agent(
@@ -336,6 +373,7 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
             result = _case_result(
                 case, llm, case_dir, repo_dir, prompt_before, completion_before,
                 start, time.monotonic(), run)
+            _stamp_fixture(result, fixture_pinned, fixture_actual)
             observe_case_cost_entry(mark, stage="normal")
             return result
     except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
@@ -352,6 +390,7 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
             tokens_prompt=prompt,
             tokens_completion=completion,
             cost_usd=cost, cost_source=cost_source, diff="", errors=[str(e)])
+        _stamp_fixture(result, fixture_pinned, fixture_actual)
         observe_case_cost_entry(mark, stage="error")
         return result
 
@@ -384,6 +423,12 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
     metadata = enrich_run_metadata(
         current_metadata(getattr(llm, "model", "unknown"), executor),
         llm=llm, cases=cases, run_max_iterations=None)
+    # T3b：fixture 状态进 metadata —— 冻结基线必须能自证"跑在哪个提交上"
+    metadata.fixture_commits = {
+        r.case_id: {"pinned": r.repository_commit_pinned,
+                    "actual": r.repository_commit_actual}
+        for r in results
+    }
     report = BenchmarkReport(metadata=metadata, total=total, resolved=resolved,
                              resolution_rate=(resolved / total) if total else 0.0,
                              results=results,

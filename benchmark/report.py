@@ -39,6 +39,8 @@ class RunMetadata:
     max_tokens: int | None = None       # 输出上限；未配置记 None
     executor_actual: str = ""           # 真实创建的执行器（tools.docker_sandbox 记录）
     sandbox_policy: dict = field(default_factory=dict)   # image/cpus/memory/pids/network
+    # T3b：case_id → {pinned, actual}，用于核对"这一跑真的跑在被冻结的提交上"
+    fixture_commits: dict = field(default_factory=dict)
     iteration_limits: dict = field(default_factory=dict) # 逐 case 迭代上限 + run 级兜底
     timeouts: dict = field(default_factory=dict)         # 生效的 KA_* 超时/重试 env
     resolution_definition_version: str = RESOLUTION_DEFINITION_VERSION
@@ -68,6 +70,10 @@ class CaseResult:
     errors: list[str] = field(default_factory=list)
     # T3：成本来源标记——computed（单价表命中并计算）/ unknown（无单价，cost_usd=None）
     cost_source: str = "unknown"
+    # T3b：fixture 提交——pinned 来自 cases.lock.json（冻结值），actual 是真实检出的 HEAD。
+    # 只记录不检出等于没固定 fixture，因此 runner 现在真的 checkout pinned，并把两者都写进结果。
+    repository_commit_pinned: str = ""
+    repository_commit_actual: str = ""
     test_error_summary: str = ""   # must_pass 失败摘要（判定阶段；无失败为空）
     # E10：交付一致性核查——diff 实际删除数 与 expected_actions 核对；相符/未配 →
     # True 且 note 空，不符 → False + 差异详情（预期/实际 + 实际删除文件前几条）。
@@ -309,6 +315,7 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
         f"- resolution_definition_version: `{m.resolution_definition_version}`",
         f"- side_effect_policy: `{m.side_effect_policy}`",
         f"- judge_prompt_sha256: `{m.judge_prompt_sha256}`",
+        f"- fixture_commits: {json.dumps(m.fixture_commits, ensure_ascii=False)}",
         "",
         f"## 核心指标",
         "",
