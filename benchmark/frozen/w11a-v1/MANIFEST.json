@@ -1,0 +1,115 @@
+{
+  "spec_version": "w11a-v1",
+  "created_at": "2026-10-12T18:06:10",
+  "harness": {
+    "commit": "22c0da45aded8ad1dd569fd4efc446f29d94fbf6",
+    "branch": "feature/pre-extraction-baseline",
+    "repo": "D:\\AI project\\Knowledge-Augmented Autonomous Coding Agent"
+  },
+  "case_set": {
+    "hash": "252c521f10765a8acddbd0a38e40fa1db95934de7aba491e694989b6073ecdad",
+    "case_count": 5,
+    "case_ids": [
+      "schedule-602",
+      "schedule-608",
+      "schedule-622",
+      "schedule-646",
+      "schedule-99"
+    ],
+    "files": {
+      "benchmark/cases/bug/schedule-608.json": "b623a0442f2899940491938a8400b5e3dac66ab485f0751705a49754f8085282",
+      "benchmark/cases/bug/schedule-646.json": "a995a962be2240a7c51553d15f764de2365da5a482fbcc72cb5adcac2e774ad4",
+      "benchmark/cases/feature/schedule-99.json": "6bd5152669bfcaffcce77c38fe99fdba1b16244c5fc6e955809684c8986ce621",
+      "benchmark/cases/gold/schedule-602.diff": "2fcb70adfeb537e0ad77ad31613e5765d5f057da50916dc5205d7b0c10175395",
+      "benchmark/cases/gold/schedule-608.diff": "7c1be96c2aa3c6bbcb81069ce4df1a7816ad9571769942316b6234fb1938f922",
+      "benchmark/cases/gold/schedule-622.diff": "b015e9b8aa2077b0cceee3d4796af5ea7bd9c155c762ab190fe8ad3d0d837ac3",
+      "benchmark/cases/gold/schedule-646.diff": "7019c4f52faaba08eac97f5e9e1cba95afc0d546f245b6d7bd570d7ab797ce60",
+      "benchmark/cases/gold/schedule-99.diff": "06823c01ef0b752c3335ff35e84e58ac182a0ffe8c0e297fc6f5114e4e67a8cd",
+      "benchmark/cases/refactor/schedule-622.json": "bf061edd04685d39d635564c9b0c8ed2cd09f4254e48aa58b6a02e8ce58e8d18",
+      "benchmark/cases/test/schedule-602.json": "4a1536a51415259f775d10d12695dd8b5541cf115ceae3c4d481ef548db53166"
+    }
+  },
+  "fixture": {
+    "repositories": [
+      "dbader/schedule"
+    ],
+    "lock_file": "benchmark/frozen/w11a-v1/cases.lock.json",
+    "commits": {
+      "schedule-602": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "schedule-608": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "schedule-622": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "schedule-646": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "schedule-99": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+    },
+    "pinned_by": "cases.lock.json（loader 解析，runner 真正 checkout —— T3b）"
+  },
+  "models": {
+    "provider": "command_goat",
+    "model": "deepseek/deepseek-v4.1-flash",
+    "base_url": "",
+    "temperature": null,
+    "max_tokens": null,
+    "judge_model": "与 agent 同模型（自评）"
+  },
+  "executor": {
+    "declared": "local",
+    "actual_recorded": "",
+    "sandbox_policy": {
+      "executor": "local",
+      "image": "ka-sandbox:py312-v1",
+      "cpus": 2.0,
+      "memory": "1g",
+      "pids_limit": 512,
+      "network": false
+    },
+    "note": "actual_recorded 由 tools/docker_sandbox 在执行时写入；运行后应与 declared 一致"
+  },
+  "iteration_and_timeouts": {
+    "iteration_limits": {
+      "run_level": null,
+      "per_case": {
+        "schedule-602": 30,
+        "schedule-608": 30,
+        "schedule-622": 30,
+        "schedule-646": 30,
+        "schedule-99": 30
+      },
+      "fallback_to_run_level": []
+    },
+    "timeouts": {
+      "KA_SETUP_TIMEOUT_S": 60,
+      "KA_LLM_TIMEOUT_S": null,
+      "KA_LLM_MAX_RETRIES": null
+    }
+  },
+  "judge": {
+    "prompt_sha256": "5aabbf69a988c45bb16c91c1dc99c3fe471c184fe287a1e6ebea5d63feed1fa0",
+    "self_judging": true
+  },
+  "resolution_definition": {
+    "version": "t3-1",
+    "definition": "test_pass AND judge PASS"
+  },
+  "side_effect_policy": "read_only",
+  "preregistered_tolerances": {
+    "deterministic_metrics": "exact_match",
+    "deterministic_metrics_list": [
+      "test_pass",
+      "patch_acceptance"
+    ],
+    "resolution_rate_delta_max": 0.03,
+    "per_case_verdict_agreement_min": 0.8,
+    "note": "仅 5 个 case：±3% 的分辨率等价于『两次运行的 resolved 计数必须相同』；judge 与 agent 同模型（自评），verdict 一致率按 80% 预登记并在报告中披露。",
+    "cost": "MODEL_PRICE_USD_PER_1K 为空 ⇒ cost_usd=null / cost_source=unknown（不得当 0 用）",
+    "safety_violations_max": 0,
+    "declared_at": "2026-10-12",
+    "declared_by": "W11-α Spec §3.5（用户批准 2026-10-12）"
+  },
+  "declared_gaps": {
+    "temperature_max_tokens": "LLMClient.chat 不发送 temperature/max_tokens ⇒ 记为 null（provider 默认），冻结真实采样参数需改 agent/llm.py（超出本窗口范围）",
+    "docker_actual_executor": "无 Docker 环境下 sandbox_policy.executor 只能回显声明值；docker 分支的实际执行器记录未在本机验证",
+    "pricing_table": "MODEL_PRICE_USD_PER_1K 为空，成本恒 unknown（不再是假 0）",
+    "fixture_repo_state": "fixture 提交由 cases.lock.json 钉住并由 runner 真正 checkout（T3b）；setup_commands 的包版本仍由网络解析，未逐个 pin"
+  },
+  "supersede_reason": null
+}

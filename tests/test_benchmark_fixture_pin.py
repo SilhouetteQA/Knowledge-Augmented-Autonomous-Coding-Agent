@@ -7,8 +7,10 @@ T3 只把 pin 记录进报告；T3b 让 runner 真的 checkout 钉住的提交�
 """
 from __future__ import annotations
 
+import json
 import os
 import types
+from pathlib import Path
 
 import pytest
 
@@ -132,6 +134,79 @@ class TestFixtureCommitsInMetadata:
         assert report.metadata.fixture_commits == {
             "c1": {"pinned": "a" * 40, "actual": "a" * 40}
         }
+
+
+class TestLockPathDiscovery:
+    """T3b：冻结版本目录的唯一候选必须被发现（此前会被静默忽略）。"""
+
+    def _make(self, tmp_path, versions, monkeypatch):
+        cases = tmp_path / "benchmark" / "cases"
+        cases.mkdir(parents=True)
+        for v in versions:
+            d = tmp_path / "benchmark" / "frozen" / v
+            d.mkdir(parents=True)
+            (d / "cases.lock.json").write_text('{"c1": "a"}', encoding="utf-8")
+        monkeypatch.delenv("KA_BENCHMARK_FROZEN_VERSION", raising=False)
+        monkeypatch.delenv("KA_BENCHMARK_CASES_LOCK", raising=False)
+        return str(cases)
+
+    def test_unique_candidate_is_discovered(self, tmp_path, monkeypatch):
+        from benchmark.loader import default_lock_path
+
+        cases = self._make(tmp_path, ["w11a-v1"], monkeypatch)
+        got = default_lock_path(cases)
+        assert got.endswith(str(Path("frozen") / "w11a-v1" / "cases.lock.json")), got
+
+    def test_multiple_candidates_raise_instead_of_guessing(self, tmp_path, monkeypatch):
+        from benchmark.loader import CaseError, default_lock_path
+
+        cases = self._make(tmp_path, ["w11a-v1", "v2"], monkeypatch)
+        with pytest.raises(CaseError):
+            default_lock_path(cases)
+
+    def test_explicit_version_wins(self, tmp_path, monkeypatch):
+        from benchmark.loader import default_lock_path
+
+        cases = self._make(tmp_path, ["w11a-v1", "v2"], monkeypatch)
+        got = default_lock_path(cases, version="v2")
+        assert got.endswith(str(Path("frozen") / "v2" / "cases.lock.json")), got
+
+    def test_exact_default_wins_over_discovery(self, tmp_path, monkeypatch):
+        from benchmark.loader import default_lock_path
+
+        cases = self._make(tmp_path, ["v1", "w11a-v1"], monkeypatch)
+        got = default_lock_path(cases)
+        assert got.endswith(str(Path("frozen") / "v1" / "cases.lock.json")), got
+
+    def test_no_candidates_keeps_legacy_default(self, tmp_path, monkeypatch):
+        from benchmark.loader import default_lock_path
+
+        cases = self._make(tmp_path, [], monkeypatch)
+        got = default_lock_path(cases)
+        assert got.endswith(str(Path("frozen") / "v1" / "cases.lock.json")), got
+
+    def test_lock_is_actually_applied_to_cases(self, tmp_path, monkeypatch):
+        """端到端：frozen/<ver>/cases.lock.json 存在时，load_cases 必须把提交钉上。"""
+        from benchmark.loader import load_cases
+
+        cases_dir = tmp_path / "benchmark" / "cases"
+        (cases_dir / "bug").mkdir(parents=True)
+        gold_dir = cases_dir / "gold"
+        gold_dir.mkdir(parents=True)
+        (gold_dir / "c1.diff").write_text("--- a\n+++ b\n", encoding="utf-8")
+        (cases_dir / "bug" / "c1.json").write_text(json.dumps({
+            "id": "c1", "category": "bug", "repository": "dbader/schedule",
+            "issue": {"number": 1, "title": "t", "body": "b", "labels": [], "state": "open"},
+            "gold_patch": "gold/c1.diff", "must_pass": ["pytest"], "max_iterations": 5,
+        }), encoding="utf-8")
+        d = tmp_path / "benchmark" / "frozen" / "w11a-v1"
+        d.mkdir(parents=True)
+        (d / "cases.lock.json").write_text(json.dumps({"c1": "b" * 40}), encoding="utf-8")
+        monkeypatch.delenv("KA_BENCHMARK_FROZEN_VERSION", raising=False)
+        monkeypatch.delenv("KA_BENCHMARK_CASES_LOCK", raising=False)
+
+        loaded = load_cases(str(cases_dir))
+        assert [c.repository_commit for c in loaded] == ["b" * 40]
 
 
 def test_git_head_on_real_repo_matches_git():

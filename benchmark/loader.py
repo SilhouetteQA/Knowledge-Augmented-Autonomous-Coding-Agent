@@ -145,10 +145,37 @@ def _validate(data: dict, path: Path,
 
 
 def default_lock_path(cases_dir: str, version: str | None = None) -> str:
-    """默认锁定文件路径（T3）：<cases_dir 同级>/frozen/<version>/cases.lock.json。"""
-    ver = (version or os.environ.get(FROZEN_VERSION_ENV_VAR, "")
-           or FROZEN_VERSION_DEFAULT)
-    return str(Path(cases_dir).parent / "frozen" / ver / "cases.lock.json")
+    """默认锁定文件路径（T3）：<cases_dir 同级>/frozen/<version>/cases.lock.json。
+
+    T3b：显式版本 / 环境变量都没给时，若默认 `<frozen>/v1/` 不存在而 `frozen/` 下**恰好有
+    一个**版本目录带 `cases.lock.json`，就用它。动机是实测踩到的静默失配：冻结清单写在
+    `frozen/w11a-v1/`，而默认版本是 `v1` ⇒ 锁被**静默忽略**，基线在"以为钉住了、其实没钉"的
+    状态下跑。宁可用唯一候选自动发现，也不用沉默。
+    多个候选（≥2）时不猜：显式报错要求指定版本 —— 冻结基线跑错版本比跑不起来更糟。
+    """
+    if version or (os.environ.get(FROZEN_VERSION_ENV_VAR) or "").strip():
+        return _lock_path_for(cases_dir, version or os.environ[FROZEN_VERSION_ENV_VAR])
+
+    exact = Path(_lock_path_for(cases_dir, FROZEN_VERSION_DEFAULT))
+    if exact.is_file():
+        return str(exact)
+
+    frozen_root = Path(cases_dir).parent / "frozen"
+    candidates = sorted(
+        p for p in frozen_root.glob("*/cases.lock.json") if p.is_file()
+    ) if frozen_root.is_dir() else []
+    if len(candidates) == 1:
+        return str(candidates[0])
+    if len(candidates) > 1:
+        versions = ", ".join(p.parent.name for p in candidates)
+        raise CaseError(
+            f"发现多个冻结版本（{versions}），无法确定用哪一个；"
+            f"请设置 {FROZEN_VERSION_ENV_VAR} 或 {LOCK_ENV_VAR} 显式指定")
+    return str(exact)
+
+
+def _lock_path_for(cases_dir: str, version: str) -> str:
+    return str(Path(cases_dir).parent / "frozen" / version / "cases.lock.json")
 
 
 def resolve_lock_path(cases_dir: str, lock_path: str | None = None) -> str:
