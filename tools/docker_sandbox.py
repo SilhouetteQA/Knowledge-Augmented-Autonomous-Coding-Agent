@@ -33,6 +33,27 @@ DEFAULT_IMAGE = "ka-sandbox:py312-v1"
 # docker CLI 单次调用超时（创建/销毁/exec 都可能长耗时）
 DOCKER_CLI_TIMEOUT = 300
 
+# T3：真实执行器旁路记录——sandbox_executor 真正返回/创建执行器时写入，供
+# benchmark/report.py 读取“实际跑过的执行器”（此前报告只能记声明值，声明 docker
+# 而实际 local 无法暴露）。纯观测记录，不改变任何执行语义。
+_ACTUAL_EXECUTOR: dict = {"name": "", "workspace_root": ""}
+
+
+def _record_actual_executor(name: str, workspace_root: str = "") -> None:
+    """记录真实创建的执行器（T3，仅供报告观测）。"""
+    _ACTUAL_EXECUTOR["name"] = name
+    _ACTUAL_EXECUTOR["workspace_root"] = workspace_root
+
+
+def get_actual_executor() -> str:
+    """真实创建过的执行器名（T3）："local" / "docker"；从未创建 → ""。"""
+    return _ACTUAL_EXECUTOR.get("name", "")
+
+
+def reset_actual_executor() -> None:
+    """清空真实执行器记录（T3；测试用，避免用例间残留）。"""
+    _record_actual_executor("", "")
+
 
 @dataclass
 class SandboxConfig:
@@ -60,6 +81,23 @@ def get_sandbox_config() -> SandboxConfig:
         network=_env("KA_SANDBOX_NETWORK", "0") == "1",
         repo_url=os.environ.get("KA_SANDBOX_REPO_URL") or None,
     )
+
+
+def get_effective_sandbox_policy() -> dict:
+    """当前环境生效的沙箱策略 dict（T3）：image/cpus/memory/pids/network。
+
+    取自 get_sandbox_config()（与创建容器同源）；executor 为 KA_EXECUTOR 声明值。
+    有意不含 repo_url（可能携带凭据）。
+    """
+    cfg = get_sandbox_config()
+    return {
+        "executor": os.environ.get("KA_EXECUTOR", "local"),
+        "image": cfg.image,
+        "cpus": cfg.cpus,
+        "memory": cfg.memory,
+        "pids_limit": cfg.pids_limit,
+        "network": cfg.network,
+    }
 
 
 def _container_name(workspace_root: str) -> str:
@@ -314,6 +352,8 @@ def sandbox_executor(workspace_root: str, config: SandboxConfig | None = None,
     local 时直接返回 LocalExecutor，不创建容器。docker_runner 仅供测试注入。
     """
     if os.environ.get("KA_EXECUTOR", "local") != "docker":
+        # T3：旁路记录真实执行器（声明值仍来自 KA_EXECUTOR / --executor）
+        _record_actual_executor("local", os.path.abspath(workspace_root))
         yield LocalExecutor()
         return
     existing = _CURRENT_EXECUTOR.get()
@@ -332,6 +372,8 @@ def sandbox_executor(workspace_root: str, config: SandboxConfig | None = None,
     try:
         manager.create()          # 创建失败（含部分失败）也会走到 finally 的 destroy
         executor = DockerExecutor(manager)
+        # T3：容器真正创建成功后才记 docker（创建失败不得被记为“跑过 docker”）
+        _record_actual_executor("docker", manager.workspace_root)
         token = _CURRENT_EXECUTOR.set(executor)
         yield executor
     finally:

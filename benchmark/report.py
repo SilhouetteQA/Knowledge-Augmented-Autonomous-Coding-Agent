@@ -1,8 +1,24 @@
 """评测报告：run metadata、JSON/Markdown 报告与多轮对比。"""
+import hashlib
 import json
+import os
 import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+
+# T3：resolution 判定口径版本——判定语义/实现变化时必须递增，供跨轮报告比对。
+RESOLUTION_DEFINITION_VERSION = "t3-1"
+
+# T3：基准运行的副作用策略。核对依据（读码结论）：benchmark/runner.py 调用
+# run_issue_agent 时不传 approval_dir（默认 None）→ agent/issue.py 不生成审批单、
+# pr_url 恒为 None；远端写（push / 建 PR）的唯一入口是 main.py --approve →
+# tools.approval.approve_request → tools.github_tools.push_branch/
+# create_pull_request。该入口不在 benchmark 调用链上，故基准运行对被测仓库只读
+# （clone/sync/checkout 均为读操作）。
+SIDE_EFFECT_POLICY_READ_ONLY = "read_only"
+
+# T3：judge 提示词文本缓存（judge_prompt_sha256() 惰性取自 benchmark.judge）
+_JUDGE_PROMPT_CACHE = None
 
 
 @dataclass
@@ -15,6 +31,19 @@ class RunMetadata:
     timestamp: str
     executor: str
     params: dict
+    # T3（可比性元信息）：以下字段全部带默认值，保证旧 report.json 仍可
+    # RunMetadata(**data["metadata"]) 反序列化（main.py --compare 路径）。
+    provider: str = ""                  # 供应商名（agent.llm 解析结果）
+    base_url: str = ""                  # 实际端点（llm.base_url）
+    temperature: float | None = None    # 采样温度；未配置记 None（当前 chat 不传该参数）
+    max_tokens: int | None = None       # 输出上限；未配置记 None
+    executor_actual: str = ""           # 真实创建的执行器（tools.docker_sandbox 记录）
+    sandbox_policy: dict = field(default_factory=dict)   # image/cpus/memory/pids/network
+    iteration_limits: dict = field(default_factory=dict) # 逐 case 迭代上限 + run 级兜底
+    timeouts: dict = field(default_factory=dict)         # 生效的 KA_* 超时/重试 env
+    resolution_definition_version: str = RESOLUTION_DEFINITION_VERSION
+    side_effect_policy: str = SIDE_EFFECT_POLICY_READ_ONLY
+    judge_prompt_sha256: str = ""       # judge 提示词 sha256（判定可比性）
 
 
 @dataclass
@@ -33,9 +62,12 @@ class CaseResult:
     latency_s: float
     tokens_prompt: int
     tokens_completion: int
-    cost_usd: float
+    # T3：单价未知时为 None（此前静默填 0.0，会被下游误读为“真实零成本”）
+    cost_usd: float | None
     diff: str
     errors: list[str] = field(default_factory=list)
+    # T3：成本来源标记——computed（单价表命中并计算）/ unknown（无单价，cost_usd=None）
+    cost_source: str = "unknown"
     test_error_summary: str = ""   # must_pass 失败摘要（判定阶段；无失败为空）
     # E10：交付一致性核查——diff 实际删除数 与 expected_actions 核对；相符/未配 →
     # True 且 note 空，不符 → False + 差异详情（预期/实际 + 实际删除文件前几条）。
@@ -63,6 +95,22 @@ def _truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
+def _fmt_cost(cost: float | None) -> str:
+    """成本渲染（T3）：None（单价未知）→ unknown，绝不做假零渲染。"""
+    return "unknown" if cost is None else f"{cost:.4f}"
+
+
+def _total_cost(report: "BenchmarkReport") -> str:
+    """总成本（T3）：任一 case 成本未知即标注 unknown，绝不把 None 当 0 求和。"""
+    known = [x.cost_usd for x in report.results if x.cost_usd is not None]
+    if not known:
+        return "unknown"
+    total = sum(known)
+    if len(known) < len(report.results):
+        return f"{total:.4f} (部分 unknown)"
+    return f"{total:.4f}"
+
+
 def _git(args: list[str]) -> str:
     try:
         out = subprocess.run(["git", *args], capture_output=True, text=True,
@@ -71,6 +119,151 @@ def _git(args: list[str]) -> str:
         return out.stdout.strip() if out.returncode == 0 else "unknown"
     except Exception:  # noqa: BLE001 — metadata 采集失败不阻塞
         return "unknown"
+
+
+def judge_prompt_sha256(judge_prompt: str | None = None) -> str:
+    """judge 提示词 sha256（T3）：默认取 benchmark.judge.JUDGE_PROMPT 真实文本。
+
+    惰性导入避免 report ↔ judge 的模块级耦合；导入失败（缺依赖）返回空串而非崩溃。
+    """
+    global _JUDGE_PROMPT_CACHE
+    text = judge_prompt
+    if text is None:
+        if _JUDGE_PROMPT_CACHE is None:
+            try:
+                from benchmark.judge import JUDGE_PROMPT
+                _JUDGE_PROMPT_CACHE = JUDGE_PROMPT
+            except Exception:  # noqa: BLE001 — 指纹缺失不阻塞报告
+                _JUDGE_PROMPT_CACHE = ""
+        text = _JUDGE_PROMPT_CACHE
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _env_int(name: str, default: int) -> int:
+    """env 整数解析：未设/非法 → default。"""
+    raw = (os.environ.get(name) or "").strip()
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
+def _env_float(name: str) -> float | None:
+    """env 浮点解析：未设/非法 → None。"""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def setup_timeout_s() -> int:
+    """setup_commands 生效超时秒数：KA_SETUP_TIMEOUT_S，缺省 60（与 runner 同源）。"""
+    return _env_int("KA_SETUP_TIMEOUT_S", 60)
+
+
+def llm_timeout_s() -> float | None:
+    """LLM 生效超时：KA_LLM_TIMEOUT_S（未设 → None = SDK 默认；非法 → 120.0）。"""
+    try:
+        from agent.llm import _env_timeout
+        return _env_timeout()
+    except Exception:  # noqa: BLE001 — 依赖缺失时退回原始 env 解析
+        return _env_float("KA_LLM_TIMEOUT_S")
+
+
+def llm_max_retries() -> int | None:
+    """LLM 生效重试：KA_LLM_MAX_RETRIES（未设 → None = SDK 默认；非法 → 2）。"""
+    try:
+        from agent.llm import _env_max_retries
+        return _env_max_retries()
+    except Exception:  # noqa: BLE001
+        raw = (os.environ.get("KA_LLM_MAX_RETRIES") or "").strip()
+        return _env_int("KA_LLM_MAX_RETRIES", 2) if raw else None
+
+
+def effective_timeouts() -> dict:
+    """生效超时/重试 env（T3）：值即运行期真实取值（含缺省规则）。"""
+    return {
+        "KA_SETUP_TIMEOUT_S": setup_timeout_s(),
+        "KA_LLM_TIMEOUT_S": llm_timeout_s(),
+        "KA_LLM_MAX_RETRIES": llm_max_retries(),
+    }
+
+
+def effective_iteration_limits(cases: list | None = None,
+                               run_level: int | None = None) -> dict:
+    """迭代上限（T3）：逐 case 的 max_iterations 优先，缺失时退回 run 级上限。"""
+    per_case: dict = {}
+    fallback: list = []
+    for c in cases or []:
+        cid = getattr(c, "id", "") or "?"
+        v = getattr(c, "max_iterations", None)
+        if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+            per_case[cid] = v
+        else:
+            fallback.append(cid)
+            if isinstance(run_level, int) and not isinstance(run_level, bool):
+                per_case[cid] = run_level
+    return {"run_level": run_level, "per_case": per_case,
+            "fallback_to_run_level": sorted(fallback)}
+
+
+def actual_executor() -> str:
+    """真实创建的执行器名（T3）：tools.docker_sandbox 模块级记录；未创建 → ""。"""
+    try:
+        from tools.docker_sandbox import get_actual_executor
+        return get_actual_executor()
+    except Exception:  # noqa: BLE001 — 记录缺失不阻塞报告
+        return ""
+
+
+def effective_sandbox_policy() -> dict:
+    """有效沙箱策略 dict（T3）：image/cpus/memory/pids/network（docker_sandbox 提供）。"""
+    try:
+        from tools.docker_sandbox import get_effective_sandbox_policy
+        return get_effective_sandbox_policy()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def llm_provider(llm: object | None = None) -> str:
+    """供应商名（T3）：llm.provider → agent.llm 解析 → KA_LLM_PROVIDER 原值。"""
+    prov = getattr(llm, "provider", None)
+    if prov:
+        return str(prov)
+    try:
+        from agent.llm import _resolve_provider_name
+        return _resolve_provider_name(os.environ)
+    except Exception:  # noqa: BLE001
+        return os.environ.get("KA_LLM_PROVIDER", "") or ""
+
+
+def enrich_run_metadata(meta: RunMetadata, llm: object | None = None,
+                        cases: list | None = None,
+                        run_max_iterations: int | None = None) -> RunMetadata:
+    """就地补齐 T3 可比性字段（只写新键，不改既有键与语义）。"""
+    meta.provider = llm_provider(llm)
+    meta.base_url = str(getattr(llm, "base_url", "") or "")
+    temp = getattr(llm, "temperature", None)
+    if isinstance(temp, (int, float)) and not isinstance(temp, bool):
+        meta.temperature = float(temp)
+    else:
+        meta.temperature = _env_float("KA_LLM_TEMPERATURE")
+    mt = getattr(llm, "max_tokens", None)
+    if isinstance(mt, int) and not isinstance(mt, bool):
+        meta.max_tokens = mt
+    else:
+        meta.max_tokens = _env_int("KA_LLM_MAX_TOKENS", 0) or None
+    meta.executor_actual = actual_executor() or meta.executor
+    meta.sandbox_policy = effective_sandbox_policy()
+    meta.iteration_limits = effective_iteration_limits(cases, run_max_iterations)
+    meta.timeouts = effective_timeouts()
+    meta.resolution_definition_version = RESOLUTION_DEFINITION_VERSION
+    meta.side_effect_policy = SIDE_EFFECT_POLICY_READ_ONLY
+    meta.judge_prompt_sha256 = judge_prompt_sha256()
+    return meta
 
 
 def current_metadata(model: str, executor: str, **params) -> RunMetadata:
@@ -107,6 +300,15 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
         f"- model: `{m.model}` | executor: `{m.executor}`",
         f"- timestamp: {m.timestamp}",
         f"- params: {json.dumps(m.params, ensure_ascii=False)}",
+        f"- provider: `{m.provider}` | base_url: `{m.base_url}`",
+        f"- temperature: {m.temperature} | max_tokens: {m.max_tokens}",
+        f"- executor: 声明 `{m.executor}` / 实际 `{m.executor_actual}`",
+        f"- sandbox_policy: {json.dumps(m.sandbox_policy, ensure_ascii=False)}",
+        f"- iteration_limits: {json.dumps(m.iteration_limits, ensure_ascii=False)}",
+        f"- timeouts: {json.dumps(m.timeouts, ensure_ascii=False)}",
+        f"- resolution_definition_version: `{m.resolution_definition_version}`",
+        f"- side_effect_policy: `{m.side_effect_policy}`",
+        f"- judge_prompt_sha256: `{m.judge_prompt_sha256}`",
         "",
         f"## 核心指标",
         "",
@@ -154,7 +356,7 @@ def save_markdown(report: BenchmarkReport, out_dir: str) -> str:
             f"{'PASS' if r.test_pass else 'FAIL'} | "
             f"{'PASS' if r.patch_acceptance else 'FAIL'} | "
             f"{r.judge_verdict} | {r.iteration_count} | {r.latency_s:.1f} | "
-            f"{r.cost_usd:.4f} | {summary} | "
+            f"{_fmt_cost(r.cost_usd)} | {summary} | "
             f"{'一致' if r.consistency else '不一致'} |")
     lines += ["", "## Judge 理由", ""]
     for r in report.results:
@@ -193,7 +395,7 @@ def compare_reports(reports: list[BenchmarkReport]) -> str:
         ("平均耗时(s)",
          lambda r: f"{sum(x.latency_s for x in r.results) / max(len(r.results), 1):.1f}"),
         ("总成本($)",
-         lambda r: f"{sum(x.cost_usd for x in r.results):.4f}"),
+         _total_cost),
     ]
     for label, fn in rows:
         lines.append(f"| {label} | " + " | ".join(fn(r) for r in reports) + " |")

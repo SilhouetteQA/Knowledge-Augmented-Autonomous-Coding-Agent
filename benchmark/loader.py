@@ -3,14 +3,25 @@
 案例目录结构：
     cases/<category>/<id>.json   （category ∈ bug/feature/test/refactor/domain）
     cases/gold/<id>.diff         （社区已合并 PR 的 diff，gold patch）
+
+T3 可选锁定：frozen/<version>/cases.lock.json（或 KA_BENCHMARK_CASES_LOCK 指定的
+路径）以 {case_id: repository_commit} 钉住被测仓库提交。文件不存在即视为未锁定
+（完全向后兼容）；存在时锁定值优先于 case 内联的 repository_commit。
 """
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from tools.github_tools import GitHubIssue
 
 CATEGORIES = ("bug", "feature", "test", "refactor", "domain")
+
+# T3：可选锁定文件（不要求存在）。路径优先级：load_cases 显式参数 >
+# KA_BENCHMARK_CASES_LOCK > <cases_dir 同级>/frozen/<version>/cases.lock.json
+LOCK_ENV_VAR = "KA_BENCHMARK_CASES_LOCK"
+FROZEN_VERSION_ENV_VAR = "KA_BENCHMARK_FROZEN_VERSION"
+FROZEN_VERSION_DEFAULT = "v1"
 
 # E7（P2-7）：case 未显式配 max_iterations 时按 task_type 补默认——开放型任务
 # （test/refactor/domain）迭代上限更紧（20，逼小步收敛），bug/feature 保持 30。
@@ -36,9 +47,13 @@ class BenchmarkCase:
     setup_commands: list[str] = field(default_factory=list)
     # E10：交付一致性核查配置——期望动作（如 {"deletions": 5}），缺省空 dict 不核查
     expected_actions: dict = field(default_factory=dict)
+    # T3：被测仓库钉住的提交（case 内联 repository_commit 或锁定文件给出）；
+    # 缺省空串 = 未钉住（沿用仓库默认分支 HEAD，与既有行为一致）
+    repository_commit: str = ""
 
 
-def _validate(data: dict, path: Path) -> BenchmarkCase:
+def _validate(data: dict, path: Path,
+              lock: dict[str, str] | None = None) -> BenchmarkCase:
     case_id = data.get("id")
     category = data.get("category")
     if not isinstance(case_id, str) or not case_id:
@@ -106,6 +121,15 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
         if not isinstance(del_n, int) or isinstance(del_n, bool) or del_n < 0:
             raise CaseError(f"{path.name}: expected_actions.deletions 须为非负整数"
                             f"（got {del_n!r}）")
+    # T3：repository_commit 可选——锁定文件优先（冻结基线不被 case 内联值覆盖），
+    # 其次 case 内联字段；两者皆无 → 空串（不钉住）。非字符串（null 除外）报错。
+    inline_commit = data.get("repository_commit", "")
+    if inline_commit is None:
+        inline_commit = ""
+    if not isinstance(inline_commit, str):
+        raise CaseError(f"{path.name}: repository_commit 须为字符串"
+                        f"（got {inline_commit!r}）")
+    pinned_commit = (lock or {}).get(case_id, "") or inline_commit
     return BenchmarkCase(
         id=case_id, category=category, repository=repo,
         issue=GitHubIssue(number=issue["number"], title=issue["title"],
@@ -116,14 +140,64 @@ def _validate(data: dict, path: Path) -> BenchmarkCase:
         max_iterations=max_iter, task_type=task_type, notes=data.get("notes", ""),
         setup_commands=list(setup),
         expected_actions=dict(expected_actions),
+        repository_commit=pinned_commit,
     )
 
 
-def load_cases(cases_dir: str) -> list[BenchmarkCase]:
-    """加载全部案例（五类目录递归扫描）；任一非法 → CaseError。"""
+def default_lock_path(cases_dir: str, version: str | None = None) -> str:
+    """默认锁定文件路径（T3）：<cases_dir 同级>/frozen/<version>/cases.lock.json。"""
+    ver = (version or os.environ.get(FROZEN_VERSION_ENV_VAR, "")
+           or FROZEN_VERSION_DEFAULT)
+    return str(Path(cases_dir).parent / "frozen" / ver / "cases.lock.json")
+
+
+def resolve_lock_path(cases_dir: str, lock_path: str | None = None) -> str:
+    """锁定文件路径解析（T3）：显式参数 > KA_BENCHMARK_CASES_LOCK > 默认路径。"""
+    if lock_path:
+        return lock_path
+    env_path = (os.environ.get(LOCK_ENV_VAR) or "").strip()
+    return env_path or default_lock_path(cases_dir)
+
+
+def load_lock_file(lock_path: str) -> dict[str, str]:
+    """读取锁定文件 → {case_id: repository_commit}；文件不存在 → {}（可选）。
+
+    存在但非法（JSON 无法解析 / 顶层非对象 / 值非非空字符串）→ CaseError：
+    锁定文件损坏必须显式失败，不能静默降级为“未锁定”。
+    兼容 {"cases": {...}} 包裹形态与裸映射 {"id": "commit"} 两种写法。
+    """
+    p = Path(lock_path)
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise CaseError(f"锁定文件 {lock_path}: JSON 解析失败: {e}") from e
+    if isinstance(data, dict) and isinstance(data.get("cases"), dict):
+        data = data["cases"]
+    if not isinstance(data, dict):
+        raise CaseError(f"锁定文件 {lock_path}: 顶层须为对象（case_id -> commit）")
+    lock: dict[str, str] = {}
+    for key, value in data.items():
+        if not isinstance(value, str) or not value:
+            raise CaseError(
+                f"锁定文件 {lock_path}: {key} 的 repository_commit 须为非空字符串"
+                f"（got {value!r}）")
+        lock[str(key)] = value
+    return lock
+
+
+def load_cases(cases_dir: str, lock_path: str | None = None) -> list[BenchmarkCase]:
+    """加载全部案例（五类目录递归扫描）；任一非法 → CaseError。
+
+    lock_path 可选（T3，见模块 docstring）：缺省由 resolve_lock_path 解析；
+    锁定文件不存在即未锁定，行为与历史完全一致。
+    """
     root = Path(cases_dir)
     if not root.is_dir():
         raise CaseError(f"案例目录不存在: {cases_dir}")
+    # T3：可选锁定文件（不存在 → {}，与未锁定行为一致）
+    lock = load_lock_file(resolve_lock_path(cases_dir, lock_path))
     cases: list[BenchmarkCase] = []
     for category_dir in sorted(p for p in root.iterdir()
                                if p.is_dir() and p.name in CATEGORIES):
@@ -132,7 +206,7 @@ def load_cases(cases_dir: str) -> list[BenchmarkCase]:
                 data = json.loads(json_file.read_text(encoding="utf-8"))
             except json.JSONDecodeError as e:
                 raise CaseError(f"{json_file.name}: JSON 解析失败: {e}") from e
-            c = _validate(data, json_file)
+            c = _validate(data, json_file, lock)
             if any(c.id == other.id for other in cases):
                 raise CaseError(f"{json_file.name}: id '{c.id}' 重复")
             cases.append(c)

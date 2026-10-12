@@ -8,7 +8,8 @@ from agent.llm import LLMClient
 from benchmark.judge import judge_patch
 from benchmark.loader import BenchmarkCase
 from benchmark.report import (BenchmarkReport, CaseResult, RunMetadata,
-                              current_metadata, save_json, save_markdown)
+                              current_metadata, enrich_run_metadata, save_json,
+                              save_markdown, setup_timeout_s)
 from tools.docker_sandbox import sandbox_executor
 from tools.file_tools import ToolError
 from tools.git_diff_parse import parse_deleted_paths
@@ -17,10 +18,16 @@ from tools.github_tools import (GitHubIssue, clone_repository, get_repository,
 from tools.shell_tools import TestResult, run_command, run_tests
 from tools.tracing import traced
 
-# 模型单价表（每 1K token 的美元成本）；未知模型或空单价表 → cost_usd=0；CLI 摘要提示单价未知
+# 模型单价表（每 1K token 的美元成本）；命中 → 计算值 + cost_source="computed"；
+# 未命中/空表 → cost_usd=None + cost_source="unknown"（T3：不再静默填 0.0——假零会被
+# 下游误读为“真实零成本”，使跨轮成本不可比）。
 MODEL_PRICE_USD_PER_1K = {
     # "mimo-v2.5": 0.004,   # 示例：每 1K token 美元（待用户提供实际单价）
 }
+
+# T3：成本来源标记
+COST_SOURCE_COMPUTED = "computed"
+COST_SOURCE_UNKNOWN = "unknown"
 
 
 def _repo_dir_name(repository: str) -> str:
@@ -29,12 +36,23 @@ def _repo_dir_name(repository: str) -> str:
     return repository.replace("/", "__")
 
 
-def _cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    """按单价表估算成本；未知模型返回 0.0。"""
+def cost_for(model: str, prompt_tokens: int, completion_tokens: int
+             ) -> tuple[float | None, str]:
+    """按单价表估算成本（T3）：→ (cost_usd, cost_source)。
+
+    单价表未命中/空表 → (None, "unknown")；命中 → (计算值, "computed")。
+    未知成本必须显式为 None：0.0 会被下游当作“真实零成本”参与汇总与跨轮比较。
+    """
     price = MODEL_PRICE_USD_PER_1K.get(model)
     if price is None:
-        return 0.0
-    return (prompt_tokens + completion_tokens) / 1000.0 * price
+        return None, COST_SOURCE_UNKNOWN
+    return (prompt_tokens + completion_tokens) / 1000.0 * price, COST_SOURCE_COMPUTED
+
+
+def _cost_usd(model: str, prompt_tokens: int, completion_tokens: int
+              ) -> float | None:
+    """历史薄包装（T3）：等价 cost_for(...)[0]；未知模型 → None（不再是 0.0）。"""
+    return cost_for(model, prompt_tokens, completion_tokens)[0]
 
 
 def _tool_success_rate(steps: list) -> float:
@@ -104,7 +122,8 @@ def _run_setup_commands(case: BenchmarkCase, repo_dir: str) -> None:
     if not case.setup_commands:
         return
     with sandbox_executor(repo_dir):
-        setup_timeout = int(os.environ.get("KA_SETUP_TIMEOUT_S", "60"))
+        # T3：生效超时与报告 metadata.timeouts 同源（report.setup_timeout_s）
+        setup_timeout = setup_timeout_s()
         for cmd in case.setup_commands:
             res = run_command(cmd, cwd=repo_dir, workspace_root=repo_dir,
                               timeout=setup_timeout)
@@ -188,6 +207,10 @@ def _environment_error_result(case: BenchmarkCase, summary: str,
     summary 为 _test_summary 的失败摘要（测试路径 + pytest 计数），写入
     errors 首条作为 reason；resolution=False，Agent 未运行故无 diff/tokens。
     """
+    # T3：成本与正常路径同口径（单价未知 → None/unknown，不填假零）
+    prompt = llm.tokens_total["prompt"] - prompt_before
+    completion = llm.tokens_total["completion"] - completion_before
+    cost, cost_source = cost_for(getattr(llm, "model", "unknown"), prompt, completion)
     return CaseResult(
         case_id=case.id, category=case.category, status="environment_error",
         resolution=False, test_pass=False, patch_acceptance=False,
@@ -195,9 +218,9 @@ def _environment_error_result(case: BenchmarkCase, summary: str,
         judge_reason="SKIP 基线测试失败（环境缺口，未运行 Agent）",
         tool_success_rate=0.0, iteration_count=0,
         latency_s=end - start,
-        tokens_prompt=llm.tokens_total["prompt"] - prompt_before,
-        tokens_completion=llm.tokens_total["completion"] - completion_before,
-        cost_usd=0.0, diff="",
+        tokens_prompt=prompt,
+        tokens_completion=completion,
+        cost_usd=cost, cost_source=cost_source, diff="",
         errors=[f"基线测试失败: {summary}"])
 
 
@@ -225,6 +248,7 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     prompt, completion = (llm.tokens_total["prompt"] - prompt_before,
                           llm.tokens_total["completion"] - completion_before)
     model = getattr(llm, "model", "unknown")
+    cost, cost_source = cost_for(model, prompt, completion)
     tool_success = _tool_success_rate(getattr(run, "steps", None) or [])
     return CaseResult(
         case_id=case.id, category=case.category,
@@ -236,7 +260,7 @@ def _case_result(case: BenchmarkCase, llm: LLMClient, case_dir: str,
         iteration_count=getattr(run, "iteration_count", 0),
         latency_s=end - start,
         tokens_prompt=prompt, tokens_completion=completion,
-        cost_usd=_cost_usd(model, prompt, completion),
+        cost_usd=cost, cost_source=cost_source,
         diff=diff, errors=errors,
         test_error_summary=test_summary[:600],
         consistency=consistency, consistency_note=consistency_note,
@@ -315,15 +339,19 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
             observe_case_cost_entry(mark, stage="normal")
             return result
     except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
+        prompt = llm.tokens_total["prompt"] - prompt_before
+        completion = llm.tokens_total["completion"] - completion_before
+        cost, cost_source = cost_for(getattr(llm, "model", "unknown"),
+                                     prompt, completion)
         result = CaseResult(
             case_id=case.id, category=case.category, status="error",
             resolution=False, test_pass=False, patch_acceptance=False,
             judge_verdict="SKIP", judge_reason="SKIP 执行异常",
             tool_success_rate=0.0, iteration_count=0,
             latency_s=time.monotonic() - start,
-            tokens_prompt=llm.tokens_total["prompt"] - prompt_before,
-            tokens_completion=llm.tokens_total["completion"] - completion_before,
-            cost_usd=0.0, diff="", errors=[str(e)])
+            tokens_prompt=prompt,
+            tokens_completion=completion,
+            cost_usd=cost, cost_source=cost_source, diff="", errors=[str(e)])
         observe_case_cost_entry(mark, stage="error")
         return result
 
@@ -350,7 +378,12 @@ def run_benchmark_cases(llm: LLMClient, cases: list[BenchmarkCase],
     errors = sum(1 for r in results if r.status == "error")
     env_errors = sum(1 for r in results if r.status == "environment_error")
     adj_denom = total - errors - env_errors
-    metadata = current_metadata(getattr(llm, "model", "unknown"), executor)
+    # T3：除 git/时间戳外补齐可比性元信息（真实执行器 / 沙箱策略 / 超时 / 迭代上限 /
+    # judge 指纹等）。run_max_iterations=None：基准逐 case 自带 max_iterations
+    # （loader 保证），run 级上限仅在 case 给不出时作兜底。
+    metadata = enrich_run_metadata(
+        current_metadata(getattr(llm, "model", "unknown"), executor),
+        llm=llm, cases=cases, run_max_iterations=None)
     report = BenchmarkReport(metadata=metadata, total=total, resolved=resolved,
                              resolution_rate=(resolved / total) if total else 0.0,
                              results=results,

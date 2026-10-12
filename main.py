@@ -192,7 +192,9 @@ def _run_benchmark_mode(args: argparse.Namespace, llm) -> int:
           f"Resolution Rate: {report.resolution_rate:.0%}")
     print(f"报告: {os.path.join(args.benchmark_out, report.metadata.run_id)}")
     if report.results and not MODEL_PRICE_USD_PER_1K:
-        print("提示: 模型单价表为空，成本列全部为 0（待提供实际单价后填入 benchmark/runner.py 的 MODEL_PRICE_USD_PER_1K）")
+        print("提示: 模型单价表为空，成本列为 unknown（cost_usd=null / cost_source="
+              "unknown，不是 0；待提供实际单价后填入 benchmark/runner.py 的 "
+              "MODEL_PRICE_USD_PER_1K）")
     return 0
 
 
