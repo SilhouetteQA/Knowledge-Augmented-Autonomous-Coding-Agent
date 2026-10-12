@@ -1,0 +1,193 @@
+{
+  "metadata": {
+    "run_id": "20261012-183750",
+    "git_commit": "723c4a524348670c231109ce23c72745aa659134",
+    "branch": "feature/pre-extraction-baseline",
+    "model": "deepseek/deepseek-v4.1-flash",
+    "timestamp": "2026-10-12T18:37:50",
+    "executor": "docker",
+    "params": {},
+    "provider": "command_goat",
+    "base_url": "https://api.commandcode.ai/provider/v1",
+    "temperature": null,
+    "max_tokens": null,
+    "executor_actual": "docker",
+    "sandbox_policy": {
+      "executor": "docker",
+      "image": "ka-sandbox:py312-v1",
+      "cpus": 2.0,
+      "memory": "1g",
+      "pids_limit": 512,
+      "network": false
+    },
+    "fixture_commits": {
+      "schedule-602": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-608": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-622": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-646": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-99": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      }
+    },
+    "iteration_limits": {
+      "run_level": null,
+      "per_case": {
+        "schedule-602": 30,
+        "schedule-608": 30,
+        "schedule-622": 30,
+        "schedule-646": 30,
+        "schedule-99": 30
+      },
+      "fallback_to_run_level": []
+    },
+    "timeouts": {
+      "KA_SETUP_TIMEOUT_S": 60,
+      "KA_LLM_TIMEOUT_S": null,
+      "KA_LLM_MAX_RETRIES": null
+    },
+    "resolution_definition_version": "t3-1",
+    "side_effect_policy": "read_only",
+    "judge_prompt_sha256": "5aabbf69a988c45bb16c91c1dc99c3fe471c184fe287a1e6ebea5d63feed1fa0"
+  },
+  "total": 5,
+  "resolved": 2,
+  "resolution_rate": 0.4,
+  "results": [
+    {
+      "case_id": "schedule-602",
+      "category": "test",
+      "status": "error",
+      "resolution": false,
+      "test_pass": false,
+      "patch_acceptance": false,
+      "judge_verdict": "SKIP",
+      "judge_reason": "SKIP 执行异常",
+      "tool_success_rate": 0.0,
+      "iteration_count": 0,
+      "latency_s": 68.61000000000058,
+      "tokens_prompt": 0,
+      "tokens_completion": 0,
+      "cost_usd": null,
+      "diff": "",
+      "errors": [
+        "Request timed out."
+      ],
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "test_error_summary": "",
+      "consistency": true,
+      "consistency_note": ""
+    },
+    {
+      "case_id": "schedule-608",
+      "category": "bug",
+      "status": "not_resolved",
+      "resolution": false,
+      "test_pass": true,
+      "patch_acceptance": false,
+      "judge_verdict": "SKIP",
+      "judge_reason": "SKIP 无代码变更",
+      "tool_success_rate": 1.0,
+      "iteration_count": 24,
+      "latency_s": 358.0779999999977,
+      "tokens_prompt": 1367295,
+      "tokens_completion": 28366,
+      "cost_usd": null,
+      "diff": "",
+      "errors": [],
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "test_error_summary": "",
+      "consistency": true,
+      "consistency_note": ""
+    },
+    {
+      "case_id": "schedule-622",
+      "category": "refactor",
+      "status": "not_resolved",
+      "resolution": false,
+      "test_pass": true,
+      "patch_acceptance": false,
+      "judge_verdict": "SKIP",
+      "judge_reason": "SKIP 无代码变更",
+      "tool_success_rate": 0.9411764705882353,
+      "iteration_count": 11,
+      "latency_s": 129.28099999999904,
+      "tokens_prompt": 428008,
+      "tokens_completion": 10227,
+      "cost_usd": null,
+      "diff": "",
+      "errors": [],
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "test_error_summary": "",
+      "consistency": true,
+      "consistency_note": ""
+    },
+    {
+      "case_id": "schedule-646",
+      "category": "bug",
+      "status": "resolved",
+      "resolution": true,
+      "test_pass": true,
+      "patch_acceptance": true,
+      "judge_verdict": "PASS",
+      "judge_reason": "PASS\n\n理由：\n- 两个 patch 都针对同一缺陷：`Job.__repr__` 中在 `self.interval == 1` 时对可能为 `None` 的 `self.unit` 执行切片 `self.unit[:-1]`，导致 `TypeError: 'NoneType' object is not subscriptable`。\n- 参考（Gold）patch 在两处 repr 分支（`at_time is not None` 分支与常规分支）把判断改为 `self.unit and self.interval == 1`；Agent patch 先计算一个 `unit` 变量，条件为 `self.interval == 1 and self.unit is not None`，然后在两处分支统一使用该变量。两者的守卫语义等价：`unit` 为 `None` 时都不切片、直接返回原值，正常复数单位仍会去掉尾部 \"s\"。边界情况（如空字符串）结果也一致（`\"\"[:-1] == \"\"`）。\n- 仅实现写法不同（提取局部变量 vs 就地条件），行为与覆盖面一致，Agent patch 还补充了回归测试。\n- 因此 Agent patch 修复了 Gold patch 所针对的同一缺陷，功能等价。",
+      "tool_success_rate": 0.9642857142857143,
+      "iteration_count": 24,
+      "latency_s": 370.25,
+      "tokens_prompt": 1725517,
+      "tokens_completion": 31341,
+      "cost_usd": null,
+      "diff": "diff --git a/schedule/__init__.py b/schedule/__init__.py\nindex 8e12eeb..5dc3eff 100644\n--- a/schedule/__init__.py\n+++ b/schedule/__init__.py\n@@ -282,6 +282,15 @@ class Job:\n         def is_repr(j):\n             return not isinstance(j, Job)\n \n+        # `self.unit` is `None` until a time unit (e.g. `.seconds`) is set, so it\n+        # may still be unset for a partially-composed job. Only strip the trailing\n+        # \"s\" from a plural unit, and never subscript `None`. See #646.\n+        unit = (\n+            self.unit[:-1]\n+            if self.interval == 1 and self.unit is not None\n+            else self.unit\n+        )\n+\n         timestats = \"(last run: %s, next run: %s)\" % (\n             format_time(self.last_run),\n             format_time(self.next_run),\n@@ -302,7 +311,7 @@ class Job:\n         if self.at_time is not None:\n             return \"Every %s %s at %s do %s %s\" % (\n                 self.interval,\n-                self.unit[:-1] if self.interval == 1 else self.unit,\n+                unit,\n                 self.at_time,\n                 call_repr,\n                 timestats,\n@@ -317,7 +326,7 @@ class Job:\n             return fmt % dict(\n                 interval=self.interval,\n                 latest=self.latest,\n-                unit=(self.unit[:-1] if self.interval == 1 else self.unit),\n+                unit=unit,\n                 call_repr=call_repr,\n                 timestats=timestats,\n             )\ndiff --git a/test_schedule.py b/test_schedule.py\nindex f497826..c7aa78e 100644\n--- a/test_schedule.py\n+++ b/test_schedule.py\n@@ -1360,6 +1360,31 @@ class SchedulerTests(TestCase):\n         s3 = repr(schedule.every(10))\n         assert s3 == \"Every 10 None do [None] (last run: [never], next run: [never])\"\n \n+    def test_to_repr_partially_composed_job_interval_one(self):\n+        # Regression test for #646: `Job.unit` is initialised to None and stays\n+        # None until a time unit (e.g. `.seconds`) is set. With `interval == 1`\n+        # the repr used to slice the unit (`self.unit[:-1]`), which crashed with\n+        # `TypeError: 'NoneType' object is not subscriptable`.\n+        s = repr(schedule.every())\n+        assert s == \"Every 1 None do [None] (last run: [never], next run: [never])\"\n+\n+        s2 = repr(schedule.Job(1))\n+        assert s2 == \"Every 1 None do [None] (last run: [never], next run: [never])\"\n+\n+    def test_to_repr_partially_composed_job_interval_one_at_time(self):\n+        # Same as above, for the `at_time is not None` repr branch (#646).\n+        job = schedule.Job(1)\n+        job.at_time = datetime.time(0, 0)\n+        assert repr(job) == (\n+            \"Every 1 None at 00:00:00 do [None] \"\n+            \"(last run: [never], next run: [never])\"\n+        )\n+\n+    def test_schedule_next_run_rejects_unset_unit(self):\n+        # `unit` being None must keep raising the explicit ScheduleValueError\n+        # rather than a TypeError from subscripting None (#646).\n+        self.assertRaises(ScheduleValueError, schedule.Job(1)._schedule_next_run)\n+\n     def test_to_string_lambda_job_func(self):\n         assert len(str(every().minute.do(lambda: 1))) > 1\n         assert len(str(every().day.at(\"10:30\").do(lambda: 1))) > 1\n",
+      "errors": [],
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "test_error_summary": "",
+      "consistency": true,
+      "consistency_note": ""
+    },
+    {
+      "case_id": "schedule-99",
+      "category": "feature",
+      "status": "resolved",
+      "resolution": true,
+      "test_pass": true,
+      "patch_acceptance": true,
+      "judge_verdict": "PASS",
+      "judge_reason": "PASS\n\nAgent patch 与 Gold patch 解决的是同一问题：为任务增加“仅在周末”或“仅在工作日（周一到周五）”执行的调度能力。\n\n两者核心功能等价：\n- Agent patch 提供了 `.weekend`、`.workweek`（以及 `.workdays`、`.weekends` 别名）；\n- Gold patch 提供了 `.weekend`、`.workday`；\n- 命名和内部表示不同（Agent 用字符串集合，Gold 用整数集合），但都通过限制可运行星期几来实现相同调度语义。\n\nAgent patch 同样包含了：\n- 对间隔不为 1 的日常任务抛出 `IntervalError`；\n- 在计算下次运行时间时跳过不允许的星期几；\n- 对 `.at()` 时间格式的适配；\n- 相应的测试覆盖。\n\n因此，虽然实现细节和部分属性命名不同，但功能点一致，判定为 PASS。",
+      "tool_success_rate": 0.9714285714285714,
+      "iteration_count": 31,
+      "latency_s": 489.859000000004,
+      "tokens_prompt": 2276566,
+      "tokens_completion": 51079,
+      "cost_usd": null,
+      "diff": "diff --git a/schedule/__init__.py b/schedule/__init__.py\nindex 8e12eeb..9b28b31 100644\n--- a/schedule/__init__.py\n+++ b/schedule/__init__.py\n@@ -49,6 +49,25 @@ from typing import Set, List, Optional, Callable, Union\n \n logger = logging.getLogger(\"schedule\")\n \n+#: Weekday names, ordered starting with Monday (matching ``datetime.weekday()``).\n+_WEEKDAYS = (\n+    \"monday\",\n+    \"tuesday\",\n+    \"wednesday\",\n+    \"thursday\",\n+    \"friday\",\n+    \"saturday\",\n+    \"sunday\",\n+)\n+\n+#: The days that make up the weekend.\n+WEEKEND_DAYS = frozenset({\"saturday\", \"sunday\"})\n+\n+#: The days that make up the workweek.\n+WORKWEEK_DAYS = frozenset(\n+    {\"monday\", \"tuesday\", \"wednesday\", \"thursday\", \"friday\"}\n+)\n+\n \n class ScheduleError(Exception):\n     \"\"\"Base schedule exception\"\"\"\n@@ -248,6 +267,12 @@ class Job:\n         # For example, when asking 'every week on tuesday' the start_day is 'tuesday'.\n         self.start_day: Optional[str] = None\n \n+        # Weekdays on which the job is allowed to run. Only relevant when the\n+        # job was configured with `.weekend` or `.workweek`.\n+        # For example, when asking for 'every weekend day' this holds\n+        # {'saturday', 'sunday'}.\n+        self.weekdays: Optional[Set[str]] = None\n+\n         # optional time of final run\n         self.cancel_after: Optional[datetime.datetime] = None\n \n@@ -454,6 +479,50 @@ class Job:\n         self.start_day = \"sunday\"\n         return self.weeks\n \n+    @property\n+    def weekend(self):\n+        \"\"\"\n+        Schedule the job to run on each day of the weekend (Saturday and Sunday).\n+\n+        The job runs at the same time of day on every Saturday and Sunday, or at\n+        the time given by :meth:`at <Job.at>`. Scheduling jobs that run every 2 or\n+        more days is not supported.\n+        \"\"\"\n+        if self.interval != 1:\n+            raise IntervalError(\n+                \"Scheduling .weekend jobs is only allowed for daily jobs. \"\n+                \"Using .weekend on a job scheduled to run every 2 or more days \"\n+                \"is not supported.\"\n+            )\n+        self.start_day = None\n+        self.weekdays = set(WEEKEND_DAYS)\n+        return self.days\n+\n+    @property\n+    def workweek(self):\n+        \"\"\"\n+        Schedule the job to run on each day of the workweek (Monday to Friday).\n+\n+        The job runs at the same time of day on every workday, or at the time\n+        given by :meth:`at <Job.at>`. Scheduling jobs that run every 2 or more\n+        days is not supported.\n+        \"\"\"\n+        if self.interval != 1:\n+            raise IntervalError(\n+                \"Scheduling .workweek jobs is only allowed for daily jobs. \"\n+                \"Using .workweek on a job scheduled to run every 2 or more days \"\n+                \"is not supported.\"\n+            )\n+        self.start_day = None\n+        self.weekdays = set(WORKWEEK_DAYS)\n+        return self.days\n+\n+    #: Alias for :attr:`workweek`\n+    workdays = workweek\n+\n+    #: Alias for :attr:`weekend`\n+    weekends = weekend\n+\n     def tag(self, *tags: Hashable):\n         \"\"\"\n         Tags the job with one or more unique identifiers.\n@@ -490,7 +559,11 @@ class Job:\n \n         :return: The invoked job instance\n         \"\"\"\n-        if self.unit not in (\"days\", \"hours\", \"minutes\") and not self.start_day:\n+        if (\n+            self.unit not in (\"days\", \"hours\", \"minutes\")\n+            and not self.start_day\n+            and not self.weekdays\n+        ):\n             raise ScheduleValueError(\n                 \"Invalid unit (valid units are `days`, `hours`, and `minutes`)\"\n             )\n@@ -509,7 +582,7 @@ class Job:\n \n         if not isinstance(time_str, str):\n             raise TypeError(\"at() should be passed a string\")\n-        if self.unit == \"days\" or self.start_day:\n+        if self.unit == \"days\" or self.start_day or self.weekdays:\n             if not re.match(r\"^[0-2]\\d:[0-5]\\d(:[0-5]\\d)?$\", time_str):\n                 raise ScheduleValueError(\n                     \"Invalid time format for a daily job (valid format is HH:MM(:SS)?)\"\n@@ -541,7 +614,7 @@ class Job:\n         else:\n             hour, minute = time_values\n             second = 0\n-        if self.unit == \"days\" or self.start_day:\n+        if self.unit == \"days\" or self.start_day or self.weekdays:\n             hour = int(hour)\n             if not (0 <= hour <= 23):\n                 raise ScheduleValueError(\n@@ -718,7 +791,11 @@ class Job:\n \n         next_run = now\n \n-        if self.start_day is not None:\n+        if self.weekdays is not None:\n+            # Move to the nearest day the job is allowed to run on\n+            # (e.g. the weekend or the workweek)\n+            next_run = _move_to_next_allowed_weekday(next_run, self.weekdays)\n+        elif self.start_day is not None:\n             if self.unit != \"weeks\":\n                 raise ScheduleValueError(\"`unit` should be 'weeks'\")\n             next_run = _move_to_next_weekday(next_run, self.start_day)\n@@ -733,6 +810,11 @@ class Job:\n         while next_run <= now:\n             next_run += period\n \n+        if self.weekdays is not None:\n+            # Adding the period may have moved the job to a day it is not\n+            # allowed to run on, e.g. from Friday to Saturday for a workweek job\n+            next_run = _move_to_next_allowed_weekday(next_run, self.weekdays)\n+\n         next_run = self._correct_utc_offset(\n             next_run, fixate_time=(self.at_time is not None)\n         )\n@@ -756,10 +838,14 @@ class Job:\n \n         kwargs = {\"second\": self.at_time.second, \"microsecond\": 0}\n \n-        if self.unit == \"days\" or self.start_day is not None:\n+        if self.unit == \"days\" or self.start_day is not None or self.weekdays is not None:\n             kwargs[\"hour\"] = self.at_time.hour\n \n-        if self.unit in [\"days\", \"hours\"] or self.start_day is not None:\n+        if (\n+            self.unit in [\"days\", \"hours\"]\n+            or self.start_day is not None\n+            or self.weekdays is not None\n+        ):\n             kwargs[\"minute\"] = self.at_time.minute\n \n         moment = moment.replace(**kwargs)  # type: ignore\n@@ -928,18 +1014,25 @@ def _move_to_next_weekday(moment: datetime.datetime, weekday: str):\n     return moment + datetime.timedelta(days=days_ahead)\n \n \n-def _weekday_index(day: str) -> int:\n-    weekdays = (\n-        \"monday\",\n-        \"tuesday\",\n-        \"wednesday\",\n-        \"thursday\",\n-        \"friday\",\n-        \"saturday\",\n-        \"sunday\",\n+def _move_to_next_allowed_weekday(moment: datetime.datetime, weekdays: Set[str]):\n+    \"\"\"\n+    Move the given timestamp to the nearest day contained in `weekdays`.\n+    If the timestamp is already at one of the given weekdays, it is not moved.\n+    \"\"\"\n+    allowed = {_weekday_index(day) for day in weekdays}\n+\n+    for days_ahead in range(7):\n+        if (moment + datetime.timedelta(days=days_ahead)).weekday() in allowed:\n+            return moment + datetime.timedelta(days=days_ahead)\n+\n+    raise ScheduleValueError(\n+        \"Invalid weekdays (valid weekdays are {})\".format(tuple(_WEEKDAYS))\n     )\n-    if day not in weekdays:\n+\n+\n+def _weekday_index(day: str) -> int:\n+    if day not in _WEEKDAYS:\n         raise ScheduleValueError(\n-            \"Invalid start day (valid start days are {})\".format(weekdays)\n+            \"Invalid start day (valid start days are {})\".format(_WEEKDAYS)\n         )\n-    return weekdays.index(day)\n+    return _WEEKDAYS.index(day)\ndiff --git a/test_schedule.py b/test_schedule.py\nindex f497826..6e5c551 100644\n--- a/test_schedule.py\n+++ b/test_schedule.py\n@@ -186,6 +186,24 @@ class SchedulerTests(TestCase):\n             ),\n         ):\n             job_instance.sunday\n+        with self.assertRaisesRegex(\n+            IntervalError,\n+            (\n+                r\"Scheduling \\.weekend jobs is only allowed for daily jobs\\. \"\n+                r\"Using \\.weekend on a job scheduled to run every 2 or more \"\n+                r\"days is not supported\\.\"\n+            ),\n+        ):\n+            job_instance.weekend\n+        with self.assertRaisesRegex(\n+            IntervalError,\n+            (\n+                r\"Scheduling \\.workweek jobs is only allowed for daily jobs\\. \"\n+                r\"Using \\.workweek on a job scheduled to run every 2 or more \"\n+                r\"days is not supported\\.\"\n+            ),\n+        ):\n+            job_instance.workweek\n \n         # test an invalid unit\n         job_instance.unit = \"foo\"\n@@ -308,6 +326,10 @@ class SchedulerTests(TestCase):\n             every(interval=2).saturday\n         with self.assertRaises(IntervalError):\n             every(interval=2).sunday\n+        with self.assertRaises(IntervalError):\n+            every(interval=2).weekend\n+        with self.assertRaises(IntervalError):\n+            every(interval=2).workweek\n \n     def test_until_time(self):\n         mock_job = make_mock_job()\n@@ -408,6 +430,136 @@ class SchedulerTests(TestCase):\n             assert job.next_run.month == 11\n             assert job.next_run.day == 25\n \n+    def test_weekend(self):\n+        mock_job = make_mock_job()\n+\n+        # This date is a wednesday\n+        with mock_datetime(2010, 1, 6, 12, 15):\n+            job = every().weekend.do(mock_job)\n+            assert job.unit == \"days\"\n+            assert job.start_day is None\n+            assert job.weekdays == {\"saturday\", \"sunday\"}\n+            # Next saturday\n+            assert job.next_run.day == 9\n+            assert job.next_run.weekday() == 5\n+\n+        with mock_datetime(2010, 1, 9, 12, 16):  # saturday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 1\n+            # Next sunday\n+            assert schedule.jobs[0].next_run.day == 10\n+            assert schedule.jobs[0].next_run.weekday() == 6\n+\n+        with mock_datetime(2010, 1, 10, 12, 16):  # sunday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 2\n+            # Next saturday\n+            assert schedule.jobs[0].next_run.day == 16\n+\n+        with mock_datetime(2010, 1, 11, 12, 16):  # monday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 2  # no run on a weekday\n+\n+    def test_workweek(self):\n+        mock_job = make_mock_job()\n+\n+        # This date is a wednesday\n+        with mock_datetime(2010, 1, 6, 12, 15):\n+            job = every().workweek.do(mock_job)\n+            assert job.unit == \"days\"\n+            assert job.start_day is None\n+            assert job.weekdays == {\n+                \"monday\",\n+                \"tuesday\",\n+                \"wednesday\",\n+                \"thursday\",\n+                \"friday\",\n+            }\n+            # Next thursday\n+            assert job.next_run.day == 7\n+            assert job.next_run.weekday() == 3\n+\n+        with mock_datetime(2010, 1, 7, 12, 16):  # thursday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 1\n+            assert schedule.jobs[0].next_run.day == 8  # friday\n+\n+        with mock_datetime(2010, 1, 8, 12, 16):  # friday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 2\n+            # The weekend is skipped, next monday\n+            assert schedule.jobs[0].next_run.day == 11\n+\n+        with mock_datetime(2010, 1, 9, 12, 16):  # saturday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 2\n+\n+        with mock_datetime(2010, 1, 10, 12, 16):  # sunday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 2\n+\n+        with mock_datetime(2010, 1, 11, 12, 16):  # monday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 3\n+            assert schedule.jobs[0].next_run.day == 12  # tuesday\n+\n+    def test_weekend_at_time(self):\n+        mock_job = make_mock_job()\n+\n+        # This date is a wednesday\n+        with mock_datetime(2010, 1, 6, 12, 15):\n+            job = every().weekend.at(\"10:30\").do(mock_job)\n+            assert job.next_run.day == 9\n+            assert job.next_run.hour == 10\n+            assert job.next_run.minute == 30\n+\n+        with mock_datetime(2010, 1, 9, 10, 31):  # saturday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 1\n+            assert schedule.jobs[0].next_run.day == 10  # sunday\n+            assert schedule.jobs[0].next_run.hour == 10\n+\n+        with mock_datetime(2010, 1, 10, 10, 31):  # sunday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 2\n+            assert schedule.jobs[0].next_run.day == 16  # saturday\n+\n+    def test_weekend_at_time_today(self):\n+        mock_job = make_mock_job()\n+\n+        # This date is a sunday, before the job's at time\n+        with mock_datetime(2010, 1, 10, 9, 0):\n+            job = every().weekend.at(\"10:30\").do(mock_job)\n+            assert job.next_run.day == 10  # today\n+            assert job.next_run.hour == 10\n+            assert job.next_run.minute == 30\n+\n+        # This date is a sunday, after the job's at time\n+        with mock_datetime(2010, 1, 10, 11, 0):\n+            job = every().weekend.at(\"10:30\").do(mock_job)\n+            assert job.next_run.day == 16  # next saturday\n+\n+    def test_workweek_at_time(self):\n+        mock_job = make_mock_job()\n+\n+        # This date is a wednesday, the job's at time has passed\n+        with mock_datetime(2010, 1, 6, 12, 15):\n+            job = every().workweek.at(\"09:00\").do(mock_job)\n+            assert job.next_run.day == 7  # thursday\n+            assert job.next_run.hour == 9\n+            assert job.next_run.minute == 0\n+\n+        with mock_datetime(2010, 1, 8, 9, 1):  # friday\n+            schedule.run_pending()\n+            assert mock_job.call_count == 1\n+            # The weekend is skipped, next monday\n+            assert schedule.jobs[0].next_run.day == 11\n+            assert schedule.jobs[0].next_run.hour == 9\n+\n+    def test_weekend_and_workweek_aliases(self):\n+        assert every().weekends.weekdays == every().weekend.weekdays\n+        assert every().workdays.weekdays == every().workweek.weekdays\n+\n     def test_at_time_hour(self):\n         with mock_datetime(2010, 1, 6, 12, 20):\n             mock_job = make_mock_job()\n@@ -478,6 +630,8 @@ class SchedulerTests(TestCase):\n             assert every().friday.do(mock_job).next_run.day == 8\n             assert every().saturday.do(mock_job).next_run.day == 9\n             assert every().sunday.do(mock_job).next_run.day == 10\n+            assert every().weekend.do(mock_job).next_run.day == 9  # saturday\n+            assert every().workweek.do(mock_job).next_run.day == 7  # thursday\n             assert (\n                 every().minute.until(datetime.time(12, 17)).do(mock_job).next_run.minute\n                 == 16\n",
+      "errors": [],
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "test_error_summary": "",
+      "consistency": true,
+      "consistency_note": ""
+    }
+  ],
+  "resolution_rate_adjusted": 0.5
+}

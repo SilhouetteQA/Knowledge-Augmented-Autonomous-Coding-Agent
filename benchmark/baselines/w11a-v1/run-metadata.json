@@ -1,0 +1,148 @@
+{
+  "collected_at": "2026-10-12T18:38:36",
+  "source_run_dir": "output\\benchmark\\20261012-183750",
+  "summary": {
+    "total": 5,
+    "resolved": 2,
+    "resolution_rate": 0.4,
+    "resolution_rate_adjusted": 0.5
+  },
+  "metadata": {
+    "run_id": "20261012-183750",
+    "git_commit": "723c4a524348670c231109ce23c72745aa659134",
+    "branch": "feature/pre-extraction-baseline",
+    "model": "deepseek/deepseek-v4.1-flash",
+    "timestamp": "2026-10-12T18:37:50",
+    "executor": "docker",
+    "provider": "command_goat",
+    "base_url": "https://api.commandcode.ai/provider/v1",
+    "temperature": null,
+    "max_tokens": null,
+    "executor_actual": "docker",
+    "sandbox_policy": {
+      "executor": "docker",
+      "image": "ka-sandbox:py312-v1",
+      "cpus": 2.0,
+      "memory": "1g",
+      "pids_limit": 512,
+      "network": false
+    },
+    "iteration_limits": {
+      "run_level": null,
+      "per_case": {
+        "schedule-602": 30,
+        "schedule-608": 30,
+        "schedule-622": 30,
+        "schedule-646": 30,
+        "schedule-99": 30
+      },
+      "fallback_to_run_level": []
+    },
+    "timeouts": {
+      "KA_SETUP_TIMEOUT_S": 60,
+      "KA_LLM_TIMEOUT_S": null,
+      "KA_LLM_MAX_RETRIES": null
+    },
+    "resolution_definition_version": "t3-1",
+    "side_effect_policy": "read_only",
+    "judge_prompt_sha256": "5aabbf69a988c45bb16c91c1dc99c3fe471c184fe287a1e6ebea5d63feed1fa0",
+    "fixture_commits": {
+      "schedule-602": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-608": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-622": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-646": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      },
+      "schedule-99": {
+        "pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+        "actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651"
+      }
+    },
+    "params": {}
+  },
+  "fixture_pin_mismatches": [],
+  "cases": [
+    {
+      "case_id": "schedule-602",
+      "status": "error",
+      "resolution": false,
+      "test_pass": false,
+      "judge_verdict": "SKIP",
+      "iteration_count": 0,
+      "latency_s": 68.61000000000058,
+      "cost_usd": null,
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "errors": [
+        "Request timed out."
+      ]
+    },
+    {
+      "case_id": "schedule-608",
+      "status": "not_resolved",
+      "resolution": false,
+      "test_pass": true,
+      "judge_verdict": "SKIP",
+      "iteration_count": 24,
+      "latency_s": 358.0779999999977,
+      "cost_usd": null,
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "errors": []
+    },
+    {
+      "case_id": "schedule-622",
+      "status": "not_resolved",
+      "resolution": false,
+      "test_pass": true,
+      "judge_verdict": "SKIP",
+      "iteration_count": 11,
+      "latency_s": 129.28099999999904,
+      "cost_usd": null,
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "errors": []
+    },
+    {
+      "case_id": "schedule-646",
+      "status": "resolved",
+      "resolution": true,
+      "test_pass": true,
+      "judge_verdict": "PASS",
+      "iteration_count": 24,
+      "latency_s": 370.25,
+      "cost_usd": null,
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "errors": []
+    },
+    {
+      "case_id": "schedule-99",
+      "status": "resolved",
+      "resolution": true,
+      "test_pass": true,
+      "judge_verdict": "PASS",
+      "iteration_count": 31,
+      "latency_s": 489.859000000004,
+      "cost_usd": null,
+      "cost_source": "unknown",
+      "repository_commit_pinned": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "repository_commit_actual": "82a43db1b938d8fdf60103bd41f329e06c8d3651",
+      "errors": []
+    }
+  ]
+}
