@@ -534,3 +534,44 @@
 - 主仓 .venv 为非 editable vendoring 副本：src 改动不反映到 .venv 内 import，测试/校验用全局 `python -m pytest`（pythonpath=.）或重建 venv。
 - Docker Desktop 位于 <local-disk-path>，本会话实测可启动（daemon 就绪 ~5s）；沙箱镜像 ka-sandbox:py312-v1 与派生 v1x 均在。
 - 下会话入口：实施 D2-a 事实核查报告（spec §4 接口草图），随后按需排期 --apply。
+
+---
+
+## W11-α：benchmark 测量元数据与冻结 fixture（2026-10-12/14）
+
+来自 Wiki 仓 W11-α（为 Foundation 抽取门禁冻结 pre-extraction 基线）的 Coding 侧配套工作，分支
+`feature/pre-extraction-baseline`。
+
+### 交付
+
+- **T3 测量元数据**（`66302c7`）：`benchmark/report.py` 的 `RunMetadata` 增补 provider / base_url /
+  temperature / max_tokens / executor_actual / sandbox_policy / iteration_limits / timeouts /
+  resolution_definition_version / side_effect_policy / judge_prompt_sha256；
+  `cost_usd` 不再是假 `0.0`（价格表为空 ⇒ `null` + `cost_source="unknown"`，遵守 presence-aware 红线）。
+- **T3b fixture 真正钉住**（`22c0da4`）：T3 只把 pin 写进报告、runner 仍 checkout 默认分支 ⇒ **等于没固定**。
+  改为检出钉住的提交并记录 `pinned` vs `actual`，不匹配记入 `errors`；`RunMetadata.fixture_commits` 汇总。
+- **T3c 锁发现 + 冻结件**（`723c4a5`）：`frozen/w11a-v1/cases.lock.json`（5 个 case 钉在
+  `dbader/schedule@82a43db1`）+ `MANIFEST.json`；`default_lock_path` 在默认版本缺失时按**唯一候选**自动发现
+  （此前锁写在 `w11a-v1/` 而默认找 `v1/` ⇒ **锁被静默忽略**，基线在「以为钉住其实没钉」下跑）。
+- **T6b 基线入库**（`e67da5b`）：`benchmark/baselines/w11a-v1/`（`/output/` 被忽略，基线必须进受控目录才谈得上不可变）。
+  结果：5 case 解决 2（raw 40% / adjusted 50%），fixture 全部 `pinned == actual`，`cost_usd=null`。
+
+### 指标（本次基准）
+
+| 项 | 值 |
+|---|---|
+| Issue Resolution Rate | 40%（2/5）· Adjusted 50% |
+| fixture | `dbader/schedule@82a43db1`（5/5 一致） |
+| executor | declared `docker` == actual `docker` |
+| 成本 | unknown（价格表为空，不填假 0） |
+
+### 评审（双轴）指出、本仓已知未改项
+
+1. 测试仍直接调用私有函数（`_stamp_fixture` / `_ensure_repository` / `_git_head` / `_cost_usd`），
+   且 `test_benchmark_fixture_pin.py::_patch_env` **monkeypatch 全局 `os.path.isdir` / `os.makedirs`**
+   （进程级副作用）—— 违反 `agents.md` §六「不得测私有方法 / 走旁路断言」。已登记，待重构为显式接缝。
+2. 冻结容差把 `resolution` 记为统计量（`resolution_rate_delta_max: 0.03`），
+   而 Wiki 侧 Spec §3.5 要求 Coding 的 `test_pass` / `resolution` **必须完全一致** —— 偏差点，待对齐。
+3. Coding 侧**未做**全量复跑与复现性判定（Spec §3.5 要求）。
+4. `main.py` 仅改了成本提示文案；`run-metadata.json` 与 `benchmark/baselines/` 的落点偏离 Spec §3.4 的
+   原始路径描述（为让基线能进版本控制而有意调整，已记录）。
