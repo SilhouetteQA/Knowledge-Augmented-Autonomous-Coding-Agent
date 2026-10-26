@@ -326,10 +326,6 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
     零开销。任一环节异常收敛为该 case 的 error 结果，不中断其余 case。
     """
     start = time.monotonic()
-    # Spec 08：case 开始游标（off 返回 0，不分配 ledger）。
-    from adapters.foundation.runtime import observe_case_begin, observe_case_cost_entry
-
-    mark = observe_case_begin()
     prompt_before = llm.tokens_total["prompt"]
     completion_before = llm.tokens_total["completion"]
     # B13 探针暴露：repo_root 相对（main.py 默认 workspace/benchmark）时 repo_dir
@@ -361,7 +357,6 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
                     case, summary, llm, prompt_before, completion_before,
                     start, time.monotonic())
                 _stamp_fixture(result, fixture_pinned, fixture_actual)
-                observe_case_cost_entry(mark, stage="environment_error")
                 return result
             run = run_issue_agent(
                 IssueTask(repository=case.repository,
@@ -374,7 +369,6 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
                 case, llm, case_dir, repo_dir, prompt_before, completion_before,
                 start, time.monotonic(), run)
             _stamp_fixture(result, fixture_pinned, fixture_actual)
-            observe_case_cost_entry(mark, stage="normal")
             return result
     except Exception as e:  # noqa: BLE001 — 单 case 失败不中断评测
         prompt = llm.tokens_total["prompt"] - prompt_before
@@ -391,7 +385,6 @@ def _run_one_case(case: BenchmarkCase, llm: LLMClient, case_dir: str,
             tokens_completion=completion,
             cost_usd=cost, cost_source=cost_source, diff="", errors=[str(e)])
         _stamp_fixture(result, fixture_pinned, fixture_actual)
-        observe_case_cost_entry(mark, stage="error")
         return result
 
 

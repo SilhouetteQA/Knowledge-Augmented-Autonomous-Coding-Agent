@@ -575,3 +575,33 @@
 3. Coding 侧**未做**全量复跑与复现性判定（Spec §3.5 要求）。
 4. `main.py` 仅改了成本提示文案；`run-metadata.json` 与 `benchmark/baselines/` 的落点偏离 Spec §3.4 的
    原始路径描述（为让基线能进版本控制而有意调整，已记录）。
+
+---
+
+## W12: 下架双旗舰 Foundation Contract（2026-10-26）
+
+### 决定
+
+- 与 Wiki 仓同步：契约体系（`agent_core/contracts` 镜像、`adapters/foundation`、契约脚本与测试、3 份 config、2 个 CI workflow）维护成本远高于收益，用户裁定整体下架。
+- 外科式下架、保留历史，不 reset、不强推；Wiki 侧记录见其 `output/devlog.md` 的 W12 条目。
+
+### 下架范围（分支 `chore/downshift-foundation`）
+
+- 删除：`agent_core/**`、`adapters/**`、`config/contracts/**`、`docs/contracts/**`、`scripts/contracts/**`、`tests/contracts/**`、`.github/workflows/contract-{local,payload-linux}.yml`
+- 摘除旁路观察：`agent/llm.py`（`observe_openai_compat`）、`benchmark/runner.py`（`observe_case_begin`/`observe_case_cost_entry`）、`tools/tracing.py`（`record_usage` 的 `contract_facts` 旁路参数）、`tools/report_trace.py`（两处 `observe_trace_summary_entry` 与 `raw_rows` 采集）
+- 复原：`pyproject.toml`（去 `adapters*`/`agent_core*` 包、package-data 与 `pydantic==2.13.4`——该依赖仅被 foundation mapping 使用）、`.gitignore`（去契约验证产物条目）
+
+### 明确保留
+
+- A5 provider 整合（`command_goat` 订阅网关优先 + 自动选择）与其测试、A6 沙箱创建顺序修复及其回归钉子
+- W11-α 全部资产：`benchmark/frozen/w11a-v1/**`、`benchmark/baselines/w11a-v1/**`、`benchmark/{freeze_spec,collect_baseline}.py`、T3 测量元数据、fixture 钉住逻辑
+
+### 验证
+
+- `compileall` 通过；全仓无 `agent_core` / `adapters.foundation` / `contract_facts` 残留引用
+- `pytest tests -q` → **425 passed / 13 skipped / 1 failed**
+- 失败项 `tests/test_benchmark_fixture_pin.py::test_git_head_on_non_repo_returns_empty` 在 `f119f72` 干净 worktree 上**同样失败**（`git rev-parse` 在临时目录里命中了外层仓库），属既有环境问题，与本次改动无关
+
+### 恢复方式
+
+- `git log --all -- agent_core` / `git show c364b02:docs/contracts/releases/0.1.0/contract-manifest.json`；需要整体恢复时从 `c364b02` 拉分支或 revert 本提交。
